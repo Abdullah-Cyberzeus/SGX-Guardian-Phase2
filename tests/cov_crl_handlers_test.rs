@@ -19,11 +19,11 @@
 
 use axum::extract::{Query, State};
 use axum::Json;
-use sgx_guardian_client::api::handlers::crl::{
-    check, entry, list, revoke, root, unrevoke, verify, CheckQuery, EntryQuery,
-    RevokeCrlRequest, UnrevokeCrlRequest,
-};
 use sgx_guardian_client::api::error::ApiError;
+use sgx_guardian_client::api::handlers::crl::{
+    check, entry, list, revoke, root, unrevoke, verify, CheckQuery, EntryQuery, RevokeCrlRequest,
+    UnrevokeCrlRequest,
+};
 use sgx_guardian_client::api::state::AppState;
 use std::sync::Arc;
 

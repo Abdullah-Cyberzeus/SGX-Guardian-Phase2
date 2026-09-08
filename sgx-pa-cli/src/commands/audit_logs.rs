@@ -331,7 +331,9 @@ mod tests {
     const AUDIT_LOG_ENV: &str = "SGX_GUARDIAN_AUDIT_LOG_PATH";
 
     fn with_audit_log<F: FnOnce()>(content: &str, f: F) {
-        let _guard = crate::test_support::AUDIT_LOG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::test_support::AUDIT_LOG_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("audit.log");
         std::fs::write(&path, content).expect("write audit log");
@@ -429,7 +431,9 @@ mod tests {
 
     #[test]
     fn resolve_audit_log_path_uses_the_env_override_when_present() {
-        let _guard = crate::test_support::AUDIT_LOG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::test_support::AUDIT_LOG_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("audit.log");
         std::fs::write(&path, "{}").expect("write");
@@ -447,7 +451,9 @@ mod tests {
 
     #[test]
     fn resolve_audit_log_path_errors_when_nothing_is_found() {
-        let _guard = crate::test_support::AUDIT_LOG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::test_support::AUDIT_LOG_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let old = std::env::var_os(AUDIT_LOG_ENV);
         std::env::remove_var(AUDIT_LOG_ENV);
 

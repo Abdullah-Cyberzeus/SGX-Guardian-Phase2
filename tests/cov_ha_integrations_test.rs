@@ -276,7 +276,10 @@ async fn get_nest_oauth_url_reports_unconfigured_without_client_credentials() {
     .await;
     assert_eq!(status, StatusCode::OK, "oauth url response: {body}");
     assert_eq!(body["configured"], false);
-    assert!(body["auth_url"].as_str().unwrap().contains("nestservices.google.com"));
+    assert!(body["auth_url"]
+        .as_str()
+        .unwrap()
+        .contains("nestservices.google.com"));
 
     if let Some(previous) = previous_client {
         std::env::set_var("SGX_NEST_CLIENT_ID", previous);
@@ -303,7 +306,10 @@ async fn get_nest_oauth_url_reports_configured_with_client_credentials() {
     .await;
     assert_eq!(status, StatusCode::OK, "oauth url response: {body}");
     assert_eq!(body["configured"], true);
-    assert!(body["auth_url"].as_str().unwrap().contains("test-client-id"));
+    assert!(body["auth_url"]
+        .as_str()
+        .unwrap()
+        .contains("test-client-id"));
 
     match previous_client {
         Some(previous) => std::env::set_var("SGX_NEST_CLIENT_ID", previous),

@@ -81,7 +81,12 @@ fn test_load_non_existent() {
 
 #[test]
 fn load_missing_temp_config_returns_default() {
-    with_temp_runtime_files(|_, _| assert_eq!(ConfigStore::load().unwrap().mode, sgx_guardian_client::runtime::models::RuntimeMode::Off));
+    with_temp_runtime_files(|_, _| {
+        assert_eq!(
+            ConfigStore::load().unwrap().mode,
+            sgx_guardian_client::runtime::models::RuntimeMode::Off
+        )
+    });
 }
 
 #[test]
@@ -98,7 +103,10 @@ fn save_creates_parent_directories() {
 fn save_and_load_default_config_round_trips() {
     with_temp_runtime_files(|_, _| {
         let loaded = ConfigStore::load().unwrap();
-        assert_eq!(loaded.mode, sgx_guardian_client::runtime::models::RuntimeMode::Off);
+        assert_eq!(
+            loaded.mode,
+            sgx_guardian_client::runtime::models::RuntimeMode::Off
+        );
         assert!(loaded.hotspot.ssid.is_empty());
         assert!(loaded.uplink.networks.is_empty());
     });
@@ -127,8 +135,13 @@ fn hotspot_password_is_encrypted_at_rest_and_restored() {
         let mut cfg = GuardianConfig::default();
         cfg.hotspot.password = "StrongPass!1".into();
         ConfigStore::save(&cfg).unwrap();
-        assert!(!std::fs::read_to_string(config).unwrap().contains("StrongPass!1"));
-        assert_eq!(ConfigStore::load().unwrap().hotspot.password, "StrongPass!1");
+        assert!(!std::fs::read_to_string(config)
+            .unwrap()
+            .contains("StrongPass!1"));
+        assert_eq!(
+            ConfigStore::load().unwrap().hotspot.password,
+            "StrongPass!1"
+        );
     });
 }
 
@@ -136,13 +149,20 @@ fn hotspot_password_is_encrypted_at_rest_and_restored() {
 fn empty_uplink_password_remains_empty() {
     with_temp_runtime_files(|_, _| {
         let mut cfg = GuardianConfig::default();
-        cfg.uplink.networks.push(sgx_guardian_client::runtime::models::SavedWifi {
-            ssid: "s".into(),
-            bssid: None,
-            password: Some(String::new()),
-        });
+        cfg.uplink
+            .networks
+            .push(sgx_guardian_client::runtime::models::SavedWifi {
+                ssid: "s".into(),
+                bssid: None,
+                password: Some(String::new()),
+            });
         ConfigStore::save(&cfg).unwrap();
-        assert_eq!(ConfigStore::load().unwrap().uplink.networks[0].password.as_deref(), Some(""));
+        assert_eq!(
+            ConfigStore::load().unwrap().uplink.networks[0]
+                .password
+                .as_deref(),
+            Some("")
+        );
     });
 }
 
@@ -150,13 +170,17 @@ fn empty_uplink_password_remains_empty() {
 fn none_uplink_password_remains_none() {
     with_temp_runtime_files(|_, _| {
         let mut cfg = GuardianConfig::default();
-        cfg.uplink.networks.push(sgx_guardian_client::runtime::models::SavedWifi {
-            ssid: "s".into(),
-            bssid: None,
-            password: None,
-        });
+        cfg.uplink
+            .networks
+            .push(sgx_guardian_client::runtime::models::SavedWifi {
+                ssid: "s".into(),
+                bssid: None,
+                password: None,
+            });
         ConfigStore::save(&cfg).unwrap();
-        assert!(ConfigStore::load().unwrap().uplink.networks[0].password.is_none());
+        assert!(ConfigStore::load().unwrap().uplink.networks[0]
+            .password
+            .is_none());
     });
 }
 
@@ -224,13 +248,24 @@ fn multiple_uplink_networks_round_trip() {
     with_temp_runtime_files(|_, _| {
         let mut cfg = GuardianConfig::default();
         cfg.uplink.networks = vec![
-            sgx_guardian_client::runtime::models::SavedWifi { ssid: "a".into(), bssid: Some("aa".into()), password: Some("Pass!123".into()) },
-            sgx_guardian_client::runtime::models::SavedWifi { ssid: "b".into(), bssid: None, password: Some("Pass!456".into()) },
+            sgx_guardian_client::runtime::models::SavedWifi {
+                ssid: "a".into(),
+                bssid: Some("aa".into()),
+                password: Some("Pass!123".into()),
+            },
+            sgx_guardian_client::runtime::models::SavedWifi {
+                ssid: "b".into(),
+                bssid: None,
+                password: Some("Pass!456".into()),
+            },
         ];
         ConfigStore::save(&cfg).unwrap();
         let loaded = ConfigStore::load().unwrap();
         assert_eq!(loaded.uplink.networks.len(), 2);
-        assert_eq!(loaded.uplink.networks[0].password.as_deref(), Some("Pass!123"));
+        assert_eq!(
+            loaded.uplink.networks[0].password.as_deref(),
+            Some("Pass!123")
+        );
     });
 }
 
@@ -248,11 +283,13 @@ fn bad_encrypted_hotspot_password_returns_error() {
 fn bad_encrypted_uplink_password_returns_error() {
     with_temp_runtime_files(|config, _| {
         let mut cfg = GuardianConfig::default();
-        cfg.uplink.networks.push(sgx_guardian_client::runtime::models::SavedWifi {
-            ssid: "s".into(),
-            bssid: None,
-            password: Some("not-base64".into()),
-        });
+        cfg.uplink
+            .networks
+            .push(sgx_guardian_client::runtime::models::SavedWifi {
+                ssid: "s".into(),
+                bssid: None,
+                password: Some("not-base64".into()),
+            });
         std::fs::write(config, serde_json::to_string(&cfg).unwrap()).unwrap();
         assert!(ConfigStore::load().is_err());
     });
@@ -282,11 +319,13 @@ fn max_channel_round_trips() {
 fn empty_saved_wifi_ssid_round_trips() {
     with_temp_runtime_files(|_, _| {
         let mut cfg = GuardianConfig::default();
-        cfg.uplink.networks.push(sgx_guardian_client::runtime::models::SavedWifi {
-            ssid: String::new(),
-            bssid: None,
-            password: Some("Pass!789".into()),
-        });
+        cfg.uplink
+            .networks
+            .push(sgx_guardian_client::runtime::models::SavedWifi {
+                ssid: String::new(),
+                bssid: None,
+                password: Some("Pass!789".into()),
+            });
         ConfigStore::save(&cfg).unwrap();
         assert_eq!(ConfigStore::load().unwrap().uplink.networks[0].ssid, "");
     });
@@ -311,6 +350,8 @@ fn saved_file_contains_mode_field() {
         let mut cfg = GuardianConfig::default();
         cfg.mode = sgx_guardian_client::runtime::models::RuntimeMode::DualWifi;
         ConfigStore::save(&cfg).unwrap();
-        assert!(std::fs::read_to_string(config).unwrap().contains("\"mode\": \"DualWifi\""));
+        assert!(std::fs::read_to_string(config)
+            .unwrap()
+            .contains("\"mode\": \"DualWifi\""));
     });
 }

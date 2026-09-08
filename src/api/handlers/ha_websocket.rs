@@ -1,7 +1,7 @@
 use axum::{
     extract::{
-        State,
         ws::{Message, WebSocket, WebSocketUpgrade},
+        State,
     },
     response::IntoResponse,
 };

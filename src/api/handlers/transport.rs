@@ -2,8 +2,8 @@ use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use axum::{
-    Json,
     extract::{Query, State},
+    Json,
 };
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use serde::{Deserialize, Serialize};
@@ -443,7 +443,6 @@ mod tests {
     use axum::extract::State;
     use std::ffi::OsString;
     use tempfile::TempDir;
-
 
     struct EnvGuard {
         sys_net_prev: Option<OsString>,

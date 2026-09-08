@@ -1,15 +1,16 @@
 use crate::api::{error::ApiError, state::AppState};
 use crate::discovery::whitelist::{
-    Whitelist, WhitelistEntry, WhitelistEntryView, enrich_entries, infer_label_for_mac,
+    enrich_entries, infer_label_for_mac, Whitelist, WhitelistEntry, WhitelistEntryView,
 };
 use crate::discovery::{
-    ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScanScheduleProfile,
-    ScheduleDay, ScheduledScans, nmap_parser,
+    nmap_parser,
     run_history::{self, ScanRunRecord},
+    ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScanScheduleProfile,
+    ScheduleDay, ScheduledScans,
 };
-use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path as AxumPath, Query, State};
+use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -1187,8 +1188,8 @@ mod tests {
         ConnectedDevice, DeviceStatus, NmapConfig, OpenPort, ScanIntensity, ScheduleDay,
     };
     use crate::virtual_id_cache::VirtualIdCache;
-    use axum::Json;
     use axum::extract::{Query, State};
+    use axum::Json;
     use chrono::{TimeZone, Utc};
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -1554,13 +1555,11 @@ mod tests {
 
         assert_eq!(runs.len(), 1);
         assert!(runs[0].devices.is_none());
-        assert!(
-            runs[0]
-                .devices_error
-                .as_deref()
-                .expect("devices_error should be present")
-                .contains("raw xml not available")
-        );
+        assert!(runs[0]
+            .devices_error
+            .as_deref()
+            .expect("devices_error should be present")
+            .contains("raw xml not available"));
     }
 
     fn scanned_device(status: DeviceStatus) -> ConnectedDevice {

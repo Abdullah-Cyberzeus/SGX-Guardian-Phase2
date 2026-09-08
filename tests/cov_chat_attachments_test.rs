@@ -56,7 +56,11 @@ async fn upload_and_download_a_chat_attachment_round_trip() {
         .body(Body::from(body))
         .expect("build upload request");
 
-    let response = router.clone().oneshot(request).await.expect("upload response");
+    let response = router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("upload response");
     assert_eq!(response.status(), StatusCode::OK, "upload should succeed");
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -79,7 +83,11 @@ async fn upload_and_download_a_chat_attachment_round_trip() {
         .oneshot(download_request)
         .await
         .expect("download response");
-    assert_eq!(download_response.status(), StatusCode::OK, "download should succeed");
+    assert_eq!(
+        download_response.status(),
+        StatusCode::OK,
+        "download should succeed"
+    );
     let downloaded = axum::body::to_bytes(download_response.into_body(), usize::MAX)
         .await
         .expect("read downloaded bytes");

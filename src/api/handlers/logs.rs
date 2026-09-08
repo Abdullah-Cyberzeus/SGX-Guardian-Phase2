@@ -1,7 +1,7 @@
 use crate::api::{error::ApiError, state::AppState};
 use axum::{
-    Json,
     extract::{Query, State},
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

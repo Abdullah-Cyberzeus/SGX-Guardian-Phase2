@@ -88,7 +88,11 @@ async fn create_returns_503_when_nebula_unavailable_for_a_valid_local_target() {
         Some(json!({"title": "Standup", "call_all": true, "media": ["audio"]})),
     )
     .await;
-    assert_eq!(status, axum::http::StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(
+        status,
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        "{body}"
+    );
 }
 
 #[tokio::test]
@@ -153,7 +157,11 @@ async fn media_ready_returns_503_without_a_nebula_overlay() {
         None,
     )
     .await;
-    assert_eq!(status, axum::http::StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(
+        status,
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        "{body}"
+    );
 }
 
 #[tokio::test]

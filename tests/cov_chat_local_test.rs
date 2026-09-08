@@ -259,7 +259,10 @@ async fn history_paginates_with_after_seq_and_limit() {
     let (status, body) = support::call(
         chat.env.router(),
         "GET",
-        &format!("/api/v1/chat/history?peer_did={}&limit=2", chat.guardian_did),
+        &format!(
+            "/api/v1/chat/history?peer_did={}&limit=2",
+            chat.guardian_did
+        ),
         Some(&chat.member_token),
         None,
     )
@@ -339,7 +342,11 @@ async fn a_group_message_to_the_circle_is_accepted_and_readable() {
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "group send should be accepted: {body}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "group send should be accepted: {body}"
+    );
     let message_id = body["message_id"].as_str().expect("message_id").to_string();
 
     let (status, body) = support::call(
@@ -350,7 +357,11 @@ async fn a_group_message_to_the_circle_is_accepted_and_readable() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "group history should succeed: {body}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "group history should succeed: {body}"
+    );
     assert!(
         body["messages"]
             .as_array()
@@ -389,7 +400,11 @@ async fn a_locally_delivered_message_can_be_marked_as_read() {
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "mark-as-read should succeed: {body}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "mark-as-read should succeed: {body}"
+    );
     assert_eq!(body["message_id"], message_id, "{body}");
 }
 
@@ -569,8 +584,11 @@ async fn an_attachment_uploaded_by_someone_else_cannot_be_attached() {
 fn write_peer_registry(chat: &Chat, peers: Value) {
     let path = std::path::Path::new(&chat.env.state.log_dir_primary).join("trusted_peers.json");
     std::fs::create_dir_all(path.parent().expect("registry parent")).expect("create log dir");
-    std::fs::write(&path, serde_json::to_vec(&peers).expect("serialize registry"))
-        .expect("write trusted peer registry");
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&peers).expect("serialize registry"),
+    )
+    .expect("write trusted peer registry");
 }
 
 /// Every filtering branch of `trigger_sync`'s peer loop in one registry: an
@@ -632,7 +650,11 @@ async fn a_message_to_a_trusted_remote_peer_is_accepted_and_left_pending() {
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "remote send should be accepted: {body}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "remote send should be accepted: {body}"
+    );
     // The peer resolved and the message was queued for the background gRPC
     // push. Nothing is listening at that address, so the push fails and the
     // message stays where the handler left it — accepted by this Guardian but
@@ -770,7 +792,11 @@ async fn a_group_send_walks_the_peer_fan_out_selection() {
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "group send should be accepted: {body}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "group send should be accepted: {body}"
+    );
 }
 
 /// Reading a message from a remote peer also pushes a read receipt back to
@@ -813,7 +839,11 @@ async fn reading_a_remote_peers_message_dispatches_a_receipt_back_to_them() {
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "mark-as-read should succeed: {body}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "mark-as-read should succeed: {body}"
+    );
 }
 
 #[tokio::test]
@@ -879,7 +909,11 @@ async fn marking_a_message_read_in_a_conversation_that_does_not_exist_is_refused
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "unknown conversation: {body}");
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "unknown conversation: {body}"
+    );
 }
 
 #[tokio::test]

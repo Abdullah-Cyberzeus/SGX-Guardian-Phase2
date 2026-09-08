@@ -24,8 +24,10 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 
-type ChunkStream = Pin<Box<dyn tokio_stream::Stream<Item = Result<AttachmentChunk, Status>> + Send>>;
-type SyncStream = Pin<Box<dyn tokio_stream::Stream<Item = Result<PushMessageRequest, Status>> + Send>>;
+type ChunkStream =
+    Pin<Box<dyn tokio_stream::Stream<Item = Result<AttachmentChunk, Status>> + Send>>;
+type SyncStream =
+    Pin<Box<dyn tokio_stream::Stream<Item = Result<PushMessageRequest, Status>> + Send>>;
 
 #[derive(Default)]
 struct MockChatService {

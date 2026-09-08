@@ -20,14 +20,22 @@ fn encrypt_decrypt_empty_plaintext_round_trips() {
 
 #[test]
 fn encrypt_decrypt_short_plaintext_round_trips() {
-    with_seed_dir(|| assert_eq!(decrypt_tokens(&encrypt_tokens(b"a").unwrap()).unwrap(), b"a"));
+    with_seed_dir(|| {
+        assert_eq!(
+            decrypt_tokens(&encrypt_tokens(b"a").unwrap()).unwrap(),
+            b"a"
+        )
+    });
 }
 
 #[test]
 fn encrypt_decrypt_binary_plaintext_round_trips() {
     with_seed_dir(|| {
         let data = vec![0, 1, 2, 255];
-        assert_eq!(decrypt_tokens(&encrypt_tokens(&data).unwrap()).unwrap(), data);
+        assert_eq!(
+            decrypt_tokens(&encrypt_tokens(&data).unwrap()).unwrap(),
+            data
+        );
     });
 }
 
@@ -38,7 +46,12 @@ fn encrypted_payload_includes_nonce_and_tag_overhead() {
 
 #[test]
 fn encrypting_same_plaintext_uses_different_nonce() {
-    with_seed_dir(|| assert_ne!(encrypt_tokens(b"same").unwrap(), encrypt_tokens(b"same").unwrap()));
+    with_seed_dir(|| {
+        assert_ne!(
+            encrypt_tokens(b"same").unwrap(),
+            encrypt_tokens(b"same").unwrap()
+        )
+    });
 }
 
 #[test]

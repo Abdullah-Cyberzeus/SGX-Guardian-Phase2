@@ -47,7 +47,10 @@ fn service_allows_empty_node_id() {
 
 #[test]
 fn service_config_path_has_file_name() {
-    assert_eq!(service("n").config_path.file_name().unwrap(), "suricata.yaml");
+    assert_eq!(
+        service("n").config_path.file_name().unwrap(),
+        "suricata.yaml"
+    );
 }
 
 #[test]

@@ -53,7 +53,11 @@ fn parse_interface_network_cidr(output: &str) -> Option<String> {
     if prefix > 32 {
         return None;
     }
-    let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
+    let mask = if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix)
+    };
     let network = Ipv4Addr::from(u32::from(ip) & mask);
     Some(format!("{}/{}", network, prefix))
 }
@@ -119,7 +123,10 @@ fn parses_cidr_with_leading_spaces() {
 #[test]
 fn parses_first_ipv4_inet_line() {
     let output = "inet6 fe80::1/64\ninet 172.16.9.3/20 scope global\ninet 10.0.0.1/8\n";
-    assert_eq!(parse_interface_network_cidr(output).as_deref(), Some("172.16.0.0/20"));
+    assert_eq!(
+        parse_interface_network_cidr(output).as_deref(),
+        Some("172.16.0.0/20")
+    );
 }
 
 #[test]
@@ -182,7 +189,10 @@ fn merge_preserves_static_active_rules_and_identity() {
     assert_eq!(merged.policy_id, "signed");
     assert_eq!(merged.version, "2");
     assert!(merged.rules.iter().any(|rule| rule.id == "static_allow"));
-    assert!(merged.rules.iter().any(|rule| rule.id == "dyn_nat_masquerade_01"));
+    assert!(merged
+        .rules
+        .iter()
+        .any(|rule| rule.id == "dyn_nat_masquerade_01"));
 }
 
 #[test]
@@ -195,7 +205,11 @@ fn merge_removes_previous_dynamic_rules_before_extending() {
     let merged = merge_with_policy(Some(active), vec![rule("dyn_new_a"), rule("dyn_new_b")]);
     assert!(!merged.rules.iter().any(|rule| rule.id == "dyn_old"));
     assert_eq!(
-        merged.rules.iter().filter(|rule| rule.id.starts_with("dyn_")).count(),
+        merged
+            .rules
+            .iter()
+            .filter(|rule| rule.id.starts_with("dyn_"))
+            .count(),
         2
     );
 }

@@ -147,7 +147,10 @@ async fn full_local_browser_call_lifecycle_reaches_connected_and_ends() {
     )
     .await;
     assert_eq!(status, axum::http::StatusCode::OK, "{body}");
-    assert!(!body["signals"].as_array().expect("signals array").is_empty());
+    assert!(!body["signals"]
+        .as_array()
+        .expect("signals array")
+        .is_empty());
 
     // Quality reports are refused before the call is connected.
     let (status, _) = support::call(
@@ -212,8 +215,14 @@ async fn full_local_browser_call_lifecycle_reaches_connected_and_ends() {
         .iter()
         .any(|call| call["session_id"] == session_id));
 
-    let (status, body) =
-        support::call(env.router(), "GET", "/api/v1/calls", Some(&owner_token), None).await;
+    let (status, body) = support::call(
+        env.router(),
+        "GET",
+        "/api/v1/calls",
+        Some(&owner_token),
+        None,
+    )
+    .await;
     assert_eq!(status, axum::http::StatusCode::OK, "{body}");
     assert!(body["total"].as_u64().unwrap() >= 1);
 
@@ -429,7 +438,11 @@ async fn legacy_initiate_call_fails_when_nebula_overlay_unavailable() {
         })),
     )
     .await;
-    assert_eq!(status, axum::http::StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(
+        status,
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        "{body}"
+    );
     assert!(body["error"]
         .as_str()
         .unwrap()

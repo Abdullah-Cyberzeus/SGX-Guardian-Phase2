@@ -1,11 +1,11 @@
 use sgx_guardian_client::attestation_service::AttestationService;
+use sgx_guardian_client::attestation_service::{
+    attestation_listener_port_for_base, attestation_listener_port_for_node,
+    trigger_reattestation_for, AttestationEvidence, BaselineStatus, BootChainSummary,
+    ChallengeRequest, ChallengeResponse, QuoteVerificationResult, SignedQuote,
+};
 use sgx_guardian_client::key_manager::KeyManager;
 use tempfile::TempDir;
-use sgx_guardian_client::attestation_service::{
-    attestation_listener_port_for_base, attestation_listener_port_for_node, trigger_reattestation_for,
-    AttestationEvidence, BaselineStatus, BootChainSummary, ChallengeRequest, ChallengeResponse,
-    QuoteVerificationResult, SignedQuote,
-};
 
 #[test]
 fn test_attestation_evidence() {
@@ -89,7 +89,9 @@ fn short_hex_policy_digest_is_rejected() {
 
 #[test]
 fn digest_mismatch_is_rejected_before_signature_decode() {
-    assert!(!AttestationService::verify_signed_evidence(&evidence(&"00".repeat(32)), "policy").unwrap());
+    assert!(
+        !AttestationService::verify_signed_evidence(&evidence(&"00".repeat(32)), "policy").unwrap()
+    );
 }
 
 #[test]
@@ -110,7 +112,8 @@ fn boot_chain_summary_round_trips() {
         hab_events_found: false,
         boot_chain_intact: true,
     };
-    let parsed: BootChainSummary = serde_json::from_str(&serde_json::to_string(&summary).unwrap()).unwrap();
+    let parsed: BootChainSummary =
+        serde_json::from_str(&serde_json::to_string(&summary).unwrap()).unwrap();
     assert!(parsed.boot_chain_intact);
 }
 
@@ -121,7 +124,12 @@ fn signed_quote_round_trips() {
         signature_b64: "sig".into(),
         signing_backend: "Software".into(),
     };
-    assert_eq!(serde_json::from_str::<SignedQuote>(&serde_json::to_string(&quote).unwrap()).unwrap().signing_backend, "Software");
+    assert_eq!(
+        serde_json::from_str::<SignedQuote>(&serde_json::to_string(&quote).unwrap())
+            .unwrap()
+            .signing_backend,
+        "Software"
+    );
 }
 
 #[test]
@@ -131,17 +139,29 @@ fn challenge_request_round_trips() {
         nonce: "aa".repeat(32),
         timestamp: "2026-01-01T00:00:00Z".into(),
     };
-    assert_eq!(serde_json::from_str::<ChallengeRequest>(&serde_json::to_string(&req).unwrap()).unwrap().nonce.len(), 64);
+    assert_eq!(
+        serde_json::from_str::<ChallengeRequest>(&serde_json::to_string(&req).unwrap())
+            .unwrap()
+            .nonce
+            .len(),
+        64
+    );
 }
 
 #[test]
 fn challenge_response_round_trips_with_counter_challenge() {
     let resp = ChallengeResponse {
         prover_node_id: "nodeB".into(),
-        signed_quote: SignedQuote { quote_json: "{}".into(), signature_b64: "s".into(), signing_backend: "Software".into() },
+        signed_quote: SignedQuote {
+            quote_json: "{}".into(),
+            signature_b64: "s".into(),
+            signing_backend: "Software".into(),
+        },
         counter_challenge_nonce: Some("bb".repeat(32)),
     };
-    assert!(serde_json::to_string(&resp).unwrap().contains("counter_challenge_nonce"));
+    assert!(serde_json::to_string(&resp)
+        .unwrap()
+        .contains("counter_challenge_nonce"));
 }
 
 #[test]
@@ -156,7 +176,12 @@ fn quote_verification_result_round_trips_failure_reason() {
         reason: "bad nonce".into(),
         timestamp: "2026-01-01T00:00:00Z".into(),
     };
-    assert_eq!(serde_json::from_str::<QuoteVerificationResult>(&serde_json::to_string(&result).unwrap()).unwrap().reason, "bad nonce");
+    assert_eq!(
+        serde_json::from_str::<QuoteVerificationResult>(&serde_json::to_string(&result).unwrap())
+            .unwrap()
+            .reason,
+        "bad nonce"
+    );
 }
 
 macro_rules! evidence_serde_tests {

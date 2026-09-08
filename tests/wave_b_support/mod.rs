@@ -74,11 +74,7 @@ impl Env {
             temp.path().join("did-version-counter"),
         );
 
-        let state = AppState::for_tests(
-            temp.path(),
-            NODE_ID,
-            config.to_string_lossy().to_string(),
-        );
+        let state = AppState::for_tests(temp.path(), NODE_ID, config.to_string_lossy().to_string());
 
         sgx_guardian_client::testkit::bootstrap_owner_identity(
             NODE_ID,
@@ -204,7 +200,9 @@ pub async fn call(
     let request = if let Some(body) = body {
         builder
             .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(serde_json::to_vec(&body).expect("serialize body")))
+            .body(Body::from(
+                serde_json::to_vec(&body).expect("serialize body"),
+            ))
             .expect("build request")
     } else {
         builder.body(Body::empty()).expect("build request")

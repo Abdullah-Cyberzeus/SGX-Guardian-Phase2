@@ -1,5 +1,5 @@
-use sgx_guardian_client::secure_element::pcr::PcrEngine;
 use sgx_guardian_client::secure_element::dkp::DKP_BASE_KEY_ID;
+use sgx_guardian_client::secure_element::pcr::PcrEngine;
 use sgx_guardian_client::secure_element::pcr::{
     canonical_baseline_signing_payload, canonical_static_yaml_measurement, signature_format,
     PcrBaseline, PcrSnapshot, MAX_PCR_SNAPSHOT_AGE_SECS, PCR_BIOS, PCR_CONFIG, PCR_COUNT,
@@ -113,7 +113,10 @@ dkp_version_offset_tests! {
 #[test]
 fn pcr_constants_cover_five_slots() {
     assert_eq!(PCR_COUNT, 5);
-    assert_eq!([PCR_BIOS, PCR_FIRMWARE, PCR_KERNEL, PCR_ROOTFS, PCR_CONFIG], [0, 1, 2, 3, 4]);
+    assert_eq!(
+        [PCR_BIOS, PCR_FIRMWARE, PCR_KERNEL, PCR_ROOTFS, PCR_CONFIG],
+        [0, 1, 2, 3, 4]
+    );
 }
 
 #[test]
@@ -130,7 +133,10 @@ fn invalid_pcr_get_hex_returns_invalid() {
 
 #[test]
 fn invalid_pcr_extend_returns_range_error() {
-    assert!(PcrEngine::new().extend(PCR_COUNT, b"x").unwrap_err().contains("out of range"));
+    assert!(PcrEngine::new()
+        .extend(PCR_COUNT, b"x")
+        .unwrap_err()
+        .contains("out of range"));
 }
 
 #[test]
@@ -165,8 +171,18 @@ fn extend_from_files_sorts_paths_for_determinism() {
     std::fs::write(&b, b"b").unwrap();
     let mut one = PcrEngine::new();
     let mut two = PcrEngine::new();
-    assert!(one.extend_from_files(PCR_CONFIG, &[b.display().to_string(), a.display().to_string()]).is_empty());
-    assert!(two.extend_from_files(PCR_CONFIG, &[a.display().to_string(), b.display().to_string()]).is_empty());
+    assert!(one
+        .extend_from_files(
+            PCR_CONFIG,
+            &[b.display().to_string(), a.display().to_string()]
+        )
+        .is_empty());
+    assert!(two
+        .extend_from_files(
+            PCR_CONFIG,
+            &[a.display().to_string(), b.display().to_string()]
+        )
+        .is_empty());
     assert_eq!(one.get_hex(PCR_CONFIG), two.get_hex(PCR_CONFIG));
 }
 
@@ -175,7 +191,12 @@ fn snapshot_save_and_load_round_trips() {
     let file = tempfile::NamedTempFile::new().unwrap();
     let snap = PcrEngine::new().snapshot();
     snap.save(file.path().to_str().unwrap()).unwrap();
-    assert_eq!(PcrSnapshot::load(file.path().to_str().unwrap()).unwrap().schema_version, PCR_SCHEMA_VERSION);
+    assert_eq!(
+        PcrSnapshot::load(file.path().to_str().unwrap())
+            .unwrap()
+            .schema_version,
+        PCR_SCHEMA_VERSION
+    );
 }
 
 #[test]
@@ -209,18 +230,30 @@ fn snapshot_invalid_timestamp_is_not_fresh() {
 #[test]
 fn compare_baseline_detects_no_mismatch() {
     let values = vec!["a".into(), "b".into()];
-    assert!(snapshot(values.clone(), chrono::Utc::now().to_rfc3339()).compare_baseline(&baseline(values)).unwrap().is_empty());
+    assert!(snapshot(values.clone(), chrono::Utc::now().to_rfc3339())
+        .compare_baseline(&baseline(values))
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
 fn compare_baseline_detects_mismatch_indexes() {
-    let got = snapshot(vec!["a".into(), "b".into()], chrono::Utc::now().to_rfc3339());
-    assert_eq!(got.compare_baseline(&baseline(vec!["x".into(), "b".into()])).unwrap(), vec![0]);
+    let got = snapshot(
+        vec!["a".into(), "b".into()],
+        chrono::Utc::now().to_rfc3339(),
+    );
+    assert_eq!(
+        got.compare_baseline(&baseline(vec!["x".into(), "b".into()]))
+            .unwrap(),
+        vec![0]
+    );
 }
 
 #[test]
 fn compare_baseline_length_mismatch_errors() {
-    assert!(snapshot(vec!["a".into()], chrono::Utc::now().to_rfc3339()).compare_baseline(&baseline(vec![])).is_err());
+    assert!(snapshot(vec!["a".into()], chrono::Utc::now().to_rfc3339())
+        .compare_baseline(&baseline(vec![]))
+        .is_err());
 }
 
 #[test]
@@ -228,7 +261,12 @@ fn baseline_save_and_load_round_trips() {
     let file = tempfile::NamedTempFile::new().unwrap();
     let base = baseline(vec!["a".into()]);
     base.save(file.path().to_str().unwrap()).unwrap();
-    assert_eq!(PcrBaseline::load(file.path().to_str().unwrap()).unwrap().pcr_values, vec!["a"]);
+    assert_eq!(
+        PcrBaseline::load(file.path().to_str().unwrap())
+            .unwrap()
+            .pcr_values,
+        vec!["a"]
+    );
 }
 
 #[test]
@@ -248,7 +286,12 @@ fn canonical_payload_rejects_wrong_digest_length() {
 
 #[test]
 fn canonical_payload_returns_sha256_length() {
-    assert_eq!(canonical_baseline_signing_payload(&"00".repeat(32), "t", "d").unwrap().len(), 32);
+    assert_eq!(
+        canonical_baseline_signing_payload(&"00".repeat(32), "t", "d")
+            .unwrap()
+            .len(),
+        32
+    );
 }
 
 #[test]
@@ -269,7 +312,11 @@ fn signature_format_defaults_short_non_der_to_fixed() {
 #[test]
 fn canonical_static_yaml_removes_dynamic_keys() {
     let file = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), "ip: 10.0.0.1\nname: node\nnested:\n  endpoint: old\n  stable: yes\n").unwrap();
+    std::fs::write(
+        file.path(),
+        "ip: 10.0.0.1\nname: node\nnested:\n  endpoint: old\n  stable: yes\n",
+    )
+    .unwrap();
     let measured = canonical_static_yaml_measurement(file.path().to_str().unwrap());
     assert!(!measured.contains("10.0.0.1"));
     assert!(measured.contains("stable"));
@@ -277,12 +324,18 @@ fn canonical_static_yaml_removes_dynamic_keys() {
 
 #[test]
 fn canonical_static_yaml_missing_file_is_empty() {
-    assert_eq!(canonical_static_yaml_measurement("/tmp/sgx-missing-static-yaml.yaml"), "");
+    assert_eq!(
+        canonical_static_yaml_measurement("/tmp/sgx-missing-static-yaml.yaml"),
+        ""
+    );
 }
 
 #[test]
 fn canonical_static_yaml_malformed_file_is_empty() {
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), "bad: [").unwrap();
-    assert_eq!(canonical_static_yaml_measurement(file.path().to_str().unwrap()), "");
+    assert_eq!(
+        canonical_static_yaml_measurement(file.path().to_str().unwrap()),
+        ""
+    );
 }

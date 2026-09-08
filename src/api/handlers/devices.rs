@@ -1,15 +1,15 @@
 use crate::api::auth::{
     middleware::AuthenticatedSession,
-    pairing::{self, DEFAULT_PAIRING_TTL_SECS, PairingUsage},
+    pairing::{self, PairingUsage, DEFAULT_PAIRING_TTL_SECS},
     store::{PairedDevice, PairingChallengeRecord},
 };
 use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use axum::{
-    Extension, Json,
     extract::{Path, Query, State},
     http::HeaderMap,
+    Extension, Json,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -2355,8 +2355,8 @@ mod tests {
     use crate::test_support::async_env_lock;
     use crate::vc::credential::{
         CredentialRole, CredentialStatus, CredentialSubject, MembershipStatus,
-        TYPE_CIRCLE_MEMBERSHIP, TYPE_VC, VC_CONTEXT_CORE, VC_CONTEXT_JWS_2020,
-        VC_CONTEXT_SGX_CIRCLE, VerifiableCredential,
+        VerifiableCredential, TYPE_CIRCLE_MEMBERSHIP, TYPE_VC, VC_CONTEXT_CORE,
+        VC_CONTEXT_JWS_2020, VC_CONTEXT_SGX_CIRCLE,
     };
     use std::ffi::OsString;
     use tempfile::TempDir;
@@ -3108,10 +3108,9 @@ mod tests {
         assert_eq!(runs[9].step_label, "Complete");
         assert_eq!(runs[9].step, 5);
         assert_eq!(runs[9].state, "complete");
-        assert!(
-            runs.iter()
-                .all(|entry| entry.updated_at.as_deref().is_some_and(|ts| !ts.is_empty()))
-        );
+        assert!(runs
+            .iter()
+            .all(|entry| entry.updated_at.as_deref().is_some_and(|ts| !ts.is_empty())));
         let latest =
             crate::devices::scan::find_run_with_history(&scans_path, &run.device_id, &run.scan_id)
                 .await
@@ -3138,12 +3137,10 @@ mod tests {
                 (5, "Complete", "complete"),
             ]
         );
-        assert!(
-            latest
-                .progress_history
-                .iter()
-                .all(|entry| !entry.timestamp.is_empty())
-        );
+        assert!(latest
+            .progress_history
+            .iter()
+            .all(|entry| !entry.timestamp.is_empty()));
         let firmware = latest
             .firmware_assessment
             .as_ref()
@@ -3153,12 +3150,10 @@ mod tests {
             crate::devices::model::FirmwareAssessmentStatus::Observed
         );
         assert!(!firmware.integrity_verified);
-        assert!(
-            firmware
-                .evidence_sources
-                .iter()
-                .any(|source| source.source == "nmap:os-cpe")
-        );
+        assert!(firmware
+            .evidence_sources
+            .iter()
+            .any(|source| source.source == "nmap:os-cpe"));
     }
 
     #[tokio::test]
@@ -3318,18 +3313,14 @@ mod tests {
         assert_eq!(assessment.version, None);
         assert!(!assessment.integrity_verified);
         assert!(assessment.confidence < 0.5);
-        assert!(
-            assessment
-                .evidence_sources
-                .iter()
-                .any(|source| source.source == "nmap:service-banner")
-        );
-        assert!(
-            assessment
-                .findings
-                .iter()
-                .any(|finding| finding.contains("inferred only"))
-        );
+        assert!(assessment
+            .evidence_sources
+            .iter()
+            .any(|source| source.source == "nmap:service-banner"));
+        assert!(assessment
+            .findings
+            .iter()
+            .any(|finding| finding.contains("inferred only")));
     }
 
     #[tokio::test]

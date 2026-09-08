@@ -488,8 +488,8 @@ fn normalize_p256_pubkey(pubkey_der_or_raw: &[u8]) -> &[u8] {
 
 #[cfg(test)]
 mod tests {
-    use super::{run_generate, run_verify, GenerateQuoteArgs, VerifyQuoteArgs};
     use super::{find_pcr_snapshot, has_ssscli, normalize_p256_pubkey, read_signing_pubkey_b64};
+    use super::{run_generate, run_verify, GenerateQuoteArgs, VerifyQuoteArgs};
 
     // ── argument validation (safe: returns before any file I/O) ─────────────
 
@@ -568,8 +568,7 @@ mod tests {
     fn run_verify_reports_invalid_inner_quote_json() {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("quote.json");
-        std::fs::write(&path, r#"{"quote_json": "not json", "signature_b64": ""}"#)
-            .expect("write");
+        std::fs::write(&path, r#"{"quote_json": "not json", "signature_b64": ""}"#).expect("write");
         run_verify(VerifyQuoteArgs {
             quote: path.to_string_lossy().to_string(),
             nonce: "a".repeat(64),

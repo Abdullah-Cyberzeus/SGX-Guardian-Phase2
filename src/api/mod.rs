@@ -4068,12 +4068,10 @@ mod tests {
         assert_eq!(publish["ca_host"], "127.0.0.1");
         assert_eq!(publish["node_name"], "nodeB");
         assert_eq!(publish["registry_peer_count"], 2);
-        assert!(
-            publish["message"]
-                .as_str()
-                .expect("publish message")
-                .contains("persisted in CA registry")
-        );
+        assert!(publish["message"]
+            .as_str()
+            .expect("publish message")
+            .contains("persisted in CA registry"));
     }
 
     #[allow(clippy::await_holding_lock)] // see vc_issue_reuse_status_and_safe_file_reads_work

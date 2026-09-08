@@ -287,7 +287,11 @@ async fn admin_and_member_address_books_are_separate() {
         .await;
         assert_eq!(status, StatusCode::OK, "{label}: {body}");
         assert_eq!(body["total"], 1, "{label} sees only its own book: {body}");
-        assert_eq!(body["contacts"][0]["did"], expected_did.as_str(), "{label}: {body}");
+        assert_eq!(
+            body["contacts"][0]["did"],
+            expected_did.as_str(),
+            "{label}: {body}"
+        );
     }
 }
 
@@ -296,12 +300,8 @@ async fn contact_dids_are_validated_before_any_membership_check() {
     let fixture = fixture().await;
 
     for malformed in ["", "   ", "not-a-did", "did:other:abc"] {
-        let (status, body) = create_contact(
-            &fixture,
-            &fixture.owner_token,
-            json!({"did": malformed}),
-        )
-        .await;
+        let (status, body) =
+            create_contact(&fixture, &fixture.owner_token, json!({"did": malformed})).await;
         assert_eq!(
             status,
             StatusCode::BAD_REQUEST,

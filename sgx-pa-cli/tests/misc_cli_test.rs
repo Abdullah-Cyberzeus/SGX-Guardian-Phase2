@@ -42,10 +42,7 @@ fn dkp_revoke_reports_missing_metadata() {
 fn policy_sign_and_deploy_rejects_a_nonexistent_path() {
     Command::cargo_bin("sgx-pa-cli")
         .unwrap()
-        .args([
-            "policy-sign-and-deploy",
-            "/nonexistent/path/policy.yaml",
-        ])
+        .args(["policy-sign-and-deploy", "/nonexistent/path/policy.yaml"])
         .assert()
         .failure()
         .code(1)

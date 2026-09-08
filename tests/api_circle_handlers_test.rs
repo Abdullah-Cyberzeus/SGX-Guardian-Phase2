@@ -29,7 +29,8 @@ fn create_circle_request_defaults_empty() {
 
 #[test]
 fn create_circle_request_deserializes_all_fields() {
-    let req: CreateCircleRequest = serde_json::from_str(r#"{"name":"N","description":"D","circle_id":"c","days":7}"#).unwrap();
+    let req: CreateCircleRequest =
+        serde_json::from_str(r#"{"name":"N","description":"D","circle_id":"c","days":7}"#).unwrap();
     assert_eq!(req.name.as_deref(), Some("N"));
     assert_eq!(req.days, Some(7));
 }
@@ -52,7 +53,8 @@ fn add_member_request_defaults_empty() {
 
 #[test]
 fn add_member_request_deserializes_role_days() {
-    let req: AddMemberRequest = serde_json::from_str(r#"{"did":"did:m","role":"member","days":30}"#).unwrap();
+    let req: AddMemberRequest =
+        serde_json::from_str(r#"{"did":"did:m","role":"member","days":30}"#).unwrap();
     assert_eq!(req.role.as_deref(), Some("member"));
 }
 
@@ -87,62 +89,120 @@ fn join_preview_request_deserializes_token() {
 
 #[test]
 fn join_circle_request_deserializes_owner_host() {
-    let req: JoinCircleRequest = serde_json::from_str(r#"{"token_b64":"abc","owner_host":"http://owner"}"#).unwrap();
+    let req: JoinCircleRequest =
+        serde_json::from_str(r#"{"token_b64":"abc","owner_host":"http://owner"}"#).unwrap();
     assert_eq!(req.owner_host.as_deref(), Some("http://owner"));
 }
 
 #[test]
 fn circle_list_response_serializes_count() {
-    let response = CircleListResponse { status: "ok".into(), count: 1, circles: vec![circle("c")] };
+    let response = CircleListResponse {
+        status: "ok".into(),
+        count: 1,
+        circles: vec![circle("c")],
+    };
     assert_eq!(serde_json::to_value(response).unwrap()["count"], 1);
 }
 
 #[test]
 fn circle_detail_response_serializes_circle_id() {
-    let response = CircleDetailResponse { status: "ok".into(), circle: circle("c") };
-    assert_eq!(serde_json::to_value(response).unwrap()["circle"]["circleId"], "c");
+    let response = CircleDetailResponse {
+        status: "ok".into(),
+        circle: circle("c"),
+    };
+    assert_eq!(
+        serde_json::to_value(response).unwrap()["circle"]["circleId"],
+        "c"
+    );
 }
 
 #[test]
 fn circle_mutation_response_round_trips() {
-    let response = CircleMutationResponse { status: "ok".into(), message: "created".into(), circle: circle("c") };
-    let parsed: CircleMutationResponse = serde_json::from_str(&serde_json::to_string(&response).unwrap()).unwrap();
+    let response = CircleMutationResponse {
+        status: "ok".into(),
+        message: "created".into(),
+        circle: circle("c"),
+    };
+    let parsed: CircleMutationResponse =
+        serde_json::from_str(&serde_json::to_string(&response).unwrap()).unwrap();
     assert_eq!(parsed.message, "created");
 }
 
 #[test]
 fn circle_delete_response_serializes_revoked_ids() {
-    let response = CircleDeleteResponse { status: "ok".into(), message: "deleted".into(), circle_id: "c".into(), revoked_vc_ids: vec!["vc".into()] };
-    assert_eq!(serde_json::to_value(response).unwrap()["revoked_vc_ids"][0], "vc");
+    let response = CircleDeleteResponse {
+        status: "ok".into(),
+        message: "deleted".into(),
+        circle_id: "c".into(),
+        revoked_vc_ids: vec!["vc".into()],
+    };
+    assert_eq!(
+        serde_json::to_value(response).unwrap()["revoked_vc_ids"][0],
+        "vc"
+    );
 }
 
 #[test]
 fn member_list_response_serializes_empty_members() {
-    let response = MemberListResponse { status: "ok".into(), count: 0, members: vec![] };
-    assert_eq!(serde_json::to_value(response).unwrap()["members"].as_array().unwrap().len(), 0);
+    let response = MemberListResponse {
+        status: "ok".into(),
+        count: 0,
+        members: vec![],
+    };
+    assert_eq!(
+        serde_json::to_value(response).unwrap()["members"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 #[test]
 fn snapshot_sync_response_serializes_applied_count() {
-    let response = CircleSnapshotSyncResponse { status: "ok".into(), snapshots_applied: 3 };
-    assert_eq!(serde_json::to_value(response).unwrap()["snapshots_applied"], 3);
+    let response = CircleSnapshotSyncResponse {
+        status: "ok".into(),
+        snapshots_applied: 3,
+    };
+    assert_eq!(
+        serde_json::to_value(response).unwrap()["snapshots_applied"],
+        3
+    );
 }
 
 #[test]
 fn member_remove_response_serializes_revoked_ids() {
-    let response = MemberRemoveResponse { status: "ok".into(), message: "removed".into(), revoked_vc_ids: vec!["a".into(), "b".into()] };
-    assert_eq!(serde_json::to_value(response).unwrap()["revoked_vc_ids"].as_array().unwrap().len(), 2);
+    let response = MemberRemoveResponse {
+        status: "ok".into(),
+        message: "removed".into(),
+        revoked_vc_ids: vec!["a".into(), "b".into()],
+    };
+    assert_eq!(
+        serde_json::to_value(response).unwrap()["revoked_vc_ids"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
 }
 
 #[test]
 fn invite_list_response_serializes_empty() {
-    let response = InviteListResponse { status: "ok".into(), count: 0, invites: vec![] };
+    let response = InviteListResponse {
+        status: "ok".into(),
+        count: 0,
+        invites: vec![],
+    };
     assert_eq!(serde_json::to_value(response).unwrap()["count"], 0);
 }
 
 #[test]
 fn invite_delete_response_serializes_id() {
-    let response = InviteDeleteResponse { status: "ok".into(), message: "revoked".into(), invite_id: "i".into() };
+    let response = InviteDeleteResponse {
+        status: "ok".into(),
+        message: "revoked".into(),
+        invite_id: "i".into(),
+    };
     assert_eq!(serde_json::to_value(response).unwrap()["invite_id"], "i");
 }
 

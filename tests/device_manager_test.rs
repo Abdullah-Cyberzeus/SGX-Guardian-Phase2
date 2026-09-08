@@ -14,7 +14,10 @@ fn registry() -> Arc<DeviceRegistry> {
 fn manager() -> Arc<DeviceManager> {
     DeviceManager::new(
         registry(),
-        Arc::new(HaRestClient::new(HomeAssistantConfig { url: "http://127.0.0.1:9".into(), token: "token".into() })),
+        Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url: "http://127.0.0.1:9".into(),
+            token: "token".into(),
+        })),
         EventBus::new(),
         None,
     )
@@ -45,7 +48,10 @@ async fn get_registry_returns_same_registry() {
     let reg = registry();
     let manager = DeviceManager::new(
         reg.clone(),
-        Arc::new(HaRestClient::new(HomeAssistantConfig { url: "http://127.0.0.1:9".into(), token: "token".into() })),
+        Arc::new(HaRestClient::new(HomeAssistantConfig {
+            url: "http://127.0.0.1:9".into(),
+            token: "token".into(),
+        })),
         EventBus::new(),
         None,
     );
@@ -54,20 +60,35 @@ async fn get_registry_returns_same_registry() {
 
 #[tokio::test]
 async fn send_command_missing_device_errors_before_rest_call() {
-    let err = manager().send_command("light.missing", "light", "turn_on", None).await.unwrap_err();
+    let err = manager()
+        .send_command("light.missing", "light", "turn_on", None)
+        .await
+        .unwrap_err();
     assert!(err.contains("not found"));
 }
 
 #[tokio::test]
 async fn refresh_device_attributes_missing_device_returns_none() {
-    assert!(manager().refresh_device_attributes("light.missing").await.unwrap().is_none());
+    assert!(manager()
+        .refresh_device_attributes("light.missing")
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]
 async fn registry_visible_through_manager_after_insert() {
     let manager = manager();
-    manager.get_registry().upsert_device(device("id", "light.a")).await.unwrap();
-    assert!(manager.get_registry().get_device_by_entity_id("light.a").await.is_some());
+    manager
+        .get_registry()
+        .upsert_device(device("id", "light.a"))
+        .await
+        .unwrap();
+    assert!(manager
+        .get_registry()
+        .get_device_by_entity_id("light.a")
+        .await
+        .is_some());
 }
 
 #[tokio::test]

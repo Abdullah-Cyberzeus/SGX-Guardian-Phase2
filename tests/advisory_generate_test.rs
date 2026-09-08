@@ -87,14 +87,25 @@ fn device() -> DeviceContext {
 #[test]
 fn matched_rule_uses_signature_kb_source() {
     assert_eq!(
-        generate(&alert(ThreatCategory::Malware, Severity::High), None, None, &rules()).source,
+        generate(
+            &alert(ThreatCategory::Malware, Severity::High),
+            None,
+            None,
+            &rules()
+        )
+        .source,
         "signature-kb"
     );
 }
 
 #[test]
 fn matched_rule_uses_rule_title_summary_and_step() {
-    let rec = generate(&alert(ThreatCategory::Malware, Severity::High), None, None, &rules());
+    let rec = generate(
+        &alert(ThreatCategory::Malware, Severity::High),
+        None,
+        None,
+        &rules(),
+    );
     assert_eq!(rec.title, "matched title");
     assert_eq!(rec.summary, "matched summary");
     assert_eq!(rec.steps[0].action, "matched action");
@@ -103,7 +114,13 @@ fn matched_rule_uses_rule_title_summary_and_step() {
 #[test]
 fn fallback_without_anomaly_uses_fallback_source() {
     assert_eq!(
-        generate(&alert(ThreatCategory::Other, Severity::Info), None, None, &rules()).source,
+        generate(
+            &alert(ThreatCategory::Other, Severity::Info),
+            None,
+            None,
+            &rules()
+        )
+        .source,
         "fallback"
     );
 }
@@ -124,14 +141,29 @@ fn fallback_with_anomaly_uses_anomaly_source() {
 
 #[test]
 fn recommendation_id_is_deterministic_for_same_input() {
-    let first = generate(&alert(ThreatCategory::Other, Severity::Info), None, None, &rules());
-    let second = generate(&alert(ThreatCategory::Other, Severity::Info), None, None, &rules());
+    let first = generate(
+        &alert(ThreatCategory::Other, Severity::Info),
+        None,
+        None,
+        &rules(),
+    );
+    let second = generate(
+        &alert(ThreatCategory::Other, Severity::Info),
+        None,
+        None,
+        &rules(),
+    );
     assert_eq!(first.rec_id, second.rec_id);
 }
 
 #[test]
 fn recommendation_id_changes_with_source() {
-    let fallback = generate(&alert(ThreatCategory::Other, Severity::Info), None, None, &rules());
+    let fallback = generate(
+        &alert(ThreatCategory::Other, Severity::Info),
+        None,
+        None,
+        &rules(),
+    );
     let anomaly_rec = generate(
         &alert(ThreatCategory::Other, Severity::Info),
         Some(&anomaly(0.1)),
@@ -151,15 +183,28 @@ fn recommendation_preserves_alert_id_and_timestamp() {
 
 #[test]
 fn recommendation_context_includes_signature_flow_and_category() {
-    let rec = generate(&alert(ThreatCategory::Other, Severity::Low), None, None, &rules());
+    let rec = generate(
+        &alert(ThreatCategory::Other, Severity::Low),
+        None,
+        None,
+        &rules(),
+    );
     assert!(rec.context.iter().any(|line| line.contains("Signature:")));
-    assert!(rec.context.iter().any(|line| line.contains("10.0.0.1:1234 -> 10.0.0.2:443 TCP")));
+    assert!(rec
+        .context
+        .iter()
+        .any(|line| line.contains("10.0.0.1:1234 -> 10.0.0.2:443 TCP")));
     assert!(rec.context.iter().any(|line| line == "Category: other"));
 }
 
 #[test]
 fn recommendation_adds_suricata_reference() {
-    let rec = generate(&alert(ThreatCategory::Other, Severity::Low), None, None, &rules());
+    let rec = generate(
+        &alert(ThreatCategory::Other, Severity::Low),
+        None,
+        None,
+        &rules(),
+    );
     assert!(rec.references.contains(&"suricata:sid:4242".to_string()));
 }
 
@@ -196,7 +241,10 @@ fn recommendation_extends_context_with_device() {
         Some(&device()),
         &rules(),
     );
-    assert!(rec.context.iter().any(|line| line.contains("Device context")));
+    assert!(rec
+        .context
+        .iter()
+        .any(|line| line.contains("Device context")));
 }
 
 #[test]
@@ -207,13 +255,22 @@ fn recommendation_extends_references_with_device_cves() {
         Some(&device()),
         &rules(),
     );
-    assert!(rec.references.iter().any(|value| value.ends_with("CVE-2026-0001")));
+    assert!(rec
+        .references
+        .iter()
+        .any(|value| value.ends_with("CVE-2026-0001")));
 }
 
 #[test]
 fn info_confidence_without_anomaly_is_expected() {
     assert_eq!(
-        generate(&alert(ThreatCategory::Other, Severity::Info), None, None, &rules()).confidence,
+        generate(
+            &alert(ThreatCategory::Other, Severity::Info),
+            None,
+            None,
+            &rules()
+        )
+        .confidence,
         0.35
     );
 }
@@ -221,7 +278,13 @@ fn info_confidence_without_anomaly_is_expected() {
 #[test]
 fn low_confidence_without_anomaly_is_expected() {
     assert_eq!(
-        generate(&alert(ThreatCategory::Other, Severity::Low), None, None, &rules()).confidence,
+        generate(
+            &alert(ThreatCategory::Other, Severity::Low),
+            None,
+            None,
+            &rules()
+        )
+        .confidence,
         0.55
     );
 }
@@ -229,7 +292,13 @@ fn low_confidence_without_anomaly_is_expected() {
 #[test]
 fn medium_confidence_without_anomaly_is_expected() {
     assert_eq!(
-        generate(&alert(ThreatCategory::Other, Severity::Medium), None, None, &rules()).confidence,
+        generate(
+            &alert(ThreatCategory::Other, Severity::Medium),
+            None,
+            None,
+            &rules()
+        )
+        .confidence,
         0.72
     );
 }
@@ -237,7 +306,13 @@ fn medium_confidence_without_anomaly_is_expected() {
 #[test]
 fn high_confidence_without_anomaly_is_expected() {
     assert_eq!(
-        generate(&alert(ThreatCategory::Other, Severity::High), None, None, &rules()).confidence,
+        generate(
+            &alert(ThreatCategory::Other, Severity::High),
+            None,
+            None,
+            &rules()
+        )
+        .confidence,
         0.88
     );
 }
@@ -245,7 +320,13 @@ fn high_confidence_without_anomaly_is_expected() {
 #[test]
 fn critical_confidence_without_anomaly_is_expected() {
     assert_eq!(
-        generate(&alert(ThreatCategory::Other, Severity::Critical), None, None, &rules()).confidence,
+        generate(
+            &alert(ThreatCategory::Other, Severity::Critical),
+            None,
+            None,
+            &rules()
+        )
+        .confidence,
         0.95
     );
 }
@@ -296,24 +377,44 @@ fn large_anomaly_score_is_clamped_before_blending() {
 
 #[test]
 fn unmatched_due_low_severity_uses_fallback() {
-    let rec = generate(&alert(ThreatCategory::Malware, Severity::Low), None, None, &rules());
+    let rec = generate(
+        &alert(ThreatCategory::Malware, Severity::Low),
+        None,
+        None,
+        &rules(),
+    );
     assert_eq!(rec.title, "fallback title");
 }
 
 #[test]
 fn unmatched_due_category_uses_fallback() {
-    let rec = generate(&alert(ThreatCategory::Exploit, Severity::High), None, None, &rules());
+    let rec = generate(
+        &alert(ThreatCategory::Exploit, Severity::High),
+        None,
+        None,
+        &rules(),
+    );
     assert_eq!(rec.title, "fallback title");
 }
 
 #[test]
 fn severity_field_uses_alert_severity_string() {
-    let rec = generate(&alert(ThreatCategory::Other, Severity::Critical), None, None, &rules());
+    let rec = generate(
+        &alert(ThreatCategory::Other, Severity::Critical),
+        None,
+        None,
+        &rules(),
+    );
     assert_eq!(rec.severity, "critical");
 }
 
 #[test]
 fn fallback_steps_are_numbered() {
-    let rec = generate(&alert(ThreatCategory::Other, Severity::Info), None, None, &rules());
+    let rec = generate(
+        &alert(ThreatCategory::Other, Severity::Info),
+        None,
+        None,
+        &rules(),
+    );
     assert_eq!(rec.steps[0].order, 1);
 }

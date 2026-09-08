@@ -33,7 +33,11 @@ async fn list_integrations_returns_503_when_manager_not_initialized() {
         None,
     )
     .await;
-    assert_eq!(status, axum::http::StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(
+        status,
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        "{body}"
+    );
 }
 
 #[tokio::test]

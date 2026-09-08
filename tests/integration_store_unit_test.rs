@@ -61,7 +61,10 @@ fn save_and_load_metadata_without_credentials() {
         IntegrationMetadata {
             device_count: 4,
             error_message: Some("offline".into()),
-            ..meta(VendorProvider::GoogleNest, IntegrationStatus::Error("offline".into()))
+            ..meta(
+                VendorProvider::GoogleNest,
+                IntegrationStatus::Error("offline".into()),
+            )
         },
     );
     store.save(&map).unwrap();
@@ -170,13 +173,25 @@ fn save_loads_multiple_providers() {
     let (_file, path) = path();
     let store = IntegrationStore::new(&path);
     let mut map = HashMap::new();
-    map.insert(VendorProvider::GoogleNest, meta(VendorProvider::GoogleNest, IntegrationStatus::Expired));
-    map.insert(VendorProvider::TpLinkKasa, meta(VendorProvider::TpLinkKasa, IntegrationStatus::Disconnected));
+    map.insert(
+        VendorProvider::GoogleNest,
+        meta(VendorProvider::GoogleNest, IntegrationStatus::Expired),
+    );
+    map.insert(
+        VendorProvider::TpLinkKasa,
+        meta(VendorProvider::TpLinkKasa, IntegrationStatus::Disconnected),
+    );
     store.save(&map).unwrap();
     let loaded = store.load();
     assert_eq!(loaded.len(), 2);
-    assert_eq!(loaded[&VendorProvider::GoogleNest].status, IntegrationStatus::Expired);
-    assert_eq!(loaded[&VendorProvider::TpLinkKasa].status, IntegrationStatus::Disconnected);
+    assert_eq!(
+        loaded[&VendorProvider::GoogleNest].status,
+        IntegrationStatus::Expired
+    );
+    assert_eq!(
+        loaded[&VendorProvider::TpLinkKasa].status,
+        IntegrationStatus::Disconnected
+    );
 }
 
 #[test]
@@ -184,11 +199,17 @@ fn save_overwrites_previous_file_contents() {
     let (_file, path) = path();
     let store = IntegrationStore::new(&path);
     let mut first = HashMap::new();
-    first.insert(VendorProvider::GoogleNest, meta(VendorProvider::GoogleNest, IntegrationStatus::Connected));
+    first.insert(
+        VendorProvider::GoogleNest,
+        meta(VendorProvider::GoogleNest, IntegrationStatus::Connected),
+    );
     store.save(&first).unwrap();
 
     let mut second = HashMap::new();
-    second.insert(VendorProvider::TpLinkKasa, meta(VendorProvider::TpLinkKasa, IntegrationStatus::Expired));
+    second.insert(
+        VendorProvider::TpLinkKasa,
+        meta(VendorProvider::TpLinkKasa, IntegrationStatus::Expired),
+    );
     store.save(&second).unwrap();
     let loaded = store.load();
     assert!(!loaded.contains_key(&VendorProvider::GoogleNest));
@@ -259,7 +280,10 @@ fn last_synced_round_trips() {
         },
     );
     store.save(&map).unwrap();
-    assert_eq!(store.load()[&VendorProvider::GoogleNest].last_synced, Some(synced));
+    assert_eq!(
+        store.load()[&VendorProvider::GoogleNest].last_synced,
+        Some(synced)
+    );
 }
 
 #[test]

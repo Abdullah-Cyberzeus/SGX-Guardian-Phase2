@@ -264,7 +264,11 @@ async fn signals_round_trip_between_participants() {
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::ACCEPTED, "submit_signal should succeed: {body}");
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "submit_signal should succeed: {body}"
+    );
 
     let (status, body) = support::call(
         env.router(),
@@ -324,5 +328,8 @@ async fn host_can_moderate_and_then_end_the_group() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["total"], 0, "ended group must leave no active calls: {body}");
+    assert_eq!(
+        body["total"], 0,
+        "ended group must leave no active calls: {body}"
+    );
 }

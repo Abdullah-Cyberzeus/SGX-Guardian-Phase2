@@ -1,5 +1,5 @@
 use crate::api::{error::ApiError, state::AppState};
-use axum::{Json, extract::State};
+use axum::{extract::State, Json};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -264,7 +264,7 @@ pub async fn status(State(s): State<Arc<AppState>>) -> Result<Json<PcrStatus>, A
     }))
 }
 
-use super::dkp::{ActionResponse, run_cli};
+use super::dkp::{run_cli, ActionResponse};
 
 pub async fn baseline_create(
     State(_): State<Arc<AppState>>,

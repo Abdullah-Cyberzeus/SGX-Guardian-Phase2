@@ -94,18 +94,30 @@ fn encrypt_creates_key_file() {
 
 #[test]
 fn encrypt_decrypt_with_temp_key_round_trips() {
-    with_temp_key(|| assert_eq!(decrypt_password(&encrypt_password("StrongPass!1").unwrap()).unwrap(), "StrongPass!1"));
+    with_temp_key(|| {
+        assert_eq!(
+            decrypt_password(&encrypt_password("StrongPass!1").unwrap()).unwrap(),
+            "StrongPass!1"
+        )
+    });
 }
 
 #[test]
 fn encrypt_same_password_produces_distinct_ciphertexts() {
-    with_temp_key(|| assert_ne!(encrypt_password("StrongPass!1").unwrap(), encrypt_password("StrongPass!1").unwrap()));
+    with_temp_key(|| {
+        assert_ne!(
+            encrypt_password("StrongPass!1").unwrap(),
+            encrypt_password("StrongPass!1").unwrap()
+        )
+    });
 }
 
 #[test]
 fn decrypt_rejects_tampered_ciphertext() {
     with_temp_key(|| {
-        let mut raw = BASE64.decode(encrypt_password("StrongPass!1").unwrap()).unwrap();
+        let mut raw = BASE64
+            .decode(encrypt_password("StrongPass!1").unwrap())
+            .unwrap();
         let last = raw.len() - 1;
         raw[last] ^= 1;
         assert!(decrypt_password(&BASE64.encode(raw)).is_err());
@@ -115,7 +127,9 @@ fn decrypt_rejects_tampered_ciphertext() {
 #[test]
 fn decrypt_rejects_tampered_nonce() {
     with_temp_key(|| {
-        let mut raw = BASE64.decode(encrypt_password("StrongPass!1").unwrap()).unwrap();
+        let mut raw = BASE64
+            .decode(encrypt_password("StrongPass!1").unwrap())
+            .unwrap();
         raw[0] ^= 1;
         assert!(decrypt_password(&BASE64.encode(raw)).is_err());
     });
@@ -123,12 +137,22 @@ fn decrypt_rejects_tampered_nonce() {
 
 #[test]
 fn decrypt_rejects_valid_base64_with_no_tag() {
-    with_temp_key(|| assert_eq!(decrypt_password(&BASE64.encode(vec![0; 12])).unwrap_err(), "Decryption error"));
+    with_temp_key(|| {
+        assert_eq!(
+            decrypt_password(&BASE64.encode(vec![0; 12])).unwrap_err(),
+            "Decryption error"
+        )
+    });
 }
 
 #[test]
 fn decrypt_rejects_base64_payload_shorter_than_nonce() {
-    with_temp_key(|| assert_eq!(decrypt_password(&BASE64.encode(vec![0; 11])).unwrap_err(), "Too short"));
+    with_temp_key(|| {
+        assert_eq!(
+            decrypt_password(&BASE64.encode(vec![0; 11])).unwrap_err(),
+            "Too short"
+        )
+    });
 }
 
 #[test]
@@ -174,12 +198,22 @@ fn validate_rejects_common_password_before_special_char_check_if_short() {
 
 #[test]
 fn encrypt_rejects_empty_string_exact_message() {
-    with_temp_key(|| assert_eq!(encrypt_password("").unwrap_err(), "Cannot encrypt empty password"));
+    with_temp_key(|| {
+        assert_eq!(
+            encrypt_password("").unwrap_err(),
+            "Cannot encrypt empty password"
+        )
+    });
 }
 
 #[test]
 fn decrypt_rejects_empty_string_exact_message() {
-    with_temp_key(|| assert_eq!(decrypt_password("").unwrap_err(), "Cannot decrypt empty input"));
+    with_temp_key(|| {
+        assert_eq!(
+            decrypt_password("").unwrap_err(),
+            "Cannot decrypt empty input"
+        )
+    });
 }
 
 #[test]
@@ -191,23 +225,41 @@ fn decrypt_rejects_plain_text() {
 fn long_password_round_trips() {
     with_temp_key(|| {
         let pw = format!("{}!", "A1".repeat(512));
-        assert_eq!(decrypt_password(&encrypt_password(&pw).unwrap()).unwrap(), pw);
+        assert_eq!(
+            decrypt_password(&encrypt_password(&pw).unwrap()).unwrap(),
+            pw
+        );
     });
 }
 
 #[test]
 fn password_with_newline_round_trips() {
-    with_temp_key(|| assert_eq!(decrypt_password(&encrypt_password("Strong\nPass!1").unwrap()).unwrap(), "Strong\nPass!1"));
+    with_temp_key(|| {
+        assert_eq!(
+            decrypt_password(&encrypt_password("Strong\nPass!1").unwrap()).unwrap(),
+            "Strong\nPass!1"
+        )
+    });
 }
 
 #[test]
 fn password_with_tabs_round_trips() {
-    with_temp_key(|| assert_eq!(decrypt_password(&encrypt_password("Strong\tPass!1").unwrap()).unwrap(), "Strong\tPass!1"));
+    with_temp_key(|| {
+        assert_eq!(
+            decrypt_password(&encrypt_password("Strong\tPass!1").unwrap()).unwrap(),
+            "Strong\tPass!1"
+        )
+    });
 }
 
 #[test]
 fn password_with_symbols_round_trips() {
-    with_temp_key(|| assert_eq!(decrypt_password(&encrypt_password("!@#$%^&*()Aa1").unwrap()).unwrap(), "!@#$%^&*()Aa1"));
+    with_temp_key(|| {
+        assert_eq!(
+            decrypt_password(&encrypt_password("!@#$%^&*()Aa1").unwrap()).unwrap(),
+            "!@#$%^&*()Aa1"
+        )
+    });
 }
 
 #[test]
@@ -215,6 +267,11 @@ fn existing_invalid_key_file_is_replaced() {
     with_temp_key(|| {
         std::fs::write(std::env::var("GUARDIAN_KEY_FILE").unwrap(), b"short").unwrap();
         assert!(encrypt_password("StrongPass!1").is_ok());
-        assert_eq!(std::fs::read(std::env::var("GUARDIAN_KEY_FILE").unwrap()).unwrap().len(), 32);
+        assert_eq!(
+            std::fs::read(std::env::var("GUARDIAN_KEY_FILE").unwrap())
+                .unwrap()
+                .len(),
+            32
+        );
     });
 }

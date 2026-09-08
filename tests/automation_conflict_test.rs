@@ -49,7 +49,9 @@ fn empty_rules_return_empty_actions() {
 #[test]
 fn single_command_is_kept() {
     assert_eq!(
-        ids(ConflictResolver::resolve_conflicts(vec![command_rule("a", 1, "light.a", "turn_on")])),
+        ids(ConflictResolver::resolve_conflicts(vec![command_rule(
+            "a", 1, "light.a", "turn_on"
+        )])),
         vec!["a"]
     );
 }
@@ -141,7 +143,9 @@ fn different_entities_both_commands_kept() {
 #[test]
 fn notification_action_is_kept() {
     assert_eq!(
-        ids(ConflictResolver::resolve_conflicts(vec![notification_rule("n")])),
+        ids(ConflictResolver::resolve_conflicts(vec![
+            notification_rule("n")
+        ])),
         vec!["n"]
     );
 }
@@ -150,7 +154,10 @@ fn notification_action_is_kept() {
 fn delay_action_is_kept_as_non_command() {
     let mut rule = command_rule("d", 1, "light.a", "turn_on");
     rule.actions = vec![RuleAction::Delay { delay_secs: 1 }];
-    assert_eq!(ids(ConflictResolver::resolve_conflicts(vec![rule])), vec!["d"]);
+    assert_eq!(
+        ids(ConflictResolver::resolve_conflicts(vec![rule])),
+        vec!["d"]
+    );
 }
 
 #[test]
@@ -198,7 +205,10 @@ fn command_domain_does_not_affect_conflict_group() {
     if let RuleAction::Command { domain, .. } = &mut b.actions[0] {
         *domain = "switch".into();
     }
-    assert_eq!(ids(ConflictResolver::resolve_conflicts(vec![a, b])), vec!["b"]);
+    assert_eq!(
+        ids(ConflictResolver::resolve_conflicts(vec![a, b])),
+        vec!["b"]
+    );
 }
 
 #[test]
@@ -261,13 +271,15 @@ fn one_entity_conflict_does_not_drop_other_entity() {
 
 #[test]
 fn result_contains_original_rule_priority() {
-    let resolved = ConflictResolver::resolve_conflicts(vec![command_rule("a", 77, "light.a", "on")]);
+    let resolved =
+        ConflictResolver::resolve_conflicts(vec![command_rule("a", 77, "light.a", "on")]);
     assert_eq!(resolved[0].0.priority, 77);
 }
 
 #[test]
 fn result_contains_original_action_command() {
-    let resolved = ConflictResolver::resolve_conflicts(vec![command_rule("a", 1, "light.a", "turn_on")]);
+    let resolved =
+        ConflictResolver::resolve_conflicts(vec![command_rule("a", 1, "light.a", "turn_on")]);
     match &resolved[0].1 {
         RuleAction::Command { command, .. } => assert_eq!(command, "turn_on"),
         _ => panic!("expected command"),
@@ -278,7 +290,10 @@ fn result_contains_original_action_command() {
 fn disabled_rules_are_still_processed_if_supplied() {
     let mut rule = command_rule("disabled", 1, "light.a", "turn_on");
     rule.enabled = false;
-    assert_eq!(ids(ConflictResolver::resolve_conflicts(vec![rule])), vec!["disabled"]);
+    assert_eq!(
+        ids(ConflictResolver::resolve_conflicts(vec![rule])),
+        vec!["disabled"]
+    );
 }
 
 #[test]
@@ -289,7 +304,9 @@ fn service_data_is_preserved() {
     }
     let resolved = ConflictResolver::resolve_conflicts(vec![rule]);
     match &resolved[0].1 {
-        RuleAction::Command { service_data, .. } => assert_eq!(service_data.as_ref().unwrap()["brightness"], 10),
+        RuleAction::Command { service_data, .. } => {
+            assert_eq!(service_data.as_ref().unwrap()["brightness"], 10)
+        }
         _ => panic!("expected command"),
     }
 }

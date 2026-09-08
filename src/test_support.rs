@@ -169,10 +169,7 @@ pub mod guardian {
             for (key, relative) in REDIRECTED {
                 redirect(key, root.path().join(relative));
             }
-            redirect(
-                crate::vc::persistence::VC_BASE_ENV,
-                root.path().join("vc"),
-            );
+            redirect(crate::vc::persistence::VC_BASE_ENV, root.path().join("vc"));
             redirect(
                 crate::circle::persistence::CIRCLE_BASE_ENV,
                 root.path().join("circles"),

@@ -129,19 +129,27 @@ fn parse_record(record: &str) -> serde_json::Value {
 #[test]
 fn writer_build_record_contains_previous_hash() {
     let mut writer = AuditWriter::new(PathBuf::from("unused"));
-    assert!(parse_record(&writer.build_record(&event("m"))).get("previous_hash").is_some());
+    assert!(parse_record(&writer.build_record(&event("m")))
+        .get("previous_hash")
+        .is_some());
 }
 
 #[test]
 fn writer_build_record_first_previous_hash_is_genesis() {
     let mut writer = AuditWriter::new(PathBuf::from("unused"));
-    assert_eq!(parse_record(&writer.build_record(&event("m")))["previous_hash"], "GENESIS");
+    assert_eq!(
+        parse_record(&writer.build_record(&event("m")))["previous_hash"],
+        "GENESIS"
+    );
 }
 
 #[test]
 fn writer_build_record_hash_is_hex() {
     let mut writer = AuditWriter::new(PathBuf::from("unused"));
-    let hash = parse_record(&writer.build_record(&event("m")))["hash"].as_str().unwrap().to_string();
+    let hash = parse_record(&writer.build_record(&event("m")))["hash"]
+        .as_str()
+        .unwrap()
+        .to_string();
     assert_eq!(hash.len(), 64);
     assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
 }
@@ -149,7 +157,10 @@ fn writer_build_record_hash_is_hex() {
 #[test]
 fn writer_build_record_embeds_event() {
     let mut writer = AuditWriter::new(PathBuf::from("unused"));
-    assert_eq!(parse_record(&writer.build_record(&event("hello")))["event"]["message"], "hello");
+    assert_eq!(
+        parse_record(&writer.build_record(&event("hello")))["event"]["message"],
+        "hello"
+    );
 }
 
 #[test]
@@ -192,8 +203,14 @@ fn writer_new_uses_last_line_hash_as_anchor() {
     let path = dir.path().join("audit.log");
     let mut writer = AuditWriter::new(path.clone());
     writer.append(&event("one")).unwrap();
-    let last: serde_json::Value =
-        serde_json::from_str(std::fs::read_to_string(&path).unwrap().lines().last().unwrap()).unwrap();
+    let last: serde_json::Value = serde_json::from_str(
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .last()
+            .unwrap(),
+    )
+    .unwrap();
     let mut resumed = AuditWriter::new(path);
     let next = parse_record(&resumed.build_record(&event("two")));
     assert_eq!(next["previous_hash"], last["hash"]);
@@ -205,7 +222,10 @@ fn writer_new_ignores_malformed_last_line() {
     let path = dir.path().join("audit.log");
     std::fs::write(&path, b"not-json\n").unwrap();
     let mut writer = AuditWriter::new(path);
-    assert_eq!(parse_record(&writer.build_record(&event("m")))["previous_hash"], "GENESIS");
+    assert_eq!(
+        parse_record(&writer.build_record(&event("m")))["previous_hash"],
+        "GENESIS"
+    );
 }
 
 #[test]
@@ -214,34 +234,47 @@ fn writer_new_ignores_last_line_without_hash() {
     let path = dir.path().join("audit.log");
     std::fs::write(&path, br#"{"event":{}}"#).unwrap();
     let mut writer = AuditWriter::new(path);
-    assert_eq!(parse_record(&writer.build_record(&event("m")))["previous_hash"], "GENESIS");
+    assert_eq!(
+        parse_record(&writer.build_record(&event("m")))["previous_hash"],
+        "GENESIS"
+    );
 }
 
 #[test]
 fn writer_append_to_directory_errors() {
     let dir = tempdir().unwrap();
-    assert!(AuditWriter::new(dir.path().to_path_buf()).append(&event("m")).is_err());
+    assert!(AuditWriter::new(dir.path().to_path_buf())
+        .append(&event("m"))
+        .is_err());
 }
 
 #[test]
 fn verifier_missing_file_returns_error() {
     let dir = tempdir().unwrap();
-    assert!(AuditVerifier::verify(dir.path().join("missing.log").to_str().unwrap())
-        .unwrap_err()
-        .contains("Failed to open audit log"));
+    assert!(
+        AuditVerifier::verify(dir.path().join("missing.log").to_str().unwrap())
+            .unwrap_err()
+            .contains("Failed to open audit log")
+    );
 }
 
 #[test]
 fn verifier_empty_file_succeeds_with_zero_lines() {
     let file = tempfile::NamedTempFile::new().unwrap();
-    assert_eq!(AuditVerifier::verify(file.path().to_str().unwrap()).unwrap(), (0, 0));
+    assert_eq!(
+        AuditVerifier::verify(file.path().to_str().unwrap()).unwrap(),
+        (0, 0)
+    );
 }
 
 #[test]
 fn verifier_blank_lines_are_ignored() {
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), b"\n \n").unwrap();
-    assert_eq!(AuditVerifier::verify(file.path().to_str().unwrap()).unwrap(), (0, 0));
+    assert_eq!(
+        AuditVerifier::verify(file.path().to_str().unwrap()).unwrap(),
+        (0, 0)
+    );
 }
 
 #[test]
@@ -251,47 +284,69 @@ fn verifier_valid_writer_log_succeeds() {
     let mut writer = AuditWriter::new(path.clone());
     writer.append(&event("one")).unwrap();
     writer.append(&event("two")).unwrap();
-    assert_eq!(AuditVerifier::verify(path.to_str().unwrap()).unwrap(), (2, 1));
+    assert_eq!(
+        AuditVerifier::verify(path.to_str().unwrap()).unwrap(),
+        (2, 1)
+    );
 }
 
 #[test]
 fn verifier_invalid_json_reports_line_number() {
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), b"{\n").unwrap();
-    assert!(AuditVerifier::verify(file.path().to_str().unwrap()).unwrap_err().contains("line 1"));
+    assert!(AuditVerifier::verify(file.path().to_str().unwrap())
+        .unwrap_err()
+        .contains("line 1"));
 }
 
 #[test]
 fn verifier_missing_event_field_errors() {
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), br#"{"hash":"x","previous_hash":"GENESIS"}"#).unwrap();
-    assert_eq!(AuditVerifier::verify(file.path().to_str().unwrap()).unwrap_err(), "Missing event field");
+    assert_eq!(
+        AuditVerifier::verify(file.path().to_str().unwrap()).unwrap_err(),
+        "Missing event field"
+    );
 }
 
 #[test]
 fn verifier_missing_hash_field_errors() {
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), br#"{"previous_hash":"GENESIS","event":{"timestamp":1,"node_id":"n","category":"Node","severity":"Info","action":"Started","message":"m"}}"#).unwrap();
-    assert_eq!(AuditVerifier::verify(file.path().to_str().unwrap()).unwrap_err(), "Missing hash field");
+    assert_eq!(
+        AuditVerifier::verify(file.path().to_str().unwrap()).unwrap_err(),
+        "Missing hash field"
+    );
 }
 
 #[test]
 fn verifier_invalid_event_errors() {
     let file = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), br#"{"previous_hash":"GENESIS","hash":"x","event":{"timestamp":1}}"#).unwrap();
-    assert_eq!(AuditVerifier::verify(file.path().to_str().unwrap()).unwrap_err(), "Failed to parse event");
+    std::fs::write(
+        file.path(),
+        br#"{"previous_hash":"GENESIS","hash":"x","event":{"timestamp":1}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        AuditVerifier::verify(file.path().to_str().unwrap()).unwrap_err(),
+        "Failed to parse event"
+    );
 }
 
 #[test]
 fn verifier_tampered_hash_errors() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("audit.log");
-    AuditWriter::new(path.clone()).append(&event("one")).unwrap();
+    AuditWriter::new(path.clone())
+        .append(&event("one"))
+        .unwrap();
     let mut value: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     value["hash"] = serde_json::json!("bad");
     std::fs::write(&path, serde_json::to_string(&value).unwrap()).unwrap();
-    assert!(AuditVerifier::verify(path.to_str().unwrap()).unwrap_err().contains("TAMPER"));
+    assert!(AuditVerifier::verify(path.to_str().unwrap())
+        .unwrap_err()
+        .contains("TAMPER"));
 }
 
 #[test]
@@ -301,12 +356,18 @@ fn verifier_broken_chain_errors() {
     let mut writer = AuditWriter::new(path.clone());
     writer.append(&event("one")).unwrap();
     writer.append(&event("two")).unwrap();
-    let mut lines: Vec<String> = std::fs::read_to_string(&path).unwrap().lines().map(str::to_string).collect();
+    let mut lines: Vec<String> = std::fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
     let mut second: serde_json::Value = serde_json::from_str(&lines[1]).unwrap();
     second["previous_hash"] = serde_json::json!("broken");
     lines[1] = serde_json::to_string(&second).unwrap();
     std::fs::write(&path, lines.join("\n")).unwrap();
-    assert!(AuditVerifier::verify(path.to_str().unwrap()).unwrap_err().contains("broken chain"));
+    assert!(AuditVerifier::verify(path.to_str().unwrap())
+        .unwrap_err()
+        .contains("broken chain"));
 }
 
 #[test]
@@ -322,7 +383,10 @@ fn verifier_second_genesis_starts_new_segment() {
         .unwrap()
         .write_all(format!("{}\n", segment.build_record(&event("two"))).as_bytes())
         .unwrap();
-    assert_eq!(AuditVerifier::verify(path.to_str().unwrap()).unwrap(), (2, 2));
+    assert_eq!(
+        AuditVerifier::verify(path.to_str().unwrap()).unwrap(),
+        (2, 2)
+    );
 }
 
 #[test]
@@ -338,7 +402,10 @@ fn verifier_first_line_custom_previous_hash_succeeds_when_hash_matches() {
         serde_json::json!({"previous_hash":"seed","hash":hash,"event":event}).to_string(),
     )
     .unwrap();
-    assert_eq!(AuditVerifier::verify(file.path().to_str().unwrap()).unwrap(), (1, 1));
+    assert_eq!(
+        AuditVerifier::verify(file.path().to_str().unwrap()).unwrap(),
+        (1, 1)
+    );
 }
 
 #[test]
@@ -347,14 +414,25 @@ fn verifier_counts_nonblank_lines_only() {
     let path = dir.path().join("audit.log");
     let mut writer = AuditWriter::new(path.clone());
     writer.append(&event("one")).unwrap();
-    std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"\n\n").unwrap();
-    assert_eq!(AuditVerifier::verify(path.to_str().unwrap()).unwrap(), (1, 1));
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(b"\n\n")
+        .unwrap();
+    assert_eq!(
+        AuditVerifier::verify(path.to_str().unwrap()).unwrap(),
+        (1, 1)
+    );
 }
 
 #[test]
 fn writer_build_record_preserves_empty_message() {
     let mut writer = AuditWriter::new(PathBuf::from("unused"));
-    assert_eq!(parse_record(&writer.build_record(&event("")))["event"]["message"], "");
+    assert_eq!(
+        parse_record(&writer.build_record(&event("")))["event"]["message"],
+        ""
+    );
 }
 
 #[test]

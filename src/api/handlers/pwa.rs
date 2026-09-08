@@ -1418,7 +1418,8 @@ pub async fn onboarding(
         fingerprint_bits: 80,
         circles,
         internet_required: false,
-        multiple_guardian_note: "If more than one Guardian is reachable, verify this fingerprint before continuing.",
+        multiple_guardian_note:
+            "If more than one Guardian is reachable, verify this fingerprint before continuing.",
     }))
 }
 

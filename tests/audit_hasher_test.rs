@@ -82,12 +82,18 @@ fn empty_payload_hashes_successfully() {
 
 #[test]
 fn whitespace_payload_is_distinct_from_empty() {
-    assert_ne!(AuditHashChain::new().next_hash(" "), AuditHashChain::new().next_hash(""));
+    assert_ne!(
+        AuditHashChain::new().next_hash(" "),
+        AuditHashChain::new().next_hash("")
+    );
 }
 
 #[test]
 fn newline_payload_is_distinct_from_space() {
-    assert_ne!(AuditHashChain::new().next_hash("\n"), AuditHashChain::new().next_hash(" "));
+    assert_ne!(
+        AuditHashChain::new().next_hash("\n"),
+        AuditHashChain::new().next_hash(" ")
+    );
 }
 
 #[test]
@@ -101,7 +107,10 @@ fn unicode_payload_hashes_deterministically() {
 #[test]
 fn json_payload_hashes_deterministically() {
     let payload = r#"{"event":"audit","ok":true}"#;
-    assert_eq!(AuditHashChain::new().next_hash(payload), expected("GENESIS", payload));
+    assert_eq!(
+        AuditHashChain::new().next_hash(payload),
+        expected("GENESIS", payload)
+    );
 }
 
 #[test]
@@ -112,7 +121,9 @@ fn long_payload_hashes_to_sha256_hex_length() {
 #[test]
 fn hash_is_lowercase_hex() {
     let hash = AuditHashChain::new().next_hash("payload");
-    assert!(hash.chars().all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()));
+    assert!(hash
+        .chars()
+        .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()));
 }
 
 #[test]
@@ -169,7 +180,10 @@ fn multiple_empty_payloads_advance_chain() {
 
 #[test]
 fn payload_case_changes_hash() {
-    assert_ne!(AuditHashChain::new().next_hash("abc"), AuditHashChain::new().next_hash("ABC"));
+    assert_ne!(
+        AuditHashChain::new().next_hash("abc"),
+        AuditHashChain::new().next_hash("ABC")
+    );
 }
 
 #[test]

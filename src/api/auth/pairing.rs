@@ -1,10 +1,10 @@
 use crate::api::auth::ecdsa::normalize_p256_signature;
 use crate::api::auth::store::{AdminStores, PairingChallengeRecord};
 use crate::key_manager::KeyManager;
-use anyhow::{Result, anyhow};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
-use rand::{RngCore, rngs::OsRng};
+use rand::{rngs::OsRng, RngCore};
 use ring::signature::{self, UnparsedPublicKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -319,10 +319,9 @@ mod tests {
         let tampered = encode_proof(&tampered).expect("encode tampered proof");
 
         let err = verify_proof(&tampered).expect_err("tampered proof must fail");
-        assert!(
-            err.to_string()
-                .contains("pairing signature verification failed")
-        );
+        assert!(err
+            .to_string()
+            .contains("pairing signature verification failed"));
     }
 
     #[tokio::test]

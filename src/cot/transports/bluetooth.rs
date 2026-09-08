@@ -386,7 +386,10 @@ mod tests {
         );
         assert_eq!(
             parse_scan_guardians(out),
-            vec!["AA:BB:CC:DD:EE:FF".to_string(), "11:22:33:44:55:66".to_string()]
+            vec![
+                "AA:BB:CC:DD:EE:FF".to_string(),
+                "11:22:33:44:55:66".to_string()
+            ]
         );
         assert!(parse_scan_guardians("").is_empty());
     }

@@ -46,7 +46,10 @@ fn entry() -> WhitelistEntry {
 #[test]
 fn load_missing_file_returns_empty_whitelist() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(Whitelist::load(&dir.path().join("missing.yaml")).unwrap().entries.is_empty());
+    assert!(Whitelist::load(&dir.path().join("missing.yaml"))
+        .unwrap()
+        .entries
+        .is_empty());
 }
 
 #[test]
@@ -61,7 +64,11 @@ fn load_empty_file_returns_empty_whitelist() {
 fn load_yaml_normalizes_mac_key_and_defaults_vectors() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("whitelist.yaml");
-    std::fs::write(&path, "devices:\n  - mac: ' aa:bb:cc:11:22:33 '\n    label: Printer\n").unwrap();
+    std::fs::write(
+        &path,
+        "devices:\n  - mac: ' aa:bb:cc:11:22:33 '\n    label: Printer\n",
+    )
+    .unwrap();
     let loaded = Whitelist::load(&path).unwrap();
     let entry = loaded.entries.get("AA:BB:CC:11:22:33").unwrap();
     assert_eq!(entry.label.as_deref(), Some("Printer"));
@@ -89,7 +96,12 @@ fn duplicate_mac_last_entry_wins() {
     let loaded = Whitelist::load(&path).unwrap();
     assert_eq!(loaded.entries.len(), 1);
     assert_eq!(
-        loaded.entries.get("AA:BB:CC:11:22:33").unwrap().label.as_deref(),
+        loaded
+            .entries
+            .get("AA:BB:CC:11:22:33")
+            .unwrap()
+            .label
+            .as_deref(),
         Some("New")
     );
 }
@@ -113,7 +125,9 @@ fn classify_missing_mac_marks_unauthorized() {
 #[test]
 fn classify_matching_mac_approves_without_expectations() {
     let mut whitelist = Whitelist::default();
-    whitelist.entries.insert("AA:BB:CC:11:22:33".into(), entry());
+    whitelist
+        .entries
+        .insert("AA:BB:CC:11:22:33".into(), entry());
     let mut dev = device(Some("aa:bb:cc:11:22:33"), "192.168.50.103");
     whitelist.classify(&mut dev);
     assert_eq!(dev.status, DeviceStatus::Approved);
@@ -198,9 +212,15 @@ fn classify_expected_ip_mismatch_marks_unauthorized() {
 
 #[test]
 fn enrich_entries_attaches_matching_inventory_snapshot() {
-    let views = enrich_entries(&[entry()], &[device(Some("AA:BB:CC:11:22:33"), "192.168.50.103")]);
+    let views = enrich_entries(
+        &[entry()],
+        &[device(Some("AA:BB:CC:11:22:33"), "192.168.50.103")],
+    );
     assert!(views[0].inventory_match);
-    assert_eq!(views[0].current_devices[0].open_ports, vec!["22/tcp ssh (OpenSSH)"]);
+    assert_eq!(
+        views[0].current_devices[0].open_ports,
+        vec!["22/tcp ssh (OpenSSH)"]
+    );
 }
 
 #[test]
@@ -213,7 +233,11 @@ fn enrich_entries_sorts_matches_by_last_seen_desc_then_ip() {
     c.last_seen = "2026-06-12T01:00:00Z".into();
     let views = enrich_entries(&[entry()], &[a, b, c]);
     assert_eq!(
-        views[0].current_devices.iter().map(|d| d.ip.as_str()).collect::<Vec<_>>(),
+        views[0]
+            .current_devices
+            .iter()
+            .map(|d| d.ip.as_str())
+            .collect::<Vec<_>>(),
         vec!["192.168.50.10", "192.168.50.20", "192.168.50.200"]
     );
 }
@@ -221,12 +245,21 @@ fn enrich_entries_sorts_matches_by_last_seen_desc_then_ip() {
 #[test]
 fn infer_label_prefers_vendor_then_hostname_then_ip() {
     let dev = device(Some("AA:BB:CC:11:22:33"), "192.168.50.103");
-    assert_eq!(infer_label_for_mac("AA:BB:CC:11:22:33", &[dev]), Some("Acme".into()));
+    assert_eq!(
+        infer_label_for_mac("AA:BB:CC:11:22:33", &[dev]),
+        Some("Acme".into())
+    );
     let mut host = device(Some("AA:BB:CC:11:22:33"), "192.168.50.104");
     host.vendor = Some(" ".into());
-    assert_eq!(infer_label_for_mac("AA:BB:CC:11:22:33", &[host]), Some("printer".into()));
+    assert_eq!(
+        infer_label_for_mac("AA:BB:CC:11:22:33", &[host]),
+        Some("printer".into())
+    );
     let mut ip = device(Some("AA:BB:CC:11:22:33"), "192.168.50.105");
     ip.vendor = None;
     ip.hostname = Some(" ".into());
-    assert_eq!(infer_label_for_mac("AA:BB:CC:11:22:33", &[ip]), Some("192.168.50.105".into()));
+    assert_eq!(
+        infer_label_for_mac("AA:BB:CC:11:22:33", &[ip]),
+        Some("192.168.50.105".into())
+    );
 }

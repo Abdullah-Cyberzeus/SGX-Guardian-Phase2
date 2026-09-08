@@ -53,7 +53,10 @@ fn default_rules_include_expected_rule_count() {
 
 #[test]
 fn default_rules_have_fallback_steps() {
-    assert!(!RecommendationRules::default_rules().fallback.steps.is_empty());
+    assert!(!RecommendationRules::default_rules()
+        .fallback
+        .steps
+        .is_empty());
 }
 
 #[test]
@@ -178,15 +181,16 @@ fn tampered_signed_rules_fail_validation() {
 #[test]
 fn rules_round_trip_json() {
     let encoded = serde_json::to_string(&rules()).unwrap();
-    assert_eq!(serde_json::from_str::<RecommendationRules>(&encoded).unwrap(), rules());
+    assert_eq!(
+        serde_json::from_str::<RecommendationRules>(&encoded).unwrap(),
+        rules()
+    );
 }
 
 #[test]
 fn serde_defaults_missing_rule_vectors() {
-    let parsed: RecommendationRules = serde_json::from_str(
-        r#"{"fallback":{"title":"f","summary":"s"}}"#,
-    )
-    .unwrap();
+    let parsed: RecommendationRules =
+        serde_json::from_str(r#"{"fallback":{"title":"f","summary":"s"}}"#).unwrap();
     assert!(parsed.rules.is_empty());
     assert!(parsed.fallback.steps.is_empty());
     assert!(parsed.fallback.references.is_empty());

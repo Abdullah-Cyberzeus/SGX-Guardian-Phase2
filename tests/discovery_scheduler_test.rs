@@ -158,7 +158,10 @@ async fn scheduler_start_preserves_existing_config() {
     let (_dir, scheduler) = scheduler_fixture();
     std::fs::write(&scheduler.config_path, "enabled: false\n").unwrap();
     scheduler.clone().start();
-    assert_eq!(std::fs::read_to_string(&scheduler.config_path).unwrap(), "enabled: false\n");
+    assert_eq!(
+        std::fs::read_to_string(&scheduler.config_path).unwrap(),
+        "enabled: false\n"
+    );
 }
 
 #[tokio::test]
@@ -166,7 +169,9 @@ async fn scheduler_start_preserves_existing_whitelist() {
     let (_dir, scheduler) = scheduler_fixture();
     std::fs::write(&scheduler.whitelist_path, "version: \"1.0\"\ndevices: []\n").unwrap();
     scheduler.clone().start();
-    assert!(std::fs::read_to_string(&scheduler.whitelist_path).unwrap().contains("devices"));
+    assert!(std::fs::read_to_string(&scheduler.whitelist_path)
+        .unwrap()
+        .contains("devices"));
 }
 
 #[tokio::test]
@@ -230,5 +235,8 @@ fn scheduler_fixture_accepts_daily_standard_values() {
     cfg.enabled = false;
     cfg.target_cidr = Some("127.0.0.1/32".to_string());
     assert_eq!(scheduler.node_id, "node-test");
-    assert_eq!(cfg.scheduled_intensity(ScheduledScanKind::Daily), Some(ScanIntensity::Aggressive));
+    assert_eq!(
+        cfg.scheduled_intensity(ScheduledScanKind::Daily),
+        Some(ScanIntensity::Aggressive)
+    );
 }

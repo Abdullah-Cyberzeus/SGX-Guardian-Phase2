@@ -28,7 +28,10 @@ fn provider_from_str_accepts_google_aliases_case_insensitively() {
         VendorProvider::from_str("GOOGLE_NEST"),
         Some(VendorProvider::GoogleNest)
     );
-    assert_eq!(VendorProvider::from_str("Nest"), Some(VendorProvider::GoogleNest));
+    assert_eq!(
+        VendorProvider::from_str("Nest"),
+        Some(VendorProvider::GoogleNest)
+    );
 }
 
 #[test]
@@ -37,8 +40,14 @@ fn provider_from_str_accepts_kasa_aliases_case_insensitively() {
         VendorProvider::from_str("TP_LINK_KASA"),
         Some(VendorProvider::TpLinkKasa)
     );
-    assert_eq!(VendorProvider::from_str("KASA"), Some(VendorProvider::TpLinkKasa));
-    assert_eq!(VendorProvider::from_str("tplink"), Some(VendorProvider::TpLinkKasa));
+    assert_eq!(
+        VendorProvider::from_str("KASA"),
+        Some(VendorProvider::TpLinkKasa)
+    );
+    assert_eq!(
+        VendorProvider::from_str("tplink"),
+        Some(VendorProvider::TpLinkKasa)
+    );
 }
 
 #[test]
@@ -79,7 +88,10 @@ fn provider_deserialize_rejects_unknown_value() {
 
 #[test]
 fn default_status_is_disconnected() {
-    assert_eq!(IntegrationStatus::default(), IntegrationStatus::Disconnected);
+    assert_eq!(
+        IntegrationStatus::default(),
+        IntegrationStatus::Disconnected
+    );
 }
 
 #[test]

@@ -2,12 +2,17 @@ use sgx_guardian_client::threat::anomaly::{AnomalyDetector, AnomalyType};
 
 #[test]
 fn detector_preserves_peer_id() {
-    assert_eq!(AnomalyDetector::new("peer-main".into()).peer_id(), "peer-main");
+    assert_eq!(
+        AnomalyDetector::new("peer-main".into()).peer_id(),
+        "peer-main"
+    );
 }
 
 #[test]
 fn unknown_peer_activity_is_none() {
-    assert!(AnomalyDetector::new("p".into()).get_activity("absent").is_none());
+    assert!(AnomalyDetector::new("p".into())
+        .get_activity("absent")
+        .is_none());
 }
 
 #[test]
@@ -81,7 +86,10 @@ fn third_policy_violation_crosses_threshold() {
     let mut detector = AnomalyDetector::new("p".into());
     let mut score = 0.0;
     for _ in 0..3 {
-        score = detector.detect("peer", "policy_violation", "").unwrap().score;
+        score = detector
+            .detect("peer", "policy_violation", "")
+            .unwrap()
+            .score;
     }
     assert_eq!(score, 75.0);
 }
@@ -91,7 +99,10 @@ fn policy_violations_clamp_at_100() {
     let mut detector = AnomalyDetector::new("p".into());
     let mut score = 0.0;
     for _ in 0..8 {
-        score = detector.detect("peer", "policy_violation", "").unwrap().score;
+        score = detector
+            .detect("peer", "policy_violation", "")
+            .unwrap()
+            .score;
     }
     assert_eq!(score, 100.0);
 }
@@ -163,7 +174,10 @@ fn cloned_detector_preserves_peer_id() {
 #[test]
 fn anomaly_type_round_trips_json() {
     let kind = AnomalyType::MediaAccessAnomaly;
-    assert_eq!(serde_json::from_value::<AnomalyType>(serde_json::to_value(&kind).unwrap()).unwrap(), kind);
+    assert_eq!(
+        serde_json::from_value::<AnomalyType>(serde_json::to_value(&kind).unwrap()).unwrap(),
+        kind
+    );
 }
 
 #[test]

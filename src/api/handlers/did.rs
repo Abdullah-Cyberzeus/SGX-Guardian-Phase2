@@ -2,14 +2,14 @@ use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::did::{
-    self, DidError, doc_distribution, doc_persistence, doc_sign, document::DidDocument,
+    self, doc_distribution, doc_persistence, doc_sign, document::DidDocument, DidError,
 };
 use axum::{
-    Json,
     body::Bytes,
     extract::{Query, State},
+    Json,
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -697,10 +697,9 @@ mod tests {
     use super::*;
     use crate::did::persistence::{DerivationProof, DidRecord};
     use axum::extract::State;
-    use base64::Engine as _;
     use base64::engine::general_purpose;
+    use base64::Engine as _;
     use std::ffi::OsString;
-
 
     struct EnvGuard {
         did_prev: Option<OsString>,

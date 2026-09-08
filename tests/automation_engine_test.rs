@@ -76,7 +76,11 @@ async fn malformed_config_initializes_default_rule() {
 #[tokio::test]
 async fn valid_config_loads_rules() {
     let file = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), serde_json::to_vec(&serde_json::json!({"rules":[rule("a")]})).unwrap()).unwrap();
+    std::fs::write(
+        file.path(),
+        serde_json::to_vec(&serde_json::json!({"rules":[rule("a")]})).unwrap(),
+    )
+    .unwrap();
     let e = engine(file.path().to_str().unwrap());
     assert_eq!(e.get_rules().await[0].id, "a");
 }
@@ -105,8 +109,19 @@ async fn add_rule_replaces_existing_id() {
     let mut replacement = rule("a");
     replacement.name = "Replacement".into();
     e.add_rule(replacement).await.unwrap();
-    assert_eq!(e.get_rules().await.iter().filter(|r| r.id == "a").count(), 1);
-    assert_eq!(e.get_rules().await.iter().find(|r| r.id == "a").unwrap().name, "Replacement");
+    assert_eq!(
+        e.get_rules().await.iter().filter(|r| r.id == "a").count(),
+        1
+    );
+    assert_eq!(
+        e.get_rules()
+            .await
+            .iter()
+            .find(|r| r.id == "a")
+            .unwrap()
+            .name,
+        "Replacement"
+    );
 }
 
 #[tokio::test]
@@ -114,8 +129,13 @@ async fn add_rule_persists_to_file() {
     let file = tempfile::NamedTempFile::new().unwrap();
     let e = engine(file.path().to_str().unwrap());
     e.add_rule(rule("a")).await.unwrap();
-    let value: serde_json::Value = serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap();
-    assert!(value["rules"].as_array().unwrap().iter().any(|r| r["id"] == "a"));
+    let value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap();
+    assert!(value["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["id"] == "a"));
 }
 
 #[tokio::test]
@@ -126,13 +146,24 @@ async fn update_rule_changes_existing_rule() {
     let mut updated = rule("a");
     updated.priority = 5;
     e.update_rule(updated).await.unwrap();
-    assert_eq!(e.get_rules().await.iter().find(|r| r.id == "a").unwrap().priority, 5);
+    assert_eq!(
+        e.get_rules()
+            .await
+            .iter()
+            .find(|r| r.id == "a")
+            .unwrap()
+            .priority,
+        5
+    );
 }
 
 #[tokio::test]
 async fn update_missing_rule_returns_error() {
     let file = tempfile::NamedTempFile::new().unwrap();
-    let err = engine(file.path().to_str().unwrap()).update_rule(rule("missing")).await.unwrap_err();
+    let err = engine(file.path().to_str().unwrap())
+        .update_rule(rule("missing"))
+        .await
+        .unwrap_err();
     assert!(err.contains("not found"));
 }
 
@@ -148,7 +179,10 @@ async fn delete_rule_removes_existing_rule() {
 #[tokio::test]
 async fn delete_missing_rule_returns_error() {
     let file = tempfile::NamedTempFile::new().unwrap();
-    let err = engine(file.path().to_str().unwrap()).delete_rule("missing").await.unwrap_err();
+    let err = engine(file.path().to_str().unwrap())
+        .delete_rule("missing")
+        .await
+        .unwrap_err();
     assert!(err.contains("missing"));
 }
 
@@ -158,7 +192,14 @@ async fn toggle_rule_false_disables_rule() {
     let e = engine(file.path().to_str().unwrap());
     e.add_rule(rule("a")).await.unwrap();
     e.toggle_rule("a", false).await.unwrap();
-    assert!(!e.get_rules().await.iter().find(|r| r.id == "a").unwrap().enabled);
+    assert!(
+        !e.get_rules()
+            .await
+            .iter()
+            .find(|r| r.id == "a")
+            .unwrap()
+            .enabled
+    );
 }
 
 #[tokio::test]
@@ -169,13 +210,23 @@ async fn toggle_rule_true_enables_rule() {
     r.enabled = false;
     e.add_rule(r).await.unwrap();
     e.toggle_rule("a", true).await.unwrap();
-    assert!(e.get_rules().await.iter().find(|r| r.id == "a").unwrap().enabled);
+    assert!(
+        e.get_rules()
+            .await
+            .iter()
+            .find(|r| r.id == "a")
+            .unwrap()
+            .enabled
+    );
 }
 
 #[tokio::test]
 async fn toggle_missing_rule_returns_error() {
     let file = tempfile::NamedTempFile::new().unwrap();
-    let err = engine(file.path().to_str().unwrap()).toggle_rule("missing", false).await.unwrap_err();
+    let err = engine(file.path().to_str().unwrap())
+        .toggle_rule("missing", false)
+        .await
+        .unwrap_err();
     assert!(err.contains("missing"));
 }
 
@@ -203,7 +254,15 @@ async fn add_rule_with_negative_priority_is_preserved() {
     let mut r = rule("a");
     r.priority = -50;
     e.add_rule(r).await.unwrap();
-    assert_eq!(e.get_rules().await.iter().find(|r| r.id == "a").unwrap().priority, -50);
+    assert_eq!(
+        e.get_rules()
+            .await
+            .iter()
+            .find(|r| r.id == "a")
+            .unwrap()
+            .priority,
+        -50
+    );
 }
 
 #[tokio::test]
@@ -213,7 +272,14 @@ async fn add_rule_with_no_actions_is_preserved() {
     let mut r = rule("a");
     r.actions.clear();
     e.add_rule(r).await.unwrap();
-    assert!(e.get_rules().await.iter().find(|r| r.id == "a").unwrap().actions.is_empty());
+    assert!(e
+        .get_rules()
+        .await
+        .iter()
+        .find(|r| r.id == "a")
+        .unwrap()
+        .actions
+        .is_empty());
 }
 
 #[tokio::test]
@@ -226,7 +292,16 @@ async fn add_rule_with_presence_condition_is_preserved() {
         value: "home".into(),
     }];
     e.add_rule(r).await.unwrap();
-    assert_eq!(e.get_rules().await.iter().find(|r| r.id == "a").unwrap().conditions.len(), 1);
+    assert_eq!(
+        e.get_rules()
+            .await
+            .iter()
+            .find(|r| r.id == "a")
+            .unwrap()
+            .conditions
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -242,7 +317,15 @@ async fn add_rule_with_command_action_is_preserved() {
         on_failure: FailurePolicy::Abort,
     }];
     e.add_rule(r).await.unwrap();
-    assert!(matches!(e.get_rules().await.iter().find(|r| r.id == "a").unwrap().actions[0], RuleAction::Command { .. }));
+    assert!(matches!(
+        e.get_rules()
+            .await
+            .iter()
+            .find(|r| r.id == "a")
+            .unwrap()
+            .actions[0],
+        RuleAction::Command { .. }
+    ));
 }
 
 #[tokio::test]
@@ -252,7 +335,15 @@ async fn add_rule_with_delay_action_is_preserved() {
     let mut r = rule("a");
     r.actions = vec![RuleAction::Delay { delay_secs: 0 }];
     e.add_rule(r).await.unwrap();
-    assert_eq!(e.get_rules().await.iter().find(|r| r.id == "a").unwrap().actions[0], RuleAction::Delay { delay_secs: 0 });
+    assert_eq!(
+        e.get_rules()
+            .await
+            .iter()
+            .find(|r| r.id == "a")
+            .unwrap()
+            .actions[0],
+        RuleAction::Delay { delay_secs: 0 }
+    );
 }
 
 #[tokio::test]
@@ -264,7 +355,16 @@ async fn update_persists_across_new_engine() {
     let mut updated = rule("a");
     updated.name = "Updated".into();
     e.update_rule(updated).await.unwrap();
-    assert_eq!(engine(&path).get_rules().await.iter().find(|r| r.id == "a").unwrap().name, "Updated");
+    assert_eq!(
+        engine(&path)
+            .get_rules()
+            .await
+            .iter()
+            .find(|r| r.id == "a")
+            .unwrap()
+            .name,
+        "Updated"
+    );
 }
 
 #[tokio::test]
@@ -284,13 +384,23 @@ async fn toggle_persists_across_new_engine() {
     let e = engine(&path);
     e.add_rule(rule("a")).await.unwrap();
     e.toggle_rule("a", false).await.unwrap();
-    assert!(!engine(&path).get_rules().await.iter().find(|r| r.id == "a").unwrap().enabled);
+    assert!(
+        !engine(&path)
+            .get_rules()
+            .await
+            .iter()
+            .find(|r| r.id == "a")
+            .unwrap()
+            .enabled
+    );
 }
 
 #[tokio::test]
 async fn restore_pending_timers_with_empty_store_returns_quickly() {
     let file = tempfile::NamedTempFile::new().unwrap();
-    engine(file.path().to_str().unwrap()).restore_pending_timers().await;
+    engine(file.path().to_str().unwrap())
+        .restore_pending_timers()
+        .await;
 }
 
 #[tokio::test]

@@ -1,8 +1,8 @@
 use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
-use crate::policy_authority::{PA_PRIV_PATH, PA_PUB_PATH, PaKey};
-use axum::{Json, extract::State};
+use crate::policy_authority::{PaKey, PA_PRIV_PATH, PA_PUB_PATH};
+use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -319,7 +319,6 @@ mod tests {
     use std::ffi::OsString;
     use std::path::Path;
 
-
     /// Redirects only the two paths `guardian_key_paths` actually reads.
     ///
     /// An earlier revision also set `SGX_PA_CLI_PATH` and
@@ -576,7 +575,10 @@ mod tests {
         .await
         .expect("generate response");
 
-        assert!(!resp.success, "corrupt key material must not report success");
+        assert!(
+            !resp.success,
+            "corrupt key material must not report success"
+        );
         assert!(
             resp.stderr.contains("PaKey generation failed"),
             "stderr should explain the failure, got {:?}",

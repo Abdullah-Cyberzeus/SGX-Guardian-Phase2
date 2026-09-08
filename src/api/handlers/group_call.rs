@@ -1,15 +1,15 @@
 //! Browser API for trusted full-mesh group calls.
 
 use axum::{
-    Extension,
     extract::{
-        Json, Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
+        Json, Path, Query, State,
     },
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Sse, sse::Event, sse::KeepAlive},
+    response::{sse::Event, sse::KeepAlive, IntoResponse, Sse},
+    Extension,
 };
-use futures_util::{SinkExt, StreamExt, stream};
+use futures_util::{stream, SinkExt, StreamExt};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,7 +26,7 @@ use crate::api::handlers::call::{browser_call_actor_id, local_virtual_id_for_act
 use crate::api::state::AppState;
 use crate::call::{
     GroupCallState, GroupMemberState, GroupParticipant, GroupRole, GroupSession, GroupWireMessage,
-    MAX_GROUP_PARTICIPANTS, MediaType, ModerationAction, SignalKind,
+    MediaType, ModerationAction, SignalKind, MAX_GROUP_PARTICIPANTS,
 };
 
 #[derive(Debug, Deserialize)]
@@ -1271,7 +1271,12 @@ mod tests {
         );
         let too_long = "k".repeat(129);
         assert_eq!(
-            operation_key(&headers_with_idempotency(&too_long), "node-a", "create", None),
+            operation_key(
+                &headers_with_idempotency(&too_long),
+                "node-a",
+                "create",
+                None
+            ),
             None
         );
     }
@@ -1372,7 +1377,10 @@ mod tests {
         .await
         .into_response();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        assert_eq!(response_json(response).await["error"], "Audio or video is required");
+        assert_eq!(
+            response_json(response).await["error"],
+            "Audio or video is required"
+        );
     }
 
     #[tokio::test]
@@ -1573,14 +1581,9 @@ mod tests {
             .await
             .expect("group created");
 
-        let response = end(
-            State(state),
-            Path(session.group_id),
-            HeaderMap::new(),
-            None,
-        )
-        .await
-        .into_response();
+        let response = end(State(state), Path(session.group_id), HeaderMap::new(), None)
+            .await
+            .into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
@@ -1634,7 +1637,10 @@ mod tests {
         .into_response();
         assert_eq!(response.status(), StatusCode::OK);
         let body = response_json(response).await;
-        assert_eq!(body["state"], serde_json::to_value(GroupCallState::Ended).unwrap());
+        assert_eq!(
+            body["state"],
+            serde_json::to_value(GroupCallState::Ended).unwrap()
+        );
         assert!(state
             .group_session_manager
             .active_for(&state.node_id)

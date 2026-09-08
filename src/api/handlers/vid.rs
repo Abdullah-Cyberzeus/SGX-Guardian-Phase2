@@ -1,7 +1,7 @@
 use crate::api::{error::ApiError, state::AppState};
 use crate::did::doc_persistence;
 use crate::virtual_id::read_runtime_virtual_id_status;
-use axum::{Json, extract::State};
+use axum::{extract::State, Json};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -117,14 +117,8 @@ mod tests {
     async fn peers_reports_the_cache_sorted_by_did() {
         let temp = TempDir::new().expect("tempdir");
         let state = test_state(temp.path());
-        state
-            .vid_cache
-            .observe("did:guardian:zeta", "aa00")
-            .await;
-        state
-            .vid_cache
-            .observe("did:guardian:alpha", "bb11")
-            .await;
+        state.vid_cache.observe("did:guardian:zeta", "aa00").await;
+        state.vid_cache.observe("did:guardian:alpha", "bb11").await;
 
         let response = peers(State(state)).await.expect("peer listing");
         let dids: Vec<&str> = response
@@ -139,7 +133,10 @@ mod tests {
         assert!(!alpha.observed_at.is_empty());
         // The very first observation is recorded as such rather than as a
         // rotation, which is what the UI keys its "new peer" badge off.
-        assert_eq!(alpha.last_rotation_reason.as_deref(), Some("initial_observation"));
+        assert_eq!(
+            alpha.last_rotation_reason.as_deref(),
+            Some("initial_observation")
+        );
     }
 
     #[tokio::test]
@@ -163,9 +160,7 @@ mod tests {
         );
         let result = show(State(state)).await;
         match previous {
-            Some(value) => {
-                std::env::set_var(crate::virtual_id::RUNTIME_VID_STATE_DIR_ENV, value)
-            }
+            Some(value) => std::env::set_var(crate::virtual_id::RUNTIME_VID_STATE_DIR_ENV, value),
             None => std::env::remove_var(crate::virtual_id::RUNTIME_VID_STATE_DIR_ENV),
         }
         assert!(matches!(result, Err(ApiError::Internal(msg)) if msg.contains("VID show")));

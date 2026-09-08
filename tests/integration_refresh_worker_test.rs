@@ -31,80 +31,209 @@ fn creds(refresh: Option<&str>, expires: Option<chrono::DateTime<Utc>>) -> OAuth
 
 #[test]
 fn worker_new_can_check_empty_defaults() {
-    with_data_dir(|| tokio::runtime::Runtime::new().unwrap().block_on(async {
-        TokenRefreshWorker::new(IntegrationManager::new("i.json")).check_and_refresh_tokens().await;
-    }));
+    with_data_dir(|| {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            TokenRefreshWorker::new(IntegrationManager::new("i.json"))
+                .check_and_refresh_tokens()
+                .await;
+        })
+    });
 }
 
 #[test]
 fn disconnected_provider_is_skipped() {
-    with_data_dir(|| tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let manager = IntegrationManager::new("i.json");
-        manager.set_credentials(VendorProvider::GoogleNest, creds(Some("refresh"), Some(Utc::now()))).await.unwrap();
-        manager.update_integration_status(VendorProvider::GoogleNest, IntegrationStatus::Disconnected, None).await.unwrap();
-        TokenRefreshWorker::new(manager.clone()).check_and_refresh_tokens().await;
-        assert_eq!(manager.get_integration(VendorProvider::GoogleNest).await.unwrap().status, IntegrationStatus::Disconnected);
-    }));
+    with_data_dir(|| {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let manager = IntegrationManager::new("i.json");
+            manager
+                .set_credentials(
+                    VendorProvider::GoogleNest,
+                    creds(Some("refresh"), Some(Utc::now())),
+                )
+                .await
+                .unwrap();
+            manager
+                .update_integration_status(
+                    VendorProvider::GoogleNest,
+                    IntegrationStatus::Disconnected,
+                    None,
+                )
+                .await
+                .unwrap();
+            TokenRefreshWorker::new(manager.clone())
+                .check_and_refresh_tokens()
+                .await;
+            assert_eq!(
+                manager
+                    .get_integration(VendorProvider::GoogleNest)
+                    .await
+                    .unwrap()
+                    .status,
+                IntegrationStatus::Disconnected
+            );
+        })
+    });
 }
 
 #[test]
 fn future_token_is_not_refreshed() {
-    with_data_dir(|| tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let manager = IntegrationManager::new("i.json");
-        manager.connect_integration(VendorProvider::GoogleNest, creds(Some("refresh"), Some(Utc::now() + Duration::hours(1)))).await.unwrap();
-        TokenRefreshWorker::new(manager.clone()).check_and_refresh_tokens().await;
-        assert_eq!(manager.get_integration(VendorProvider::GoogleNest).await.unwrap().credentials.unwrap().access_token, "access");
-    }));
+    with_data_dir(|| {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let manager = IntegrationManager::new("i.json");
+            manager
+                .connect_integration(
+                    VendorProvider::GoogleNest,
+                    creds(Some("refresh"), Some(Utc::now() + Duration::hours(1))),
+                )
+                .await
+                .unwrap();
+            TokenRefreshWorker::new(manager.clone())
+                .check_and_refresh_tokens()
+                .await;
+            assert_eq!(
+                manager
+                    .get_integration(VendorProvider::GoogleNest)
+                    .await
+                    .unwrap()
+                    .credentials
+                    .unwrap()
+                    .access_token,
+                "access"
+            );
+        })
+    });
 }
 
 #[test]
 fn expiring_token_with_refresh_token_is_renewed() {
-    with_data_dir(|| tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let manager = IntegrationManager::new("i.json");
-        manager.connect_integration(VendorProvider::GoogleNest, creds(Some("refresh"), Some(Utc::now()))).await.unwrap();
-        TokenRefreshWorker::new(manager.clone()).check_and_refresh_tokens().await;
-        assert_ne!(manager.get_integration(VendorProvider::GoogleNest).await.unwrap().credentials.unwrap().access_token, "access");
-    }));
+    with_data_dir(|| {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let manager = IntegrationManager::new("i.json");
+            manager
+                .connect_integration(
+                    VendorProvider::GoogleNest,
+                    creds(Some("refresh"), Some(Utc::now())),
+                )
+                .await
+                .unwrap();
+            TokenRefreshWorker::new(manager.clone())
+                .check_and_refresh_tokens()
+                .await;
+            assert_ne!(
+                manager
+                    .get_integration(VendorProvider::GoogleNest)
+                    .await
+                    .unwrap()
+                    .credentials
+                    .unwrap()
+                    .access_token,
+                "access"
+            );
+        })
+    });
 }
 
 #[test]
 fn invalid_refresh_token_marks_expired() {
-    with_data_dir(|| tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let manager = IntegrationManager::new("i.json");
-        manager.connect_integration(VendorProvider::GoogleNest, creds(Some("invalid"), Some(Utc::now()))).await.unwrap();
-        TokenRefreshWorker::new(manager.clone()).check_and_refresh_tokens().await;
-        assert_eq!(manager.get_integration(VendorProvider::GoogleNest).await.unwrap().status, IntegrationStatus::Expired);
-    }));
+    with_data_dir(|| {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let manager = IntegrationManager::new("i.json");
+            manager
+                .connect_integration(
+                    VendorProvider::GoogleNest,
+                    creds(Some("invalid"), Some(Utc::now())),
+                )
+                .await
+                .unwrap();
+            TokenRefreshWorker::new(manager.clone())
+                .check_and_refresh_tokens()
+                .await;
+            assert_eq!(
+                manager
+                    .get_integration(VendorProvider::GoogleNest)
+                    .await
+                    .unwrap()
+                    .status,
+                IntegrationStatus::Expired
+            );
+        })
+    });
 }
 
 #[test]
 fn missing_refresh_token_marks_expired() {
-    with_data_dir(|| tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let manager = IntegrationManager::new("i.json");
-        manager.connect_integration(VendorProvider::GoogleNest, creds(None, Some(Utc::now()))).await.unwrap();
-        TokenRefreshWorker::new(manager.clone()).check_and_refresh_tokens().await;
-        assert_eq!(manager.get_integration(VendorProvider::GoogleNest).await.unwrap().status, IntegrationStatus::Expired);
-    }));
+    with_data_dir(|| {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let manager = IntegrationManager::new("i.json");
+            manager
+                .connect_integration(VendorProvider::GoogleNest, creds(None, Some(Utc::now())))
+                .await
+                .unwrap();
+            TokenRefreshWorker::new(manager.clone())
+                .check_and_refresh_tokens()
+                .await;
+            assert_eq!(
+                manager
+                    .get_integration(VendorProvider::GoogleNest)
+                    .await
+                    .unwrap()
+                    .status,
+                IntegrationStatus::Expired
+            );
+        })
+    });
 }
 
 #[test]
 fn missing_expiry_is_ignored() {
-    with_data_dir(|| tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let manager = IntegrationManager::new("i.json");
-        manager.connect_integration(VendorProvider::GoogleNest, creds(Some("refresh"), None)).await.unwrap();
-        TokenRefreshWorker::new(manager.clone()).check_and_refresh_tokens().await;
-        assert_eq!(manager.get_integration(VendorProvider::GoogleNest).await.unwrap().credentials.unwrap().access_token, "access");
-    }));
+    with_data_dir(|| {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let manager = IntegrationManager::new("i.json");
+            manager
+                .connect_integration(VendorProvider::GoogleNest, creds(Some("refresh"), None))
+                .await
+                .unwrap();
+            TokenRefreshWorker::new(manager.clone())
+                .check_and_refresh_tokens()
+                .await;
+            assert_eq!(
+                manager
+                    .get_integration(VendorProvider::GoogleNest)
+                    .await
+                    .unwrap()
+                    .credentials
+                    .unwrap()
+                    .access_token,
+                "access"
+            );
+        })
+    });
 }
 
 #[test]
 fn failed_refresh_records_error_message() {
-    with_data_dir(|| tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let manager = IntegrationManager::new("i.json");
-        manager.connect_integration(VendorProvider::GoogleNest, creds(Some("fail"), Some(Utc::now()))).await.unwrap();
-        TokenRefreshWorker::new(manager.clone()).check_and_refresh_tokens().await;
-        assert!(manager.get_integration(VendorProvider::GoogleNest).await.unwrap().error_message.unwrap().contains("refresh failed"));
-    }));
+    with_data_dir(|| {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let manager = IntegrationManager::new("i.json");
+            manager
+                .connect_integration(
+                    VendorProvider::GoogleNest,
+                    creds(Some("fail"), Some(Utc::now())),
+                )
+                .await
+                .unwrap();
+            TokenRefreshWorker::new(manager.clone())
+                .check_and_refresh_tokens()
+                .await;
+            assert!(manager
+                .get_integration(VendorProvider::GoogleNest)
+                .await
+                .unwrap()
+                .error_message
+                .unwrap()
+                .contains("refresh failed"));
+        })
+    });
 }
 
 macro_rules! no_panic_worker_tests {
@@ -141,8 +270,10 @@ no_panic_worker_tests! {
 
 #[test]
 fn start_spawns_background_task_without_blocking() {
-    with_data_dir(|| tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let worker = Arc::new(TokenRefreshWorker::new(IntegrationManager::new("i.json")));
-        worker.start();
-    }));
+    with_data_dir(|| {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let worker = Arc::new(TokenRefreshWorker::new(IntegrationManager::new("i.json")));
+            worker.start();
+        })
+    });
 }

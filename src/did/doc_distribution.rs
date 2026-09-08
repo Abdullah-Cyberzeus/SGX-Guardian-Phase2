@@ -4,7 +4,7 @@ use crate::did::doc_persistence::{
 use crate::did::doc_sign::verify_with_replay_protection;
 use crate::did::document::DidDocument;
 use crate::did::errors::DidError;
-use crate::nebula::registry_sync::{REGISTRY_SYNC_PORT, RegistryRequest, RegistryResponse};
+use crate::nebula::registry_sync::{RegistryRequest, RegistryResponse, REGISTRY_SYNC_PORT};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
@@ -190,7 +190,7 @@ mod tests {
     use super::*;
     use crate::did::doc_persistence::{self, PEERS_DOC_DIR_ENV, SELF_DOC_PATH_ENV};
     use crate::did::document::DocBuildInput;
-    use crate::did::{Did, doc_sign};
+    use crate::did::{doc_sign, Did};
     use crate::key_manager::KeyManager;
     use tempfile::TempDir;
 

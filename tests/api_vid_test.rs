@@ -1,11 +1,11 @@
 use axum::extract::State;
-use base64::{Engine as _, engine::general_purpose};
+use base64::{engine::general_purpose, Engine as _};
 
 use sgx_guardian_client::api::handlers::vid::peers;
 use sgx_guardian_client::api::state::AppState;
-use sgx_guardian_client::did::Did;
 use sgx_guardian_client::did::doc_persistence;
 use sgx_guardian_client::did::document::{DidDocument, Jwk, VerificationMethod};
+use sgx_guardian_client::did::Did;
 use sgx_guardian_client::virtual_id_cache::ObservationContext;
 use std::ffi::OsString;
 use tempfile::TempDir;

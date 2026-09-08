@@ -1,8 +1,8 @@
 // tests/secure_element_extended_test.rs
 // Integration tests for src/secure_element logic
 
-use sgx_guardian_client::secure_element::safe_mode;
 use sgx_guardian_client::secure_element::config::SeConfig;
+use sgx_guardian_client::secure_element::safe_mode;
 use sgx_guardian_client::secure_element::tamper::{is_tampered, TamperStatus};
 
 #[test]
@@ -43,7 +43,9 @@ fn se_config_default_connection_type() {
 
 #[test]
 fn se_config_default_scp_key_path() {
-    assert!(SeConfig::default().scp_key_path.ends_with("se050_scp_keys.txt"));
+    assert!(SeConfig::default()
+        .scp_key_path
+        .ends_with("se050_scp_keys.txt"));
 }
 
 #[test]

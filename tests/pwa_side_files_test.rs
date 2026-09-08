@@ -1,25 +1,25 @@
-use axum::body::{Body, to_bytes};
+use axum::body::{to_bytes, Body};
 use axum::extract::{Path, Query, State};
 use axum::http::{Request, StatusCode};
 use axum::routing::post;
 use axum::{Extension, Json, Router};
+use serde_json::json;
 use serde_json::Value;
 use sgx_guardian_client::api::auth::authorization::default_scopes;
 use sgx_guardian_client::api::auth::middleware::AuthenticatedSession;
 use sgx_guardian_client::api::auth::session::Claims;
+use sgx_guardian_client::api::auth::store::{NewMemberRegistration, ProfilePatch};
 use sgx_guardian_client::api::error::ApiError;
 use sgx_guardian_client::api::handlers::browser_member::did_for_registration;
 use sgx_guardian_client::api::handlers::vault;
+use sgx_guardian_client::api::handlers::{contacts, pwa};
 use sgx_guardian_client::api::state::AppState;
+use sgx_guardian_client::contacts::store::{ContactDraft, ContactPatch};
 use sgx_guardian_client::vault::folders;
 use sgx_guardian_client::vault::ingest::{self, IngestMeta};
 use sgx_guardian_client::vault::{persistence, VaultConfig, VaultNamespace, VAULT_BASE_ENV};
-use sha2::{Digest, Sha256};
-use serde_json::json;
-use sgx_guardian_client::api::auth::store::{NewMemberRegistration, ProfilePatch};
-use sgx_guardian_client::api::handlers::{contacts, pwa};
-use sgx_guardian_client::contacts::store::{ContactDraft, ContactPatch};
 use sgx_guardian_client::vc::credential::CredentialRole;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tower::ServiceExt;
 
@@ -252,10 +252,7 @@ async fn pwa_side_contacts_test_covers_member_roster_and_private_address_book() 
     )
     .await
     .expect("member can save active browser member contact");
-    assert_eq!(
-        created_bob.contact.user_id.as_str(),
-        alice_did.as_str()
-    );
+    assert_eq!(created_bob.contact.user_id.as_str(), alice_did.as_str());
     assert_eq!(created_bob.contact.did, bob_did);
 
     assert!(matches!(
@@ -298,10 +295,7 @@ async fn pwa_side_contacts_test_covers_member_roster_and_private_address_book() 
     )
     .await
     .expect("Bob saves Alice separately");
-    assert_eq!(
-        bob_saved_alice.contact.user_id.as_str(),
-        bob_did.as_str()
-    );
+    assert_eq!(bob_saved_alice.contact.user_id.as_str(), bob_did.as_str());
 
     let Json(fetched) = contacts::get(
         State(state.clone()),
@@ -450,10 +444,7 @@ async fn pwa_side_contacts_test_covers_member_roster_and_private_address_book() 
     .await
     .expect("member can save trusted remote Guardian contact");
     assert_eq!(created_remote.contact.did, "did:guardian:remote-in-circle");
-    assert_eq!(
-        created_remote.contact.user_id.as_str(),
-        alice_did.as_str()
-    );
+    assert_eq!(created_remote.contact.user_id.as_str(), alice_did.as_str());
 
     let Json(created_enriched_remote) = contacts::create(
         State(state.clone()),
@@ -507,18 +498,14 @@ async fn pwa_side_contacts_test_covers_member_roster_and_private_address_book() 
             && contact.call_unavailable_reason.as_deref()
                 == Some("Peer registry has no plain Nebula IP address")
     }));
-    assert!(
-        !roster
-            .contacts
-            .iter()
-            .any(|contact| contact.did.as_deref() == Some(alice_did.as_str()))
-    );
-    assert!(
-        !roster
-            .contacts
-            .iter()
-            .any(|contact| contact.did.as_deref() == Some("did:guardian:untrusted"))
-    );
+    assert!(!roster
+        .contacts
+        .iter()
+        .any(|contact| contact.did.as_deref() == Some(alice_did.as_str())));
+    assert!(!roster
+        .contacts
+        .iter()
+        .any(|contact| contact.did.as_deref() == Some("did:guardian:untrusted")));
 }
 struct TestEnv {
     previous: Vec<(&'static str, Option<String>)>,
@@ -1032,18 +1019,14 @@ async fn pwa_side_files_test_covers_member_files_feature() {
     assert!(overview.namespaces.iter().any(|item| item.namespace
         == VaultNamespace::PERSONAL_STORAGE_KEY
         && item.file_count == 1));
-    assert!(
-        overview
-            .namespaces
-            .iter()
-            .any(|item| item.namespace == "circle-files" && item.file_count == 1)
-    );
-    assert!(
-        !overview
-            .namespaces
-            .iter()
-            .any(|item| item.namespace == "circle-other")
-    );
+    assert!(overview
+        .namespaces
+        .iter()
+        .any(|item| item.namespace == "circle-files" && item.file_count == 1));
+    assert!(!overview
+        .namespaces
+        .iter()
+        .any(|item| item.namespace == "circle-other"));
 
     let Json(personal_quota) = vault::quota_status(
         State(state.clone()),
@@ -1085,12 +1068,10 @@ async fn pwa_side_files_test_covers_member_files_feature() {
     .expect("Alice opens download history");
     assert_eq!(history.vault_id, alice_personal.vault_id);
     assert_eq!(history.count, 2);
-    assert!(
-        history
-            .downloads
-            .iter()
-            .all(|entry| entry.downloader_did == alice_did)
-    );
+    assert!(history
+        .downloads
+        .iter()
+        .all(|entry| entry.downloader_did == alice_did));
     assert!(matches!(
         vault::history(
             State(state.clone()),

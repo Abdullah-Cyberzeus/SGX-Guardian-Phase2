@@ -36,7 +36,10 @@ async fn test_stop_all_empty() {
 
 #[tokio::test]
 async fn new_manager_starts_with_idle_state() {
-    assert_eq!(manager().state_machine.get_status().await.state, SystemState::Idle);
+    assert_eq!(
+        manager().state_machine.get_status().await.state,
+        SystemState::Idle
+    );
 }
 
 #[tokio::test]
@@ -44,7 +47,10 @@ async fn repeated_stop_all_is_idempotent() {
     let manager = manager();
     manager.stop_all().await;
     manager.stop_all().await;
-    assert_eq!(manager.state_machine.get_status().await.state, SystemState::Idle);
+    assert_eq!(
+        manager.state_machine.get_status().await.state,
+        SystemState::Idle
+    );
 }
 
 #[tokio::test]
@@ -52,7 +58,10 @@ async fn repeated_transition_to_off_is_ok() {
     let manager = manager();
     manager.handle_transition(RuntimeMode::Off).await.unwrap();
     manager.handle_transition(RuntimeMode::Off).await.unwrap();
-    assert_eq!(manager.state_machine.get_status().await.state, SystemState::Idle);
+    assert_eq!(
+        manager.state_machine.get_status().await.state,
+        SystemState::Idle
+    );
 }
 
 #[tokio::test]
@@ -60,7 +69,10 @@ async fn stop_all_after_off_transition_keeps_idle() {
     let manager = manager();
     manager.handle_transition(RuntimeMode::Off).await.unwrap();
     manager.stop_all().await;
-    assert_eq!(manager.state_machine.get_status().await.state, SystemState::Idle);
+    assert_eq!(
+        manager.state_machine.get_status().await.state,
+        SystemState::Idle
+    );
 }
 
 #[tokio::test]
@@ -82,7 +94,10 @@ async fn apply_saved_state_missing_config_resets_idle() {
     } else {
         std::env::remove_var("GUARDIAN_KEY_FILE");
     }
-    assert_eq!(manager.state_machine.get_status().await.state, SystemState::Idle);
+    assert_eq!(
+        manager.state_machine.get_status().await.state,
+        SystemState::Idle
+    );
 }
 
 macro_rules! off_transition_tests {

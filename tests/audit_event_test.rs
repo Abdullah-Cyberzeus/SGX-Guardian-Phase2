@@ -27,7 +27,12 @@ fn event(category: AuditCategory, severity: AuditSeverity, action: AuditAction) 
 #[test]
 fn audit_event_preserves_message() {
     assert_eq!(
-        event(AuditCategory::Node, AuditSeverity::Info, AuditAction::Started).message,
+        event(
+            AuditCategory::Node,
+            AuditSeverity::Info,
+            AuditAction::Started
+        )
+        .message,
         "message-test"
     );
 }
@@ -38,7 +43,11 @@ fn audit_event_timestamp_is_unix_seconds() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let ev = event(AuditCategory::Node, AuditSeverity::Info, AuditAction::Started);
+    let ev = event(
+        AuditCategory::Node,
+        AuditSeverity::Info,
+        AuditAction::Started,
+    );
     let after = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -116,12 +125,18 @@ fn audit_severity_equality_works() {
 #[test]
 fn audit_severity_round_trips() {
     let encoded = serde_json::to_string(&AuditSeverity::Warning).unwrap();
-    assert_eq!(serde_json::from_str::<AuditSeverity>(&encoded).unwrap(), AuditSeverity::Warning);
+    assert_eq!(
+        serde_json::from_str::<AuditSeverity>(&encoded).unwrap(),
+        AuditSeverity::Warning
+    );
 }
 
 #[test]
 fn audit_category_node_serializes() {
-    assert_eq!(serde_json::to_string(&AuditCategory::Node).unwrap(), "\"Node\"");
+    assert_eq!(
+        serde_json::to_string(&AuditCategory::Node).unwrap(),
+        "\"Node\""
+    );
 }
 
 #[test]
@@ -142,7 +157,10 @@ fn audit_category_discovery_serializes() {
 
 #[test]
 fn audit_category_vault_serializes() {
-    assert_eq!(serde_json::to_string(&AuditCategory::Vault).unwrap(), "\"Vault\"");
+    assert_eq!(
+        serde_json::to_string(&AuditCategory::Vault).unwrap(),
+        "\"Vault\""
+    );
 }
 
 #[test]
@@ -155,7 +173,10 @@ fn audit_category_dusage_serializes() {
 
 #[test]
 fn audit_action_started_serializes() {
-    assert_eq!(serde_json::to_string(&AuditAction::Started).unwrap(), "\"Started\"");
+    assert_eq!(
+        serde_json::to_string(&AuditAction::Started).unwrap(),
+        "\"Started\""
+    );
 }
 
 #[test]
@@ -168,22 +189,35 @@ fn audit_action_succeeded_serializes() {
 
 #[test]
 fn audit_action_failed_serializes() {
-    assert_eq!(serde_json::to_string(&AuditAction::Failed).unwrap(), "\"Failed\"");
+    assert_eq!(
+        serde_json::to_string(&AuditAction::Failed).unwrap(),
+        "\"Failed\""
+    );
 }
 
 #[test]
 fn audit_action_blocked_serializes() {
-    assert_eq!(serde_json::to_string(&AuditAction::Blocked).unwrap(), "\"Blocked\"");
+    assert_eq!(
+        serde_json::to_string(&AuditAction::Blocked).unwrap(),
+        "\"Blocked\""
+    );
 }
 
 #[test]
 fn audit_action_updated_serializes() {
-    assert_eq!(serde_json::to_string(&AuditAction::Updated).unwrap(), "\"Updated\"");
+    assert_eq!(
+        serde_json::to_string(&AuditAction::Updated).unwrap(),
+        "\"Updated\""
+    );
 }
 
 #[test]
 fn audit_event_clone_preserves_payload() {
-    let original = event(AuditCategory::Network, AuditSeverity::Warning, AuditAction::Detected);
+    let original = event(
+        AuditCategory::Network,
+        AuditSeverity::Warning,
+        AuditAction::Detected,
+    );
     let cloned = original.clone();
     assert_eq!(cloned.node_id, original.node_id);
     assert_eq!(cloned.message, original.message);
@@ -193,7 +227,11 @@ fn audit_event_clone_preserves_payload() {
 fn audit_event_debug_contains_struct_name() {
     let rendered = format!(
         "{:?}",
-        event(AuditCategory::Network, AuditSeverity::Warning, AuditAction::Detected)
+        event(
+            AuditCategory::Network,
+            AuditSeverity::Warning,
+            AuditAction::Detected
+        )
     );
     assert!(rendered.contains("AuditEvent"));
 }
@@ -220,7 +258,13 @@ fn audit_event_large_message_serializes() {
         AuditAction::Exported,
         "x".repeat(4096),
     );
-    assert_eq!(serde_json::to_value(ev).unwrap()["message"].as_str().unwrap().len(), 4096);
+    assert_eq!(
+        serde_json::to_value(ev).unwrap()["message"]
+            .as_str()
+            .unwrap()
+            .len(),
+        4096
+    );
 }
 
 #[test]

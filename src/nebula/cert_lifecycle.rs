@@ -160,11 +160,8 @@ mod tests {
     use super::*;
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "sgx-cert-lifecycle-{}-{}",
-            tag,
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("sgx-cert-lifecycle-{}-{}", tag, std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("nodes")).unwrap();
         dir
@@ -175,11 +172,26 @@ mod tests {
         assert_eq!(classify_days_remaining(None), Some(ExpiryAction::Unknown));
         assert_eq!(classify_days_remaining(Some(0)), None);
         assert_eq!(classify_days_remaining(Some(-5)), None);
-        assert_eq!(classify_days_remaining(Some(1)), Some(ExpiryAction::Critical));
-        assert_eq!(classify_days_remaining(Some(7)), Some(ExpiryAction::Critical));
-        assert_eq!(classify_days_remaining(Some(8)), Some(ExpiryAction::Warning));
-        assert_eq!(classify_days_remaining(Some(30)), Some(ExpiryAction::Warning));
-        assert_eq!(classify_days_remaining(Some(31)), Some(ExpiryAction::Healthy));
+        assert_eq!(
+            classify_days_remaining(Some(1)),
+            Some(ExpiryAction::Critical)
+        );
+        assert_eq!(
+            classify_days_remaining(Some(7)),
+            Some(ExpiryAction::Critical)
+        );
+        assert_eq!(
+            classify_days_remaining(Some(8)),
+            Some(ExpiryAction::Warning)
+        );
+        assert_eq!(
+            classify_days_remaining(Some(30)),
+            Some(ExpiryAction::Warning)
+        );
+        assert_eq!(
+            classify_days_remaining(Some(31)),
+            Some(ExpiryAction::Healthy)
+        );
     }
 
     #[test]
@@ -208,9 +220,18 @@ mod tests {
         let base = dir.to_str().unwrap().to_string();
 
         assert_eq!(evaluate_once(&base, "nodeA", None), ExpiryAction::Unknown);
-        assert_eq!(evaluate_once(&base, "nodeA", Some(365)), ExpiryAction::Healthy);
-        assert_eq!(evaluate_once(&base, "nodeA", Some(20)), ExpiryAction::Warning);
-        assert_eq!(evaluate_once(&base, "nodeA", Some(3)), ExpiryAction::Critical);
+        assert_eq!(
+            evaluate_once(&base, "nodeA", Some(365)),
+            ExpiryAction::Healthy
+        );
+        assert_eq!(
+            evaluate_once(&base, "nodeA", Some(20)),
+            ExpiryAction::Warning
+        );
+        assert_eq!(
+            evaluate_once(&base, "nodeA", Some(3)),
+            ExpiryAction::Critical
+        );
 
         let nodes = dir.join("nodes");
         std::fs::write(nodes.join("nodeA.crt"), b"cert").unwrap();

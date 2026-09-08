@@ -222,7 +222,14 @@ fn vc_renew_rejects_both_id_and_to_specified() {
     Command::cargo_bin("sgx-pa-cli")
         .unwrap()
         .args([
-            "vc", "renew", "--id", "vc-1", "--to", "did:guardian:x", "--days", "30",
+            "vc",
+            "renew",
+            "--id",
+            "vc-1",
+            "--to",
+            "did:guardian:x",
+            "--days",
+            "30",
         ])
         .assert()
         .failure()

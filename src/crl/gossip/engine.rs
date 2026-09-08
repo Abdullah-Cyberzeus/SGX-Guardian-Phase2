@@ -2264,8 +2264,13 @@ mod engine_tests {
         let addr = listener.local_addr().expect("local addr");
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("accept");
-            handle_inbound(stream, "nodeA", &Resolver::new(Default::default()), &gossip_config())
-                .await
+            handle_inbound(
+                stream,
+                "nodeA",
+                &Resolver::new(Default::default()),
+                &gossip_config(),
+            )
+            .await
         });
 
         let mut client = tokio::net::TcpStream::connect(addr)
@@ -2286,7 +2291,11 @@ mod engine_tests {
     async fn active_gossip_peers_skips_self_and_documents_without_an_overlay_service() {
         let _lock = crate::test_support::async_env_lock().await;
         let _env = GuardianEnv::new();
-        let owner = seed_owner("nodeA", &crate::did::Did::from_id_bytes(&[3u8; 32]).to_string(), "192.168.100.1/24");
+        let owner = seed_owner(
+            "nodeA",
+            &crate::did::Did::from_id_bytes(&[3u8; 32]).to_string(),
+            "192.168.100.1/24",
+        );
 
         // The only cached document is this node's own, which is never a peer.
         let peers = active_gossip_peers(&owner.record.did);
@@ -2305,7 +2314,11 @@ mod engine_tests {
     async fn handle_inbound_rejects_a_request_that_is_not_a_sync_request() {
         let _lock = crate::test_support::async_env_lock().await;
         let _env = GuardianEnv::new();
-        seed_owner("nodeA", &crate::did::Did::from_id_bytes(&[4u8; 32]).to_string(), "192.168.100.1/24");
+        seed_owner(
+            "nodeA",
+            &crate::did::Did::from_id_bytes(&[4u8; 32]).to_string(),
+            "192.168.100.1/24",
+        );
 
         let request = serde_json::json!({
             "kind": "crl.gossip.push",
@@ -2326,7 +2339,11 @@ mod engine_tests {
     async fn handle_inbound_rejects_a_peer_from_another_circle() {
         let _lock = crate::test_support::async_env_lock().await;
         let _env = GuardianEnv::new();
-        seed_owner("nodeA", &crate::did::Did::from_id_bytes(&[5u8; 32]).to_string(), "192.168.100.1/24");
+        seed_owner(
+            "nodeA",
+            &crate::did::Did::from_id_bytes(&[5u8; 32]).to_string(),
+            "192.168.100.1/24",
+        );
 
         let request = serde_json::json!({
             "kind": KIND_REQUEST,
@@ -2346,7 +2363,11 @@ mod engine_tests {
     async fn handle_inbound_rejects_a_request_that_claims_the_local_identity() {
         let _lock = crate::test_support::async_env_lock().await;
         let _env = GuardianEnv::new();
-        let owner = seed_owner("nodeA", &crate::did::Did::from_id_bytes(&[6u8; 32]).to_string(), "192.168.100.1/24");
+        let owner = seed_owner(
+            "nodeA",
+            &crate::did::Did::from_id_bytes(&[6u8; 32]).to_string(),
+            "192.168.100.1/24",
+        );
 
         let request = serde_json::json!({
             "kind": KIND_REQUEST,
@@ -2367,7 +2388,11 @@ mod engine_tests {
     async fn handle_inbound_reports_a_malformed_request_line() {
         let _lock = crate::test_support::async_env_lock().await;
         let _env = GuardianEnv::new();
-        seed_owner("nodeA", &crate::did::Did::from_id_bytes(&[7u8; 32]).to_string(), "192.168.100.1/24");
+        seed_owner(
+            "nodeA",
+            &crate::did::Did::from_id_bytes(&[7u8; 32]).to_string(),
+            "192.168.100.1/24",
+        );
 
         let (result, _reply) = exchange("{not json}").await;
         let reason = result.expect_err("a malformed line is rejected");
@@ -2378,7 +2403,11 @@ mod engine_tests {
     async fn verify_batch_drops_unsigned_entries_and_tombstones() {
         let _lock = crate::test_support::async_env_lock().await;
         let _env = GuardianEnv::new();
-        seed_owner("nodeA", &crate::did::Did::from_id_bytes(&[8u8; 32]).to_string(), "192.168.100.1/24");
+        seed_owner(
+            "nodeA",
+            &crate::did::Did::from_id_bytes(&[8u8; 32]).to_string(),
+            "192.168.100.1/24",
+        );
 
         let (entries, tombstones) = verify_batch(
             "nodeA",
@@ -2402,5 +2431,4 @@ mod engine_tests {
         audit_merged_tombstones("nodeA", &[], "did:guardian:peer");
         audit_propagated("nodeA", &[], 2);
     }
-
 }

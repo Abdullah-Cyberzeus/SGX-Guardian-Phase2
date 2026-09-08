@@ -904,10 +904,22 @@ relay:
         fs::create_dir_all(&nebula_dir).expect("nebula dir");
         EnvGuard::new(
             cfg_dir.to_string_lossy().as_ref(),
-            nebula_dir.join("relay_registry.json").to_string_lossy().as_ref(),
-            nebula_dir.join("relay_stats.json").to_string_lossy().as_ref(),
-            nebula_dir.join("overlay_registry.json").to_string_lossy().as_ref(),
-            nebula_dir.join("lighthouse_registry.json").to_string_lossy().as_ref(),
+            nebula_dir
+                .join("relay_registry.json")
+                .to_string_lossy()
+                .as_ref(),
+            nebula_dir
+                .join("relay_stats.json")
+                .to_string_lossy()
+                .as_ref(),
+            nebula_dir
+                .join("overlay_registry.json")
+                .to_string_lossy()
+                .as_ref(),
+            nebula_dir
+                .join("lighthouse_registry.json")
+                .to_string_lossy()
+                .as_ref(),
         )
     }
 
@@ -1004,7 +1016,14 @@ relay:
         let nebula_dir = tmp.path().join("nebula");
         fs::create_dir_all(&cfg_dir).expect("cfg dir");
         fs::create_dir_all(&nebula_dir).expect("nebula dir");
-        write_node_yaml(&cfg_dir.join("nodeB.yaml"), "nodeB", "10.20.30.40", true, 5, 10);
+        write_node_yaml(
+            &cfg_dir.join("nodeB.yaml"),
+            "nodeB",
+            "10.20.30.40",
+            true,
+            5,
+            10,
+        );
 
         let relay_registry_path = nebula_dir.join("relay_registry.json");
         let mut relays = HashMap::new();
@@ -1034,9 +1053,18 @@ relay:
         let _env = EnvGuard::new(
             cfg_dir.to_string_lossy().as_ref(),
             relay_registry_path.to_string_lossy().as_ref(),
-            nebula_dir.join("relay_stats.json").to_string_lossy().as_ref(),
-            nebula_dir.join("overlay_registry.json").to_string_lossy().as_ref(),
-            nebula_dir.join("lighthouse_registry.json").to_string_lossy().as_ref(),
+            nebula_dir
+                .join("relay_stats.json")
+                .to_string_lossy()
+                .as_ref(),
+            nebula_dir
+                .join("overlay_registry.json")
+                .to_string_lossy()
+                .as_ref(),
+            nebula_dir
+                .join("lighthouse_registry.json")
+                .to_string_lossy()
+                .as_ref(),
         );
 
         run_set_limit(RelaySetLimitArgs {

@@ -102,11 +102,8 @@ mod tests {
         let key_path = temp.path().join("admin.key");
         std::fs::write(&key_path, pkcs8.as_ref()).unwrap();
 
-        let signed = sign_policy_internal(
-            yaml_path.to_str().unwrap(),
-            key_path.to_str().unwrap(),
-        )
-        .expect("sign_policy_internal should succeed with a real key");
+        let signed = sign_policy_internal(yaml_path.to_str().unwrap(), key_path.to_str().unwrap())
+            .expect("sign_policy_internal should succeed with a real key");
 
         assert_eq!(signed.original_policy, "rules: []\n");
         assert_eq!(signed.digest_hex, compute_policy_digest("rules: []\n"));

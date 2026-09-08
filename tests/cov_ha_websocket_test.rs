@@ -73,11 +73,16 @@ async fn spawn_router_with_event_bus(
     (format!("ws://{addr}/api/v1/ha/ws"), state, bus, token)
 }
 
-fn authed_ws_request(ws_url: &str, token: &str) -> tokio_tungstenite::tungstenite::http::Request<()> {
+fn authed_ws_request(
+    ws_url: &str,
+    token: &str,
+) -> tokio_tungstenite::tungstenite::http::Request<()> {
     let mut request = ws_url.into_client_request().expect("valid ws request");
     request.headers_mut().insert(
         "Authorization",
-        format!("Bearer {token}").parse().expect("valid header value"),
+        format!("Bearer {token}")
+            .parse()
+            .expect("valid header value"),
     );
     request
 }
@@ -87,9 +92,10 @@ async fn forwards_subscribed_state_changed_events_to_the_client() {
     let temp = TempDir::new().unwrap();
     let (ws_url, _state, bus, token) = spawn_router_with_event_bus(temp.path()).await;
 
-    let (mut socket, _response) = tokio_tungstenite::connect_async(authed_ws_request(&ws_url, &token))
-        .await
-        .expect("websocket upgrade succeeds");
+    let (mut socket, _response) =
+        tokio_tungstenite::connect_async(authed_ws_request(&ws_url, &token))
+            .await
+            .expect("websocket upgrade succeeds");
 
     // The client is auto-subscribed to "device_events" on connect, so a
     // StateChanged event is forwarded without any subscribe message needed.

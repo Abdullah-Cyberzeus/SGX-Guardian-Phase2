@@ -31,7 +31,13 @@ fn creds(token: &str) -> OAuthCredentials {
 fn new_manager_creates_default_provider_records() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
-            assert_eq!(IntegrationManager::new("i.json").list_integrations().await.len(), 2);
+            assert_eq!(
+                IntegrationManager::new("i.json")
+                    .list_integrations()
+                    .await
+                    .len(),
+                2
+            );
         })
     });
 }
@@ -40,7 +46,10 @@ fn new_manager_creates_default_provider_records() {
 fn get_google_nest_default_record() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
-            let meta = IntegrationManager::new("i.json").get_integration(VendorProvider::GoogleNest).await.unwrap();
+            let meta = IntegrationManager::new("i.json")
+                .get_integration(VendorProvider::GoogleNest)
+                .await
+                .unwrap();
             assert_eq!(meta.name, "Google Nest");
             assert_eq!(meta.status, IntegrationStatus::Disconnected);
         })
@@ -51,7 +60,10 @@ fn get_google_nest_default_record() {
 fn get_kasa_default_record() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
-            let meta = IntegrationManager::new("i.json").get_integration(VendorProvider::TpLinkKasa).await.unwrap();
+            let meta = IntegrationManager::new("i.json")
+                .get_integration(VendorProvider::TpLinkKasa)
+                .await
+                .unwrap();
             assert_eq!(meta.name, "TP-Link Kasa Smart Home");
             assert_eq!(meta.status, IntegrationStatus::Disconnected);
         })
@@ -63,8 +75,18 @@ fn connect_integration_marks_connected() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let manager = IntegrationManager::new("i.json");
-            manager.connect_integration(VendorProvider::GoogleNest, creds("a")).await.unwrap();
-            assert_eq!(manager.get_integration(VendorProvider::GoogleNest).await.unwrap().status, IntegrationStatus::Connected);
+            manager
+                .connect_integration(VendorProvider::GoogleNest, creds("a"))
+                .await
+                .unwrap();
+            assert_eq!(
+                manager
+                    .get_integration(VendorProvider::GoogleNest)
+                    .await
+                    .unwrap()
+                    .status,
+                IntegrationStatus::Connected
+            );
         })
     });
 }
@@ -74,9 +96,18 @@ fn connect_integration_stores_credentials() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let manager = IntegrationManager::new("i.json");
-            manager.connect_integration(VendorProvider::GoogleNest, creds("a")).await.unwrap();
+            manager
+                .connect_integration(VendorProvider::GoogleNest, creds("a"))
+                .await
+                .unwrap();
             assert_eq!(
-                manager.get_integration(VendorProvider::GoogleNest).await.unwrap().credentials.unwrap().access_token,
+                manager
+                    .get_integration(VendorProvider::GoogleNest)
+                    .await
+                    .unwrap()
+                    .credentials
+                    .unwrap()
+                    .access_token,
                 "a"
             );
         })
@@ -88,9 +119,24 @@ fn connect_integration_clears_error_message() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let manager = IntegrationManager::new("i.json");
-            manager.update_integration_status(VendorProvider::GoogleNest, IntegrationStatus::Error("bad".into()), Some("bad".into())).await.unwrap();
-            manager.connect_integration(VendorProvider::GoogleNest, creds("a")).await.unwrap();
-            assert!(manager.get_integration(VendorProvider::GoogleNest).await.unwrap().error_message.is_none());
+            manager
+                .update_integration_status(
+                    VendorProvider::GoogleNest,
+                    IntegrationStatus::Error("bad".into()),
+                    Some("bad".into()),
+                )
+                .await
+                .unwrap();
+            manager
+                .connect_integration(VendorProvider::GoogleNest, creds("a"))
+                .await
+                .unwrap();
+            assert!(manager
+                .get_integration(VendorProvider::GoogleNest)
+                .await
+                .unwrap()
+                .error_message
+                .is_none());
         })
     });
 }
@@ -100,8 +146,20 @@ fn set_credentials_updates_existing_credentials() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let manager = IntegrationManager::new("i.json");
-            manager.set_credentials(VendorProvider::GoogleNest, creds("b")).await.unwrap();
-            assert_eq!(manager.get_integration(VendorProvider::GoogleNest).await.unwrap().credentials.unwrap().access_token, "b");
+            manager
+                .set_credentials(VendorProvider::GoogleNest, creds("b"))
+                .await
+                .unwrap();
+            assert_eq!(
+                manager
+                    .get_integration(VendorProvider::GoogleNest)
+                    .await
+                    .unwrap()
+                    .credentials
+                    .unwrap()
+                    .access_token,
+                "b"
+            );
         })
     });
 }
@@ -111,8 +169,18 @@ fn update_status_sets_error() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let manager = IntegrationManager::new("i.json");
-            manager.update_integration_status(VendorProvider::GoogleNest, IntegrationStatus::Error("x".into()), Some("x".into())).await.unwrap();
-            let meta = manager.get_integration(VendorProvider::GoogleNest).await.unwrap();
+            manager
+                .update_integration_status(
+                    VendorProvider::GoogleNest,
+                    IntegrationStatus::Error("x".into()),
+                    Some("x".into()),
+                )
+                .await
+                .unwrap();
+            let meta = manager
+                .get_integration(VendorProvider::GoogleNest)
+                .await
+                .unwrap();
             assert_eq!(meta.status, IntegrationStatus::Error("x".into()));
             assert_eq!(meta.error_message.as_deref(), Some("x"));
         })
@@ -124,8 +192,20 @@ fn update_status_can_clear_error() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let manager = IntegrationManager::new("i.json");
-            manager.update_integration_status(VendorProvider::GoogleNest, IntegrationStatus::Connected, None).await.unwrap();
-            assert!(manager.get_integration(VendorProvider::GoogleNest).await.unwrap().error_message.is_none());
+            manager
+                .update_integration_status(
+                    VendorProvider::GoogleNest,
+                    IntegrationStatus::Connected,
+                    None,
+                )
+                .await
+                .unwrap();
+            assert!(manager
+                .get_integration(VendorProvider::GoogleNest)
+                .await
+                .unwrap()
+                .error_message
+                .is_none());
         })
     });
 }
@@ -135,9 +215,23 @@ fn disconnect_clears_oauth_credentials() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let manager = IntegrationManager::new("i.json");
-            manager.connect_integration(VendorProvider::GoogleNest, creds("a")).await.unwrap();
-            assert_eq!(manager.disconnect_integration(VendorProvider::GoogleNest, None, None, None).await.unwrap(), 0);
-            assert!(manager.get_integration(VendorProvider::GoogleNest).await.unwrap().credentials.is_none());
+            manager
+                .connect_integration(VendorProvider::GoogleNest, creds("a"))
+                .await
+                .unwrap();
+            assert_eq!(
+                manager
+                    .disconnect_integration(VendorProvider::GoogleNest, None, None, None)
+                    .await
+                    .unwrap(),
+                0
+            );
+            assert!(manager
+                .get_integration(VendorProvider::GoogleNest)
+                .await
+                .unwrap()
+                .credentials
+                .is_none());
         })
     });
 }
@@ -147,9 +241,22 @@ fn disconnect_marks_disconnected() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let manager = IntegrationManager::new("i.json");
-            manager.connect_integration(VendorProvider::GoogleNest, creds("a")).await.unwrap();
-            manager.disconnect_integration(VendorProvider::GoogleNest, None, None, None).await.unwrap();
-            assert_eq!(manager.get_integration(VendorProvider::GoogleNest).await.unwrap().status, IntegrationStatus::Disconnected);
+            manager
+                .connect_integration(VendorProvider::GoogleNest, creds("a"))
+                .await
+                .unwrap();
+            manager
+                .disconnect_integration(VendorProvider::GoogleNest, None, None, None)
+                .await
+                .unwrap();
+            assert_eq!(
+                manager
+                    .get_integration(VendorProvider::GoogleNest)
+                    .await
+                    .unwrap()
+                    .status,
+                IntegrationStatus::Disconnected
+            );
         })
     });
 }
@@ -158,7 +265,10 @@ fn disconnect_marks_disconnected() {
 fn status_summary_has_two_providers() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
-            assert_eq!(IntegrationManager::new("i.json").get_status_summary().await["total_integrations"], 2);
+            assert_eq!(
+                IntegrationManager::new("i.json").get_status_summary().await["total_integrations"],
+                2
+            );
         })
     });
 }
@@ -168,8 +278,14 @@ fn status_summary_reflects_credentials() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let manager = IntegrationManager::new("i.json");
-            manager.set_credentials(VendorProvider::GoogleNest, creds("a")).await.unwrap();
-            assert_eq!(manager.get_status_summary().await["providers"]["google_nest"]["has_credentials"], true);
+            manager
+                .set_credentials(VendorProvider::GoogleNest, creds("a"))
+                .await
+                .unwrap();
+            assert_eq!(
+                manager.get_status_summary().await["providers"]["google_nest"]["has_credentials"],
+                true
+            );
         })
     });
 }
@@ -179,8 +295,18 @@ fn manager_persists_connected_status() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let manager = IntegrationManager::new("i.json");
-            manager.connect_integration(VendorProvider::GoogleNest, creds("a")).await.unwrap();
-            assert_eq!(IntegrationManager::new("i.json").get_integration(VendorProvider::GoogleNest).await.unwrap().status, IntegrationStatus::Connected);
+            manager
+                .connect_integration(VendorProvider::GoogleNest, creds("a"))
+                .await
+                .unwrap();
+            assert_eq!(
+                IntegrationManager::new("i.json")
+                    .get_integration(VendorProvider::GoogleNest)
+                    .await
+                    .unwrap()
+                    .status,
+                IntegrationStatus::Connected
+            );
         })
     });
 }
@@ -212,13 +338,17 @@ fn connect_kasa_without_flow_connects_and_discovers_zero() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let manager = IntegrationManager::new("i.json");
-            let creds = sgx_guardian_client::kasa::KasaCredentials::new(
-                Some("local".into()),
-                None,
-                None,
-            );
+            let creds =
+                sgx_guardian_client::kasa::KasaCredentials::new(Some("local".into()), None, None);
             assert_eq!(manager.connect_kasa(creds, None, None).await.unwrap(), 0);
-            assert_eq!(manager.get_integration(VendorProvider::TpLinkKasa).await.unwrap().status, IntegrationStatus::Connected);
+            assert_eq!(
+                manager
+                    .get_integration(VendorProvider::TpLinkKasa)
+                    .await
+                    .unwrap()
+                    .status,
+                IntegrationStatus::Connected
+            );
         })
     });
 }
@@ -236,7 +366,14 @@ fn update_nest_credentials_saves_status() {
                 Some("refresh".into()),
             );
             manager.update_nest_credentials(creds).await.unwrap();
-            assert_eq!(manager.get_integration(VendorProvider::GoogleNest).await.unwrap().status, IntegrationStatus::Connected);
+            assert_eq!(
+                manager
+                    .get_integration(VendorProvider::GoogleNest)
+                    .await
+                    .unwrap()
+                    .status,
+                IntegrationStatus::Connected
+            );
         })
     });
 }
@@ -245,8 +382,16 @@ fn update_nest_credentials_saves_status() {
 fn separate_data_files_are_isolated() {
     with_data_dir(|| {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
-            IntegrationManager::new("a.json").connect_integration(VendorProvider::GoogleNest, creds("a")).await.unwrap();
-            assert!(IntegrationManager::new("b.json").get_integration(VendorProvider::GoogleNest).await.unwrap().credentials.is_none());
+            IntegrationManager::new("a.json")
+                .connect_integration(VendorProvider::GoogleNest, creds("a"))
+                .await
+                .unwrap();
+            assert!(IntegrationManager::new("b.json")
+                .get_integration(VendorProvider::GoogleNest)
+                .await
+                .unwrap()
+                .credentials
+                .is_none());
         })
     });
 }
@@ -269,10 +414,17 @@ fn kasa_status_summary_reflects_connected_state() {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let manager = IntegrationManager::new("i.json");
             manager
-                .update_integration_status(VendorProvider::TpLinkKasa, IntegrationStatus::Connected, None)
+                .update_integration_status(
+                    VendorProvider::TpLinkKasa,
+                    IntegrationStatus::Connected,
+                    None,
+                )
                 .await
                 .unwrap();
-            assert_eq!(manager.get_status_summary().await["providers"]["tp_link_kasa"]["status"], "connected");
+            assert_eq!(
+                manager.get_status_summary().await["providers"]["tp_link_kasa"]["status"],
+                "connected"
+            );
         })
     });
 }
@@ -283,12 +435,26 @@ fn disconnect_kasa_without_managers_returns_zero() {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let manager = IntegrationManager::new("i.json");
             manager
-                .update_integration_status(VendorProvider::TpLinkKasa, IntegrationStatus::Connected, None)
+                .update_integration_status(
+                    VendorProvider::TpLinkKasa,
+                    IntegrationStatus::Connected,
+                    None,
+                )
                 .await
                 .unwrap();
-            assert_eq!(manager.disconnect_integration(VendorProvider::TpLinkKasa, None, None, None).await.unwrap(), 0);
             assert_eq!(
-                manager.get_integration(VendorProvider::TpLinkKasa).await.unwrap().status,
+                manager
+                    .disconnect_integration(VendorProvider::TpLinkKasa, None, None, None)
+                    .await
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                manager
+                    .get_integration(VendorProvider::TpLinkKasa)
+                    .await
+                    .unwrap()
+                    .status,
                 IntegrationStatus::Disconnected
             );
         })

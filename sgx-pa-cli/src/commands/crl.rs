@@ -475,9 +475,6 @@ mod tests {
 
     #[test]
     fn parse_severity_rejects_empty_string() {
-        assert_eq!(
-            parse_severity("").unwrap_err(),
-            "unsupported severity ''"
-        );
+        assert_eq!(parse_severity("").unwrap_err(), "unsupported severity ''");
     }
 }

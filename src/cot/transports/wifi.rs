@@ -231,7 +231,11 @@ mod tests {
 
     #[tokio::test]
     async fn is_available_requires_an_address_and_a_live_interface() {
-        assert!(!WiFiTransport::new(wifi_interface(None)).is_available().await);
+        assert!(
+            !WiFiTransport::new(wifi_interface(None))
+                .is_available()
+                .await
+        );
         // The interface name does not exist under /sys, so the sysfs probes
         // must report it unavailable instead of failing.
         assert!(
@@ -243,7 +247,9 @@ mod tests {
 
     #[tokio::test]
     async fn health_check_names_the_first_failing_condition() {
-        let health = WiFiTransport::new(wifi_interface(None)).health_check().await;
+        let health = WiFiTransport::new(wifi_interface(None))
+            .health_check()
+            .await;
         assert!(!health.is_healthy);
         assert!(health.status_message.contains("no IP"), "{health:?}");
 
@@ -267,7 +273,10 @@ mod tests {
             .await
             .expect("send succeeds");
         let received = handle.await.expect("listener task");
-        assert_eq!(&received[..4], &(b"wifi-payload".len() as u32).to_be_bytes());
+        assert_eq!(
+            &received[..4],
+            &(b"wifi-payload".len() as u32).to_be_bytes()
+        );
         assert_eq!(&received[4..], b"wifi-payload");
     }
 

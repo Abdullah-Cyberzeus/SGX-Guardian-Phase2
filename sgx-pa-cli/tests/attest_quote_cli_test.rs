@@ -87,9 +87,7 @@ fn verify_with_no_baseline_flag_takes_the_self_consistency_path() {
         .failure()
         .code(1)
         .stdout(predicate::str::contains("self-check"))
-        .stdout(predicate::str::contains(
-            "accepting self-consistency",
-        ));
+        .stdout(predicate::str::contains("accepting self-consistency"));
 }
 
 #[test]

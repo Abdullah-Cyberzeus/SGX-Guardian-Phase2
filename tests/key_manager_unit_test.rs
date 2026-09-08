@@ -22,7 +22,14 @@ impl Drop for CwdGuard {
     }
 }
 
-fn isolated_key_path(name: &str) -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir, CwdGuard, String) {
+fn isolated_key_path(
+    name: &str,
+) -> (
+    std::sync::MutexGuard<'static, ()>,
+    tempfile::TempDir,
+    CwdGuard,
+    String,
+) {
     let lock = CWD_LOCK.lock().unwrap();
     let temp = tempfile::tempdir().unwrap();
     let cwd = CwdGuard::enter(temp.path());
@@ -154,7 +161,10 @@ fn pubkey_der_is_raw_uncompressed_p256_point() {
 fn runtime_public_key_export_matches_pubkey_for_software_backend() {
     let (_lock, _temp, _cwd, key_path) = isolated_key_path("device.key");
     let km = KeyManager::load_or_generate(&key_path).unwrap();
-    assert_eq!(km.runtime_public_key_export().unwrap(), km.pubkey_der().unwrap());
+    assert_eq!(
+        km.runtime_public_key_export().unwrap(),
+        km.pubkey_der().unwrap()
+    );
 }
 
 #[test]

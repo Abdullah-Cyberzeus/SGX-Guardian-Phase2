@@ -9,8 +9,8 @@ use crate::geofence::model::{
 };
 use crate::geofence::{alerts as geofence_alerts, persistence, sources, zones};
 use crate::threat::threat_alert::ThreatAlert;
-use axum::Json;
 use axum::extract::{Path, State};
+use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

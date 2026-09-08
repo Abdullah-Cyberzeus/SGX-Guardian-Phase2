@@ -2,16 +2,16 @@
 //! Endpoints for initiating, accepting, rejecting, and ending calls.
 
 use axum::{
-    Extension, Router,
     extract::{
-        Json, Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
+        Json, Path, Query, State,
     },
     http::StatusCode,
-    response::{IntoResponse, Sse, sse::Event, sse::KeepAlive},
+    response::{sse::Event, sse::KeepAlive, IntoResponse, Sse},
+    Extension, Router,
 };
 use chrono::{DateTime, Utc};
-use futures_util::{SinkExt, StreamExt, stream};
+use futures_util::{stream, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::Infallible;
@@ -2000,7 +2000,6 @@ mod tests {
             .expect("read response body");
         serde_json::from_slice(&bytes).expect("response body is JSON")
     }
-
 
     fn test_state(node_id: &str) -> (tempfile::TempDir, Arc<AppState>) {
         let temp = tempfile::TempDir::new().expect("tempdir");

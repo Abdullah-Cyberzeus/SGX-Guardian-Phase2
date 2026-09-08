@@ -1,7 +1,7 @@
 use clap::{Args, Subcommand};
 use comfy_table::{Cell, Table};
 use sgx_guardian_client::did::{
-    Did, doc_distribution, doc_persistence, doc_sign, document::DidDocument,
+    doc_distribution, doc_persistence, doc_sign, document::DidDocument, Did,
 };
 
 #[derive(Args)]

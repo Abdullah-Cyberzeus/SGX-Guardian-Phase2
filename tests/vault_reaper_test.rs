@@ -59,7 +59,9 @@ async fn save_record_and_blob(config: &VaultConfig, record: &VaultRecord) {
     save_record(config, record).await.unwrap();
     let namespace = record.namespace_ref();
     let blob = blob_path_for_namespace(config, &namespace, &record.vault_id);
-    tokio::fs::create_dir_all(blob.parent().unwrap()).await.unwrap();
+    tokio::fs::create_dir_all(blob.parent().unwrap())
+        .await
+        .unwrap();
     tokio::fs::write(blob, b"blob").await.unwrap();
 }
 
@@ -110,7 +112,11 @@ async fn sweep_keeps_records_without_expiration() {
 #[tokio::test]
 async fn sweep_treats_malformed_expiration_as_not_expired() {
     let (_dir, config) = config();
-    let live = record("bad-expiry", VaultNamespace::Personal, Some("not-a-date".into()));
+    let live = record(
+        "bad-expiry",
+        VaultNamespace::Personal,
+        Some("not-a-date".into()),
+    );
     let blob = blob_path_for_namespace(&config, &live.namespace_ref(), &live.vault_id);
     save_record_and_blob(&config, &live).await;
     assert_eq!(VaultExpiryReaper::new(config.clone()).sweep().await, 0);
@@ -127,10 +133,12 @@ async fn sweep_counts_expired_record_even_when_blob_is_missing() {
     );
     save_record(&config, &expired).await.unwrap();
     assert_eq!(VaultExpiryReaper::new(config.clone()).sweep().await, 1);
-    assert!(sgx_guardian_client::vault::persistence::find_record(&config, "missing-blob")
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        sgx_guardian_client::vault::persistence::find_record(&config, "missing-blob")
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -157,7 +165,9 @@ async fn sweep_ignores_malformed_metadata_files() {
     let namespace = VaultNamespace::Circle("circle".into());
     let dir = meta_namespace_dir(&config, &namespace);
     tokio::fs::create_dir_all(&dir).await.unwrap();
-    tokio::fs::write(dir.join("broken.json"), b"{bad").await.unwrap();
+    tokio::fs::write(dir.join("broken.json"), b"{bad")
+        .await
+        .unwrap();
     assert_eq!(VaultExpiryReaper::new(config).sweep().await, 0);
 }
 

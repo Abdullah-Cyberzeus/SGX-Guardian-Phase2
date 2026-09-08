@@ -66,16 +66,27 @@ fn history_path_appends_runs_file_name() {
 
 #[test]
 fn status_counts_empty_inventory_is_default() {
-    assert_eq!(status_counts(&Inventory::default()), InventoryStatusCounts::default());
+    assert_eq!(
+        status_counts(&Inventory::default()),
+        InventoryStatusCounts::default()
+    );
 }
 
 #[test]
 fn status_counts_counts_all_status_variants() {
     let mut inventory = Inventory::default();
-    inventory.by_id.insert("a".into(), device("a", DeviceStatus::Approved));
-    inventory.by_id.insert("u".into(), device("u", DeviceStatus::Unauthorized));
-    inventory.by_id.insert("d".into(), device("d", DeviceStatus::Drifted));
-    inventory.by_id.insert("s".into(), device("s", DeviceStatus::Stale));
+    inventory
+        .by_id
+        .insert("a".into(), device("a", DeviceStatus::Approved));
+    inventory
+        .by_id
+        .insert("u".into(), device("u", DeviceStatus::Unauthorized));
+    inventory
+        .by_id
+        .insert("d".into(), device("d", DeviceStatus::Drifted));
+    inventory
+        .by_id
+        .insert("s".into(), device("s", DeviceStatus::Stale));
     assert_eq!(
         status_counts(&inventory),
         InventoryStatusCounts {
@@ -212,7 +223,9 @@ fn append_record_appends_without_overwrite() {
 #[test]
 fn list_recent_missing_file_returns_empty() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(list_recent(&dir.path().join("missing.jsonl"), None).unwrap().is_empty());
+    assert!(list_recent(&dir.path().join("missing.jsonl"), None)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -256,8 +269,14 @@ fn list_recent_ignores_blank_and_malformed_lines() {
 
 #[test]
 fn scan_run_source_serializes_as_snake_case() {
-    assert_eq!(serde_json::to_value(ScanRunSource::Manual).unwrap(), "manual");
-    assert_eq!(serde_json::to_value(ScanRunSource::Scheduled).unwrap(), "scheduled");
+    assert_eq!(
+        serde_json::to_value(ScanRunSource::Manual).unwrap(),
+        "manual"
+    );
+    assert_eq!(
+        serde_json::to_value(ScanRunSource::Scheduled).unwrap(),
+        "scheduled"
+    );
 }
 
 #[test]

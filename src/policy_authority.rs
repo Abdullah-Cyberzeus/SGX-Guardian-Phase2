@@ -9,9 +9,9 @@
 //! /etc/sgx-guardian/policies/. Only nodeA holds the private half. Member
 //! nodes receive the public half through the cert-bootstrap response.
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use ring::rand::SystemRandom;
-use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair};
+use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
@@ -78,8 +78,8 @@ impl PaKey {
     /// so policy_manager::verify_signed_policy continues to work without
     /// any change.
     pub fn sign_policy_to_disk(&self, yaml_path: &str) -> Result<String> {
-        use base64::Engine as _;
         use base64::engine::general_purpose;
+        use base64::Engine as _;
 
         let yaml = fs::read_to_string(yaml_path)
             .with_context(|| format!("Read policy yaml {}", yaml_path))?;

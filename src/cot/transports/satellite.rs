@@ -244,7 +244,8 @@ mod tests {
 
     #[tokio::test]
     async fn send_refuses_an_interface_that_is_not_usable() {
-        let transport = SatelliteTransport::new(sat_interface(InterfaceStatus::Down, Some("100.64.1.2")));
+        let transport =
+            SatelliteTransport::new(sat_interface(InterfaceStatus::Down, Some("100.64.1.2")));
         let error = transport
             .send(&TransportMessage::new(
                 "device-a".into(),
@@ -305,7 +306,8 @@ mod tests {
             }
         });
         let _gateway = GatewayGuard::set(&addr.to_string());
-        let transport = SatelliteTransport::new(sat_interface(InterfaceStatus::Up, Some("100.64.1.2")));
+        let transport =
+            SatelliteTransport::new(sat_interface(InterfaceStatus::Up, Some("100.64.1.2")));
         assert!(transport.is_available().await);
         let health = transport.health_check().await;
         assert!(health.is_healthy, "{health:?}");
@@ -320,7 +322,8 @@ mod tests {
         let addr = listener.local_addr().expect("local addr");
         drop(listener);
         let _gateway = GatewayGuard::set(&addr.to_string());
-        let transport = SatelliteTransport::new(sat_interface(InterfaceStatus::Up, Some("100.64.1.2")));
+        let transport =
+            SatelliteTransport::new(sat_interface(InterfaceStatus::Up, Some("100.64.1.2")));
         let health = transport.health_check().await;
         assert!(!health.is_healthy);
         assert!(health.status_message.contains("probe failed"), "{health:?}");

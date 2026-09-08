@@ -116,7 +116,11 @@ async fn send_rejects_a_file_over_the_configured_max_size() {
     )
     .await;
     std::env::remove_var("SGX_XFER_MAX_FILE_BYTES");
-    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "send response: {body}");
+    assert_eq!(
+        status,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "send response: {body}"
+    );
     assert!(body.to_string().contains("file too large"));
 }
 
@@ -190,7 +194,10 @@ async fn send_a_vault_record_to_self_completes_locally_without_any_network_trans
     .await;
     assert_eq!(status, StatusCode::OK, "send response: {body}");
     assert_eq!(body["status"], "accepted");
-    let transfer_id = body["transfer_id"].as_str().expect("transfer_id").to_string();
+    let transfer_id = body["transfer_id"]
+        .as_str()
+        .expect("transfer_id")
+        .to_string();
     assert!(transfer_id.starts_with("local-"));
 
     let (list_status, list_body) = json_request(&env, "GET", "/api/v1/xfer/transfers", None).await;

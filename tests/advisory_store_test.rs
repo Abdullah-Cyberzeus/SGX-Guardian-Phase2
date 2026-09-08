@@ -26,7 +26,10 @@ fn rec(id: &str) -> RemediationRecommendation {
 #[tokio::test]
 async fn list_recent_missing_file_is_empty() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(list_recent(&dir.path().join("missing.jsonl"), 10).await.unwrap().is_empty());
+    assert!(list_recent(&dir.path().join("missing.jsonl"), 10)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
@@ -185,7 +188,11 @@ async fn find_for_alert_returns_latest_matching_item() {
     let path = dir.path().join("items.jsonl");
     append_capped(&path, rec("1"), 10).await.unwrap();
     assert_eq!(
-        find_for_alert(&path, "alert-1").await.unwrap().unwrap().rec_id,
+        find_for_alert(&path, "alert-1")
+            .await
+            .unwrap()
+            .unwrap()
+            .rec_id,
         "rec-1"
     );
 }
@@ -262,7 +269,9 @@ async fn append_with_large_cap_keeps_all_items() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("items.jsonl");
     for id in 0..5 {
-        append_capped(&path, rec(&id.to_string()), 99).await.unwrap();
+        append_capped(&path, rec(&id.to_string()), 99)
+            .await
+            .unwrap();
     }
     assert_eq!(list_recent(&path, 99).await.unwrap().len(), 5);
 }

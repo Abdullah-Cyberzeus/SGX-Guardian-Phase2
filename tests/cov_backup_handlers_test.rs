@@ -12,7 +12,11 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use tower::ServiceExt;
 
-fn multipart_body(boundary: &str, passphrase: Option<&str>, file: Option<(&str, &[u8])>) -> Vec<u8> {
+fn multipart_body(
+    boundary: &str,
+    passphrase: Option<&str>,
+    file: Option<(&str, &[u8])>,
+) -> Vec<u8> {
     let mut body = Vec::new();
     if let Some(passphrase) = passphrase {
         body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
@@ -23,8 +27,10 @@ fn multipart_body(boundary: &str, passphrase: Option<&str>, file: Option<(&str, 
     if let Some((filename, content)) = file {
         body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
         body.extend_from_slice(
-            format!("Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n\r\n")
-                .as_bytes(),
+            format!(
+                "Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n\r\n"
+            )
+            .as_bytes(),
         );
         body.extend_from_slice(content);
         body.extend_from_slice(b"\r\n");
@@ -120,8 +126,7 @@ async fn create_and_history_round_trip() {
     assert_eq!(create_status, StatusCode::OK);
     let backup_id = created["id"].as_str().expect("backup id").to_string();
 
-    let (history_status, history) =
-        json_request(&env, "GET", "/api/v1/backup/history", None).await;
+    let (history_status, history) = json_request(&env, "GET", "/api/v1/backup/history", None).await;
     assert_eq!(history_status, StatusCode::OK);
     let backups = history["records"].as_array().expect("backups array");
     assert_eq!(backups.len(), 1);
@@ -151,7 +156,8 @@ async fn download_and_delete_reject_an_id_that_sanitizes_to_empty() {
         .to_string()
         .contains("backup id must not be empty"));
 
-    let (delete_status, delete_body) = json_request(&env, "DELETE", "/api/v1/backup/!!!", None).await;
+    let (delete_status, delete_body) =
+        json_request(&env, "DELETE", "/api/v1/backup/!!!", None).await;
     assert_eq!(delete_status, StatusCode::BAD_REQUEST);
     assert!(delete_body
         .to_string()
@@ -240,13 +246,8 @@ async fn create_download_and_delete_round_trip() {
         .expect("read download body");
     assert!(!bytes.is_empty());
 
-    let (delete_status, delete_body) = json_request(
-        &env,
-        "DELETE",
-        &format!("/api/v1/backup/{backup_id}"),
-        None,
-    )
-    .await;
+    let (delete_status, delete_body) =
+        json_request(&env, "DELETE", &format!("/api/v1/backup/{backup_id}"), None).await;
     assert_eq!(delete_status, StatusCode::OK);
     assert_eq!(delete_body["status"], "deleted");
 
@@ -301,7 +302,9 @@ async fn restore_is_unconditionally_unavailable() {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
-    assert!(body.to_string().contains("legacy /backup/restore is not used"));
+    assert!(body
+        .to_string()
+        .contains("legacy /backup/restore is not used"));
 }
 
 async fn multipart_request(
@@ -336,7 +339,11 @@ async fn multipart_request(
 async fn import_requires_a_passphrase_field() {
     let env = BackupEnv::new().await;
     let boundary = "cov-backup-import-no-passphrase";
-    let body = multipart_body(boundary, None, Some(("bundle.sgxbak", b"not a real bundle")));
+    let body = multipart_body(
+        boundary,
+        None,
+        Some(("bundle.sgxbak", b"not a real bundle")),
+    );
     let (status, parsed) = multipart_request(&env, boundary, body).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(parsed.to_string().contains("passphrase field is required"));
@@ -346,7 +353,11 @@ async fn import_requires_a_passphrase_field() {
 async fn import_rejects_empty_passphrase() {
     let env = BackupEnv::new().await;
     let boundary = "cov-backup-import-empty-passphrase";
-    let body = multipart_body(boundary, Some(""), Some(("bundle.sgxbak", b"not a real bundle")));
+    let body = multipart_body(
+        boundary,
+        Some(""),
+        Some(("bundle.sgxbak", b"not a real bundle")),
+    );
     let (status, parsed) = multipart_request(&env, boundary, body).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(parsed.to_string().contains("passphrase must not be empty"));
@@ -366,7 +377,11 @@ async fn import_requires_a_file_field() {
 async fn import_rejects_a_filename_without_the_sgxbak_extension() {
     let env = BackupEnv::new().await;
     let boundary = "cov-backup-import-bad-ext";
-    let body = multipart_body(boundary, Some("some-passphrase"), Some(("bundle.zip", b"data")));
+    let body = multipart_body(
+        boundary,
+        Some("some-passphrase"),
+        Some(("bundle.zip", b"data")),
+    );
     let (status, parsed) = multipart_request(&env, boundary, body).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(parsed.to_string().contains("must be a .sgxbak bundle"));
@@ -394,7 +409,9 @@ async fn import_rejects_duplicate_passphrase_field() {
     body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
     body.extend_from_slice(b"Content-Disposition: form-data; name=\"passphrase\"\r\n\r\nfirst\r\n");
     body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-    body.extend_from_slice(b"Content-Disposition: form-data; name=\"passphrase\"\r\n\r\nsecond\r\n");
+    body.extend_from_slice(
+        b"Content-Disposition: form-data; name=\"passphrase\"\r\n\r\nsecond\r\n",
+    );
     body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
     let (status, parsed) = multipart_request(&env, boundary, body).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -483,8 +500,9 @@ async fn import_round_trips_a_real_backup_created_elsewhere() {
     )
     .await
     .expect("create source backup");
-    let bundle_bytes =
-        tokio::fs::read(source_config.bundle_path(&record.id)).await.expect("read bundle");
+    let bundle_bytes = tokio::fs::read(source_config.bundle_path(&record.id))
+        .await
+        .expect("read bundle");
 
     let env = BackupEnv::new().await;
     let boundary = "cov-backup-import-real";

@@ -92,8 +92,8 @@ async fn backup_reports_not_found_when_no_real_backup_policy_exists() {
 #[tokio::test]
 async fn save_current_rejects_invalid_policy_yaml() {
     let env = PolicyEnv::new().await;
-    use sgx_guardian_client::api::handlers::policy::{save_current, SavePolicyRequest};
     use axum::Json;
+    use sgx_guardian_client::api::handlers::policy::{save_current, SavePolicyRequest};
     let result = save_current(
         State(env.state.clone()),
         Json(SavePolicyRequest {
@@ -107,8 +107,8 @@ async fn save_current_rejects_invalid_policy_yaml() {
 #[tokio::test]
 async fn save_current_fails_internally_when_the_real_policy_dir_is_unwritable() {
     let env = PolicyEnv::new().await;
-    use sgx_guardian_client::api::handlers::policy::{save_current, SavePolicyRequest};
     use axum::Json;
+    use sgx_guardian_client::api::handlers::policy::{save_current, SavePolicyRequest};
     // Valid YAML, but `PENDING_POLICY_PATH` is the hardcoded
     // `/etc/sgx-guardian/policies/pending_policy.yaml`, unwritable here.
     let valid_policy = r#"policy_id: "alpha"
@@ -138,8 +138,10 @@ fn multipart_body(boundary: &str, fields: &[(&str, &str, &[u8])]) -> Vec<u8> {
     for (name, filename, content) in fields {
         body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
         body.extend_from_slice(
-            format!("Content-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\n\r\n")
-                .as_bytes(),
+            format!(
+                "Content-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\n\r\n"
+            )
+            .as_bytes(),
         );
         body.extend_from_slice(content);
         body.extend_from_slice(b"\r\n");
@@ -215,7 +217,10 @@ async fn verify_invokes_the_real_cli_against_a_bogus_signature() {
     std::env::set_var("SGX_PA_CLI_PATH", pa_cli_path());
 
     let boundary = "cov-policy-verify";
-    let body = multipart_body(boundary, &[("policy", "policy.sig", b"not a real signature")]);
+    let body = multipart_body(
+        boundary,
+        &[("policy", "policy.sig", b"not a real signature")],
+    );
     let request = Request::builder()
         .method("POST")
         .uri("/api/v1/policy/verify")

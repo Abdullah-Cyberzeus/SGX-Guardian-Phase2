@@ -36,7 +36,10 @@ fn recommendation() -> RemediationRecommendation {
 fn remediation_step_round_trips_json() {
     let original = step(7);
     let encoded = serde_json::to_string(&original).unwrap();
-    assert_eq!(serde_json::from_str::<RemediationStep>(&encoded).unwrap(), original);
+    assert_eq!(
+        serde_json::from_str::<RemediationStep>(&encoded).unwrap(),
+        original
+    );
 }
 
 #[test]
@@ -92,7 +95,10 @@ fn anomaly_context_round_trips_json() {
         model_version: Some("v1".into()),
     };
     let encoded = serde_json::to_string(&original).unwrap();
-    assert_eq!(serde_json::from_str::<AnomalyContext>(&encoded).unwrap(), original);
+    assert_eq!(
+        serde_json::from_str::<AnomalyContext>(&encoded).unwrap(),
+        original
+    );
 }
 
 #[test]
@@ -135,7 +141,10 @@ fn cve_finding_round_trips_with_cvss() {
         cvss: Some(9.8),
     };
     let encoded = serde_json::to_string(&original).unwrap();
-    assert_eq!(serde_json::from_str::<CveFinding>(&encoded).unwrap(), original);
+    assert_eq!(
+        serde_json::from_str::<CveFinding>(&encoded).unwrap(),
+        original
+    );
 }
 
 #[test]
@@ -166,7 +175,10 @@ fn device_context_round_trips_full_payload() {
         }],
     };
     let encoded = serde_json::to_string(&original).unwrap();
-    assert_eq!(serde_json::from_str::<DeviceContext>(&encoded).unwrap(), original);
+    assert_eq!(
+        serde_json::from_str::<DeviceContext>(&encoded).unwrap(),
+        original
+    );
 }
 
 #[test]
@@ -229,7 +241,9 @@ fn recommendation_accepts_empty_vectors() {
         references: Vec::new(),
         ..recommendation()
     };
-    assert!(serde_json::to_string(&item).unwrap().contains("\"steps\":[]"));
+    assert!(serde_json::to_string(&item)
+        .unwrap()
+        .contains("\"steps\":[]"));
 }
 
 #[test]

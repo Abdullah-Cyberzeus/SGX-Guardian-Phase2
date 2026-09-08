@@ -237,7 +237,8 @@ mod tests {
 
     #[tokio::test]
     async fn is_available_is_false_without_a_usable_interface() {
-        let down = CellularTransport::new(cellular_interface(InterfaceStatus::Down, Some("10.0.0.2")));
+        let down =
+            CellularTransport::new(cellular_interface(InterfaceStatus::Down, Some("10.0.0.2")));
         assert!(!down.is_available().await);
         let no_ip = CellularTransport::new(cellular_interface(InterfaceStatus::Up, None));
         assert!(!no_ip.is_available().await);

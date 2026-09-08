@@ -15,7 +15,8 @@ const CIRCLE: &str = "family";
 /// Fetches the Guardian's own fingerprint via the public onboarding
 /// endpoint, so tests don't need to reimplement `guardian_fingerprint`.
 async fn current_fingerprint(env: &support::Env) -> String {
-    let (status, body) = support::call(env.router(), "GET", "/api/v1/pwa/onboarding", None, None).await;
+    let (status, body) =
+        support::call(env.router(), "GET", "/api/v1/pwa/onboarding", None, None).await;
     assert_eq!(status, axum::http::StatusCode::OK, "{body}");
     body["fingerprint"].as_str().unwrap().to_string()
 }
@@ -37,7 +38,8 @@ async fn onboarding_returns_200_with_active_circle_summaries() {
     let owner_token = env.owner_token().await;
     env.create_circle(&owner_token, CIRCLE).await;
 
-    let (status, body) = support::call(env.router(), "GET", "/api/v1/pwa/onboarding", None, None).await;
+    let (status, body) =
+        support::call(env.router(), "GET", "/api/v1/pwa/onboarding", None, None).await;
     assert_eq!(status, axum::http::StatusCode::OK, "{body}");
     assert!(body["circles"]
         .as_array()
@@ -64,7 +66,11 @@ async fn preview_member_invite_returns_400_for_malformed_token() {
 /// Mints an owner-only member enrollment for `circle_id` and returns its
 /// full JSON body (contains `link`, `expiresAt`, and the nested
 /// `enrollment` view with `approvalId`/the dotted claim embedded in `link`).
-async fn mint_enrollment(env: &support::Env, owner_token: &str, circle_id: &str) -> serde_json::Value {
+async fn mint_enrollment(
+    env: &support::Env,
+    owner_token: &str,
+    circle_id: &str,
+) -> serde_json::Value {
     let (status, body) = support::call(
         env.router(),
         "POST",
@@ -419,7 +425,10 @@ async fn join_additional_circle_rebinds_enrollment_to_existing_member_then_can_b
     .await;
     assert_eq!(status, axum::http::StatusCode::OK, "{body}");
     assert_eq!(body["enrollment"]["state"], "pending");
-    let work_approval_id = body["enrollment"]["approvalId"].as_str().unwrap().to_string();
+    let work_approval_id = body["enrollment"]["approvalId"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let (status, body) = support::call(
         env.router(),

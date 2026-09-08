@@ -104,8 +104,13 @@ async fn issue_creates_a_new_member_vc_and_reuses_it_on_replay() {
 async fn issue_rejects_missing_subject_invalid_role_and_invalid_days() {
     let env = VcEnv::new().await;
 
-    let (missing_status, missing_body) =
-        json_request(&env, "POST", "/api/v1/vc/issue", Some(serde_json::json!({}))).await;
+    let (missing_status, missing_body) = json_request(
+        &env,
+        "POST",
+        "/api/v1/vc/issue",
+        Some(serde_json::json!({})),
+    )
+    .await;
     assert_eq!(missing_status, StatusCode::BAD_REQUEST);
     assert!(missing_body.to_string().contains("to is required"));
 
@@ -211,13 +216,8 @@ async fn revoke_marks_a_vc_revoked_and_reports_not_found_for_an_unknown_one() {
     assert_eq!(status, StatusCode::OK, "revoke response: {body}");
     assert_eq!(body["revoked"], true);
 
-    let (status_status, status_body) = json_request(
-        &env,
-        "GET",
-        &format!("/api/v1/vc/status/{vc_id}"),
-        None,
-    )
-    .await;
+    let (status_status, status_body) =
+        json_request(&env, "GET", &format!("/api/v1/vc/status/{vc_id}"), None).await;
     assert_eq!(status_status, StatusCode::OK);
     assert_eq!(status_body["revoked"], true);
     assert_eq!(status_body["active"], false);
@@ -279,13 +279,8 @@ async fn status_reports_active_for_a_freshly_issued_vc_and_bad_request_for_a_mal
     .await;
     let vc_id = issued["vc_id"].as_str().expect("vc_id").to_string();
 
-    let (status, body) = json_request(
-        &env,
-        "GET",
-        &format!("/api/v1/vc/status?id={vc_id}"),
-        None,
-    )
-    .await;
+    let (status, body) =
+        json_request(&env, "GET", &format!("/api/v1/vc/status?id={vc_id}"), None).await;
     assert_eq!(status, StatusCode::OK, "status response: {body}");
     assert_eq!(body["active"], true);
     assert_eq!(body["revoked"], false);
@@ -379,7 +374,10 @@ async fn list_and_own_files_reflect_a_freshly_issued_vc() {
     let (issued_status, issued_body) =
         json_request(&env, "GET", "/api/v1/vc/files/issued", None).await;
     assert_eq!(issued_status, StatusCode::OK);
-    assert!(issued_body["count"].as_u64().unwrap() >= 1, "issued list: {issued_body}");
+    assert!(
+        issued_body["count"].as_u64().unwrap() >= 1,
+        "issued list: {issued_body}"
+    );
 
     let (peers_status, peers_body) = json_request(&env, "GET", "/api/v1/vc/peers", None).await;
     assert_eq!(peers_status, StatusCode::OK, "peers response: {peers_body}");
@@ -402,10 +400,18 @@ async fn show_filters_by_scope_role_and_status() {
     assert_eq!(all_status, StatusCode::OK);
     assert!(all_body["count"].as_u64().unwrap() >= 1);
 
-    let (issued_status, issued_body) =
-        json_request(&env, "GET", "/api/v1/vc/show?scope=issued&role=member", None).await;
+    let (issued_status, issued_body) = json_request(
+        &env,
+        "GET",
+        "/api/v1/vc/show?scope=issued&role=member",
+        None,
+    )
+    .await;
     assert_eq!(issued_status, StatusCode::OK);
-    assert!(issued_body["count"].as_u64().unwrap() >= 1, "issued+member: {issued_body}");
+    assert!(
+        issued_body["count"].as_u64().unwrap() >= 1,
+        "issued+member: {issued_body}"
+    );
 
     let (bad_scope_status, bad_scope_body) =
         json_request(&env, "GET", "/api/v1/vc/show?scope=bogus", None).await;
@@ -460,7 +466,11 @@ async fn file_issued_own_and_peer_return_the_underlying_json_or_not_found() {
         None,
     )
     .await;
-    assert_eq!(found_status, StatusCode::OK, "file_issued response: {found_body}");
+    assert_eq!(
+        found_status,
+        StatusCode::OK,
+        "file_issued response: {found_body}"
+    );
     assert_eq!(found_body["id"], vc_id);
 
     let (not_found_status, _) = json_request(
@@ -475,7 +485,10 @@ async fn file_issued_own_and_peer_return_the_underlying_json_or_not_found() {
     let (peer_not_found_status, _) = json_request(
         &env,
         "GET",
-        &format!("/api/v1/vc/files/peer/{}", new_subject_did("vc-no-such-peer")),
+        &format!(
+            "/api/v1/vc/files/peer/{}",
+            new_subject_did("vc-no-such-peer")
+        ),
         None,
     )
     .await;
@@ -501,16 +514,15 @@ async fn file_issued_own_and_peer_return_the_underlying_json_or_not_found() {
 
     let (files_peers_status, files_peers_body) =
         json_request(&env, "GET", "/api/v1/vc/files/peers", None).await;
-    assert_eq!(files_peers_status, StatusCode::OK, "files_peers: {files_peers_body}");
+    assert_eq!(
+        files_peers_status,
+        StatusCode::OK,
+        "files_peers: {files_peers_body}"
+    );
     assert!(files_peers_body["count"].is_u64());
 
-    let (bad_id_status, _) = json_request(
-        &env,
-        "GET",
-        "/api/v1/vc/files/own/not-a-urn",
-        None,
-    )
-    .await;
+    let (bad_id_status, _) =
+        json_request(&env, "GET", "/api/v1/vc/files/own/not-a-urn", None).await;
     assert_eq!(bad_id_status, StatusCode::BAD_REQUEST);
 }
 
@@ -523,7 +535,11 @@ async fn status_list_and_index_are_readable_after_bootstrap() {
 
     let (index_status, index_body) =
         json_request(&env, "GET", "/api/v1/vc/status-list-index", None).await;
-    assert_eq!(index_status, StatusCode::OK, "status-list-index: {index_body}");
+    assert_eq!(
+        index_status,
+        StatusCode::OK,
+        "status-list-index: {index_body}"
+    );
 }
 
 #[tokio::test]
@@ -735,13 +751,8 @@ async fn audit_filters_by_action_and_respects_limit() {
     assert!(actions.contains(&"VC_SUMMARY_READ"));
     assert!(actions.contains(&"VC_STATUS_LIST_PULLED"));
 
-    let (filtered_status, filtered_body) = json_request(
-        &env,
-        "GET",
-        "/api/v1/vc/audit?action=NoSuchAction",
-        None,
-    )
-    .await;
+    let (filtered_status, filtered_body) =
+        json_request(&env, "GET", "/api/v1/vc/audit?action=NoSuchAction", None).await;
     assert_eq!(filtered_status, StatusCode::OK);
     assert_eq!(filtered_body["count"], 0);
 
@@ -829,19 +840,23 @@ async fn status_and_summary_report_a_vc_with_a_past_expiration_date_as_expired()
     };
     sgx_guardian_client::vc::persistence::save_issued(&vc).expect("seed expired vc");
 
-    let (status_code, status_body) = json_request(
-        &env,
-        "GET",
-        &format!("/api/v1/vc/status/{vc_id}"),
-        None,
-    )
-    .await;
-    assert_eq!(status_code, StatusCode::OK, "status response: {status_body}");
+    let (status_code, status_body) =
+        json_request(&env, "GET", &format!("/api/v1/vc/status/{vc_id}"), None).await;
+    assert_eq!(
+        status_code,
+        StatusCode::OK,
+        "status response: {status_body}"
+    );
     assert_eq!(status_body["expired"], true);
     assert_eq!(status_body["active"], false);
     assert_eq!(status_body["reason"], "VC expired");
 
-    let (summary_status, summary_body) = json_request(&env, "GET", "/api/v1/vc/summary", None).await;
-    assert_eq!(summary_status, StatusCode::OK, "summary response: {summary_body}");
+    let (summary_status, summary_body) =
+        json_request(&env, "GET", "/api/v1/vc/summary", None).await;
+    assert_eq!(
+        summary_status,
+        StatusCode::OK,
+        "summary response: {summary_body}"
+    );
     assert!(summary_body["expired_total"].as_u64().unwrap() >= 1);
 }

@@ -2,14 +2,14 @@ use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::error::ApiError;
 use crate::api::idempotency;
 use crate::api::state::AppState;
-use crate::vault::VaultConfig;
 use crate::vault::namespace::validate_vault_id;
+use crate::vault::VaultConfig;
 use crate::xfer::errors::XferError;
 use crate::xfer::store::{self, LocalTransferRecord, ReceiverState, SenderProgress};
 use axum::{
-    Extension, Json,
     extract::{Path, State},
     http::HeaderMap,
+    Extension, Json,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -625,10 +625,7 @@ mod tests {
         let state = h.state.clone();
         for (path, vault_id) in [
             (None, None),
-            (
-                Some("/tmp/a".to_string()),
-                Some("vault-1".to_string()),
-            ),
+            (Some("/tmp/a".to_string()), Some("vault-1".to_string())),
         ] {
             let error = send(
                 State(state.clone()),
@@ -843,13 +840,9 @@ mod tests {
         assert!(inbound.0.peer_did.is_none());
         assert!(inbound.0.bytes_sent.is_none());
 
-        store::save_local_transfer(&local_record(
-            "local-foreign",
-            "did:sgx:one",
-            "did:sgx:two",
-        ))
-        .await
-        .expect("save third-party local transfer");
+        store::save_local_transfer(&local_record("local-foreign", "did:sgx:one", "did:sgx:two"))
+            .await
+            .expect("save third-party local transfer");
         let error = detail(State(state), None, Path("local-foreign".to_string()))
             .await
             .expect_err("third-party local transfers must not be readable");

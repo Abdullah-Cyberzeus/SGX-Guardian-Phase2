@@ -5,14 +5,14 @@ use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use axum::{
     extract::State,
-    http::{HeaderMap, Method, Request, header},
+    http::{header, HeaderMap, Method, Request},
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicI8, Ordering};
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct AuthenticatedSession {
@@ -409,7 +409,7 @@ mod tests {
     };
     use crate::api::state::AppState;
     use crate::test_support::async_env_lock;
-    use axum::{Json, Router, routing::get};
+    use axum::{routing::get, Json, Router};
     use reqwest::StatusCode;
     use serde_json::json;
     use tempfile::TempDir;

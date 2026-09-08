@@ -1,7 +1,7 @@
 use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
-use axum::{Json, extract::State};
+use axum::{extract::State, Json};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -870,7 +870,6 @@ mod tests {
     use axum::extract::State;
     use std::ffi::OsString;
     use tempfile::TempDir;
-
 
     struct EnvGuard {
         nebula_prev: Option<OsString>,

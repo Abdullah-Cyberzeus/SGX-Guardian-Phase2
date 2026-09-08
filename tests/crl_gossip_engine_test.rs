@@ -1,15 +1,15 @@
-use sgx_guardian_client::crl::gossip::engine::{
-    did_record_path, entries_merged_total, last_round, parse_nebula_endpoint, rounds_initiated,
-    rounds_served, threshold_count, GossipPeer, LastRound, RoundReport,
-};
 use sgx_guardian_client::crl::entry::{
     CrlEntry, RevocationEvidence, RevocationReason, RevokerRole, Severity, UnrevokeTombstone,
     CRL_CONTEXT_CORE, CRL_CONTEXT_SGX,
 };
 use sgx_guardian_client::crl::gossip::emergency::{
-    last_notice as emergency_last_notice, notices_merged, notices_received, notices_rebroadcast,
+    last_notice as emergency_last_notice, notices_merged, notices_rebroadcast, notices_received,
     notices_sent, sessions_terminated_total, LastNotice, RevocationNotice, KIND_NOTICE,
     MAX_DATAGRAM_BYTES,
+};
+use sgx_guardian_client::crl::gossip::engine::{
+    did_record_path, entries_merged_total, last_round, parse_nebula_endpoint, rounds_initiated,
+    rounds_served, threshold_count, GossipPeer, LastRound, RoundReport,
 };
 use sgx_guardian_client::crl::gossip::notifications::{
     recent as recent_notifications, record as record_notification, EmergencyNotification,
@@ -38,17 +38,26 @@ fn did_record_path_uses_env_override() {
 
 #[test]
 fn parse_nebula_endpoint_accepts_cidr() {
-    assert_eq!(parse_nebula_endpoint("nebula://192.168.100.7/24"), Some("192.168.100.7".into()));
+    assert_eq!(
+        parse_nebula_endpoint("nebula://192.168.100.7/24"),
+        Some("192.168.100.7".into())
+    );
 }
 
 #[test]
 fn parse_nebula_endpoint_accepts_no_cidr() {
-    assert_eq!(parse_nebula_endpoint("nebula://192.168.100.8"), Some("192.168.100.8".into()));
+    assert_eq!(
+        parse_nebula_endpoint("nebula://192.168.100.8"),
+        Some("192.168.100.8".into())
+    );
 }
 
 #[test]
 fn parse_nebula_endpoint_accepts_ipv6_like_text() {
-    assert_eq!(parse_nebula_endpoint("nebula://fd00::1/64"), Some("fd00::1".into()));
+    assert_eq!(
+        parse_nebula_endpoint("nebula://fd00::1/64"),
+        Some("fd00::1".into())
+    );
 }
 
 #[test]
@@ -63,7 +72,10 @@ fn parse_nebula_endpoint_rejects_empty_after_scheme() {
 
 #[test]
 fn parse_nebula_endpoint_keeps_host_port_as_ip_text() {
-    assert_eq!(parse_nebula_endpoint("nebula://192.168.100.7:4242/24"), Some("192.168.100.7:4242".into()));
+    assert_eq!(
+        parse_nebula_endpoint("nebula://192.168.100.7:4242/24"),
+        Some("192.168.100.7:4242".into())
+    );
 }
 
 macro_rules! threshold_tests {
@@ -116,7 +128,11 @@ fn last_round_serializes_all_fields() {
 
 #[test]
 fn gossip_peer_clone_preserves_fields() {
-    let peer = GossipPeer { did: "did:a".into(), node_name: "nodeA".into(), overlay_ip: "192.168.100.2".into() };
+    let peer = GossipPeer {
+        did: "did:a".into(),
+        node_name: "nodeA".into(),
+        overlay_ip: "192.168.100.2".into(),
+    };
     let cloned = peer.clone();
     assert_eq!(cloned.did, "did:a");
     assert_eq!(cloned.overlay_ip, "192.168.100.2");
@@ -124,7 +140,11 @@ fn gossip_peer_clone_preserves_fields() {
 
 #[test]
 fn gossip_peer_debug_mentions_node() {
-    let peer = GossipPeer { did: "did:a".into(), node_name: "nodeA".into(), overlay_ip: "192.168.100.2".into() };
+    let peer = GossipPeer {
+        did: "did:a".into(),
+        node_name: "nodeA".into(),
+        overlay_ip: "192.168.100.2".into(),
+    };
     assert!(format!("{peer:?}").contains("nodeA"));
 }
 
@@ -302,7 +322,12 @@ fn sync_response_serializes_entries_tombstones_want_and_error() {
         sender_did: "did:sender".into(),
         sequence: 9,
         merkle_root: "root".into(),
-        entries: vec![crl_entry("entry-1", "did:revoked", RevocationReason::Lost, Severity::High)],
+        entries: vec![crl_entry(
+            "entry-1",
+            "did:revoked",
+            RevocationReason::Lost,
+            Severity::High,
+        )],
         tombstones: vec![tombstone("tomb-1", "did:revoked")],
         want: vec!["missing".into()],
         error: Some("bad".into()),
@@ -401,7 +426,12 @@ fn revocation_notice_serializes_kind_ttl_and_entry() {
         notice_id: "notice-1".into(),
         ttl: 2,
         sent_at: "2026-01-01T00:00:00Z".into(),
-        entry: crl_entry("entry-1", "did:revoked", RevocationReason::PolicyViolation, Severity::Critical),
+        entry: crl_entry(
+            "entry-1",
+            "did:revoked",
+            RevocationReason::PolicyViolation,
+            Severity::Critical,
+        ),
     };
     let bytes = serde_json::to_vec(&notice).unwrap();
     assert!(bytes.len() < MAX_DATAGRAM_BYTES);
@@ -415,8 +445,18 @@ fn notification_record_persists_and_recent_returns_most_recent_first() {
     let dir = tempdir().unwrap();
     let previous = std::env::var_os("SGX_GUARDIAN_CRL_DIR");
     std::env::set_var("SGX_GUARDIAN_CRL_DIR", dir.path());
-    let first = crl_entry("entry-1", "did:first", RevocationReason::Lost, Severity::Critical);
-    let second = crl_entry("entry-2", "did:second", RevocationReason::Stolen, Severity::Critical);
+    let first = crl_entry(
+        "entry-1",
+        "did:first",
+        RevocationReason::Lost,
+        Severity::Critical,
+    );
+    let second = crl_entry(
+        "entry-2",
+        "did:second",
+        RevocationReason::Stolen,
+        Severity::Critical,
+    );
     record_notification("node", &first, "did:origin", 1);
     record_notification("node", &second, "did:origin", 2);
     let notes = recent_notifications(10);

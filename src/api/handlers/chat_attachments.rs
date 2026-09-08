@@ -6,12 +6,12 @@ use crate::api::handlers::vault::{
 };
 use crate::api::state::AppState;
 use crate::vault::namespace::VaultNamespace;
-use crate::vault::{VaultConfig, ingest, mime_policy, persistence};
+use crate::vault::{ingest, mime_policy, persistence, VaultConfig};
 use axum::{
-    Json,
     extract::{Extension, Multipart, Path, State},
     http::HeaderMap,
     response::Response,
+    Json,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};

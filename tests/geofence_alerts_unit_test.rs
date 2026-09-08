@@ -122,9 +122,14 @@ async fn emit_transition_alert_rejects_invalid_transition_without_writing_file()
         "SGX_GUARDIAN_GEOFENCE_BASE",
         dir.path().to_str().expect("utf8 path"),
     );
-    let err = emit_transition_alert("node-a", &zone("low"), "arrive", &Fix::coordinate(1.0, 2.0, None))
-        .await
-        .unwrap_err();
+    let err = emit_transition_alert(
+        "node-a",
+        &zone("low"),
+        "arrive",
+        &Fix::coordinate(1.0, 2.0, None),
+    )
+    .await
+    .unwrap_err();
     assert!(err.to_string().contains("unsupported geofence transition"));
     assert!(!alerts_path().exists());
 }

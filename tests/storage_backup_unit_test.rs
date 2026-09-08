@@ -16,10 +16,14 @@ fn write_json(dir: &std::path::Path, name: &str, body: &str) {
 #[test]
 fn create_backup_creates_timestamped_directory() {
     let td = tempfile::tempdir().unwrap();
-    let backup = BackupManager::create_backup(&td.path().join("data"), &td.path().join("backups"))
-        .unwrap();
+    let backup =
+        BackupManager::create_backup(&td.path().join("data"), &td.path().join("backups")).unwrap();
     assert!(backup.exists());
-    assert!(backup.file_name().unwrap().to_string_lossy().starts_with("backup_"));
+    assert!(backup
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .starts_with("backup_"));
 }
 
 #[test]
@@ -28,7 +32,10 @@ fn create_backup_copies_single_known_json_file() {
     let data = td.path().join("data");
     write_json(&data, "devices.json", r#"{"devices":{}}"#);
     let backup = BackupManager::create_backup(&data, &td.path().join("backups")).unwrap();
-    assert_eq!(std::fs::read_to_string(backup.join("devices.json")).unwrap(), r#"{"devices":{}}"#);
+    assert_eq!(
+        std::fs::read_to_string(backup.join("devices.json")).unwrap(),
+        r#"{"devices":{}}"#
+    );
 }
 
 #[test]
@@ -56,8 +63,9 @@ fn create_backup_ignores_unknown_files() {
 #[test]
 fn create_backup_succeeds_when_data_dir_is_missing() {
     let td = tempfile::tempdir().unwrap();
-    let backup = BackupManager::create_backup(&td.path().join("missing"), &td.path().join("backups"))
-        .unwrap();
+    let backup =
+        BackupManager::create_backup(&td.path().join("missing"), &td.path().join("backups"))
+            .unwrap();
     assert!(backup.exists());
 }
 
@@ -104,7 +112,10 @@ fn restore_backup_restores_all_known_valid_files() {
     }
     let data = td.path().join("data");
     std::fs::create_dir_all(&data).unwrap();
-    assert_eq!(BackupManager::restore_backup(&backup, &data).unwrap(), FILES.len());
+    assert_eq!(
+        BackupManager::restore_backup(&backup, &data).unwrap(),
+        FILES.len()
+    );
 }
 
 #[test]
@@ -135,7 +146,10 @@ fn restore_backup_treats_empty_json_file_as_valid() {
     let data = td.path().join("data");
     std::fs::create_dir_all(&data).unwrap();
     assert_eq!(BackupManager::restore_backup(&backup, &data).unwrap(), 1);
-    assert_eq!(std::fs::read_to_string(data.join("devices.json")).unwrap(), " \n");
+    assert_eq!(
+        std::fs::read_to_string(data.join("devices.json")).unwrap(),
+        " \n"
+    );
 }
 
 #[test]
@@ -146,13 +160,18 @@ fn restore_backup_overwrites_existing_data_file() {
     write_json(&backup, "devices.json", r#"{"new":true}"#);
     write_json(&data, "devices.json", r#"{"old":true}"#);
     assert_eq!(BackupManager::restore_backup(&backup, &data).unwrap(), 1);
-    assert_eq!(std::fs::read_to_string(data.join("devices.json")).unwrap(), r#"{"new":true}"#);
+    assert_eq!(
+        std::fs::read_to_string(data.join("devices.json")).unwrap(),
+        r#"{"new":true}"#
+    );
 }
 
 #[test]
 fn validate_and_heal_missing_file_is_success() {
     let td = tempfile::tempdir().unwrap();
-    assert!(BackupManager::validate_and_heal(&td.path().join("missing.json")));
+    assert!(BackupManager::validate_and_heal(
+        &td.path().join("missing.json")
+    ));
 }
 
 #[test]
@@ -194,7 +213,10 @@ fn validate_and_heal_recovers_from_valid_lock_snapshot() {
     std::fs::write(&path, "{bad").unwrap();
     std::fs::write(td.path().join("devices.lock"), r#"{"healed":true}"#).unwrap();
     assert!(BackupManager::validate_and_heal(&path));
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"healed":true}"#);
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        r#"{"healed":true}"#
+    );
 }
 
 #[test]

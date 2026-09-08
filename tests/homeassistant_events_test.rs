@@ -1,5 +1,5 @@
-use sgx_guardian_client::homeassistant::events::{start_event_dispatcher, EventBus, HaEvent};
 use serde_json::json;
+use sgx_guardian_client::homeassistant::events::{start_event_dispatcher, EventBus, HaEvent};
 use tokio::sync::broadcast::error::TryRecvError;
 
 #[tokio::test]
@@ -57,7 +57,9 @@ async fn multiple_subscribers_receive_same_event() {
 async fn state_changed_payload_is_preserved() {
     let bus = EventBus::new();
     let mut rx = bus.subscribe();
-    bus.publish(HaEvent::StateChanged(json!({"data":{"entity_id":"sensor.a"}})));
+    bus.publish(HaEvent::StateChanged(
+        json!({"data":{"entity_id":"sensor.a"}}),
+    ));
     match rx.recv().await.unwrap() {
         HaEvent::StateChanged(value) => assert_eq!(value["data"]["entity_id"], "sensor.a"),
         _ => panic!("wrong event"),
@@ -75,7 +77,12 @@ async fn notification_fields_are_preserved() {
         severity: "critical".into(),
     });
     match rx.recv().await.unwrap() {
-        HaEvent::NotificationCreated { id, title, message, severity } => {
+        HaEvent::NotificationCreated {
+            id,
+            title,
+            message,
+            severity,
+        } => {
             assert_eq!(id, "id");
             assert_eq!(title, "title");
             assert_eq!(message, "message");
@@ -103,7 +110,12 @@ fn debug_formats_each_event_variant() {
         HaEvent::DeviceRegistryUpdated(json!({})),
         HaEvent::EntityRegistryUpdated(json!({})),
         HaEvent::Unknown(json!({})),
-        HaEvent::NotificationCreated { id: "i".into(), title: "t".into(), message: "m".into(), severity: "s".into() },
+        HaEvent::NotificationCreated {
+            id: "i".into(),
+            title: "t".into(),
+            message: "m".into(),
+            severity: "s".into(),
+        },
     ];
     for event in events {
         let rendered = format!("{event:?}");
@@ -177,7 +189,10 @@ async fn two_events_of_different_variants_keep_order() {
     bus.publish(HaEvent::StateChanged(json!({"n": 1})));
     bus.publish(HaEvent::DeviceRegistryUpdated(json!({"n": 2})));
     assert!(matches!(rx.recv().await.unwrap(), HaEvent::StateChanged(_)));
-    assert!(matches!(rx.recv().await.unwrap(), HaEvent::DeviceRegistryUpdated(_)));
+    assert!(matches!(
+        rx.recv().await.unwrap(),
+        HaEvent::DeviceRegistryUpdated(_)
+    ));
 }
 
 #[tokio::test]

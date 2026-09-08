@@ -35,9 +35,15 @@ async fn post_with_headers(
         builder = builder.header(*name, value.clone());
     }
     let request = builder
-        .body(Body::from(serde_json::to_vec(&body).expect("serialize body")))
+        .body(Body::from(
+            serde_json::to_vec(&body).expect("serialize body"),
+        ))
         .expect("build request");
-    router.oneshot(request).await.expect("router response").status()
+    router
+        .oneshot(request)
+        .await
+        .expect("router response")
+        .status()
 }
 
 /// Returns `(env, owner_token, owner_did)`. The owner DID is read back out of
@@ -500,9 +506,13 @@ async fn snapshot_inbox_rejects_every_malformed_peer_auth_header_combination() {
     ];
 
     for (label, headers) in cases {
-        let status =
-            post_with_headers(env.router(), "/api/v1/circles/snapshots/inbox", &headers, payload.clone())
-                .await;
+        let status = post_with_headers(
+            env.router(),
+            "/api/v1/circles/snapshots/inbox",
+            &headers,
+            payload.clone(),
+        )
+        .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "case: {label}");
     }
 }
@@ -550,8 +560,8 @@ async fn invite_inbox_rejects_a_request_without_peer_auth_headers() {
     .await;
     assert_eq!(mint_status, StatusCode::CREATED, "{mint_body}");
     let token_b64 = mint_body["token_b64"].as_str().expect("token_b64");
-    let token_json: Value = serde_json::from_slice(&decode_invite_token(token_b64))
-        .expect("invite token json");
+    let token_json: Value =
+        serde_json::from_slice(&decode_invite_token(token_b64)).expect("invite token json");
 
     let status = post_with_headers(
         env.router(),

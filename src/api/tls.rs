@@ -1,6 +1,6 @@
-use anyhow::{Context, Result, bail};
-use rustls::ServerConfig;
+use anyhow::{bail, Context, Result};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls::ServerConfig;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]

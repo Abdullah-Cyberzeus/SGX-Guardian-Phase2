@@ -383,30 +383,24 @@ mod tests {
     #[test]
     fn accepts_valid_thermostat_commands() {
         let caps = nest_caps();
-        assert!(
-            CommandAuthorizer::validate_command_schema(
-                &caps,
-                "set_temperature",
-                &Some(serde_json::json!({"temperature": 72}))
-            )
-            .is_ok()
-        );
-        assert!(
-            CommandAuthorizer::validate_command_schema(
-                &caps,
-                "set_hvac_mode",
-                &Some(serde_json::json!({"hvac_mode": "cool"}))
-            )
-            .is_ok()
-        );
-        assert!(
-            CommandAuthorizer::validate_command_schema(
-                &caps,
-                "set_preset_mode",
-                &Some(serde_json::json!({"preset_mode": "eco"}))
-            )
-            .is_ok()
-        );
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_temperature",
+            &Some(serde_json::json!({"temperature": 72}))
+        )
+        .is_ok());
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_hvac_mode",
+            &Some(serde_json::json!({"hvac_mode": "cool"}))
+        )
+        .is_ok());
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_preset_mode",
+            &Some(serde_json::json!({"preset_mode": "eco"}))
+        )
+        .is_ok());
         assert!(CommandAuthorizer::validate_command_schema(&caps, "turn_off", &None).is_ok());
     }
 
@@ -426,14 +420,12 @@ mod tests {
         assert!(msg.contains("90"), "error names the real maximum: {}", msg);
         assert!(msg.contains("°F"), "error names the real unit: {}", msg);
 
-        assert!(
-            CommandAuthorizer::validate_command_schema(
-                &caps,
-                "set_temperature",
-                &Some(serde_json::json!({"temperature": 95}))
-            )
-            .is_err()
-        );
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_temperature",
+            &Some(serde_json::json!({"temperature": 95}))
+        )
+        .is_err());
     }
 
     #[test]
@@ -459,14 +451,12 @@ mod tests {
         let caps = nest_caps();
         // Previously this forwarded a bare entity_id to HA, which 400'd.
         assert!(CommandAuthorizer::validate_command_schema(&caps, "set_hvac_mode", &None).is_err());
-        assert!(
-            CommandAuthorizer::validate_command_schema(
-                &caps,
-                "set_temperature",
-                &Some(serde_json::json!({}))
-            )
-            .is_err()
-        );
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_temperature",
+            &Some(serde_json::json!({}))
+        )
+        .is_err());
     }
 
     #[test]
@@ -513,44 +503,36 @@ mod tests {
             "°F",
         );
 
-        assert!(
-            CommandAuthorizer::validate_command_schema(
-                &caps,
-                "set_temperature",
-                &Some(serde_json::json!({"target_temp_low": 68, "target_temp_high": 74}))
-            )
-            .is_ok()
-        );
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_temperature",
+            &Some(serde_json::json!({"target_temp_low": 68, "target_temp_high": 74}))
+        )
+        .is_ok());
 
         // Both forms at once.
-        assert!(
-            CommandAuthorizer::validate_command_schema(
-                &caps,
-                "set_temperature",
-                &Some(serde_json::json!({"temperature": 70, "target_temp_low": 68}))
-            )
-            .is_err()
-        );
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_temperature",
+            &Some(serde_json::json!({"temperature": 70, "target_temp_low": 68}))
+        )
+        .is_err());
 
         // Half a pair.
-        assert!(
-            CommandAuthorizer::validate_command_schema(
-                &caps,
-                "set_temperature",
-                &Some(serde_json::json!({"target_temp_low": 68}))
-            )
-            .is_err()
-        );
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_temperature",
+            &Some(serde_json::json!({"target_temp_low": 68}))
+        )
+        .is_err());
 
         // Inverted pair.
-        assert!(
-            CommandAuthorizer::validate_command_schema(
-                &caps,
-                "set_temperature",
-                &Some(serde_json::json!({"target_temp_low": 78, "target_temp_high": 70}))
-            )
-            .is_err()
-        );
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "set_temperature",
+            &Some(serde_json::json!({"target_temp_low": 78, "target_temp_high": 70}))
+        )
+        .is_err());
     }
 
     #[test]
@@ -567,47 +549,37 @@ mod tests {
             "°C",
         );
 
-        assert!(
-            CommandAuthorizer::validate_command_schema(
-                &caps,
-                "turn_on",
-                &Some(serde_json::json!({"brightness": 200}))
-            )
-            .is_ok()
-        );
-        assert!(
-            CommandAuthorizer::validate_command_schema(
-                &caps,
-                "turn_on",
-                &Some(serde_json::json!({"brightness": 999}))
-            )
-            .is_err()
-        );
-        assert!(
-            CommandAuthorizer::validate_command_schema(
-                &caps,
-                "turn_on",
-                &Some(serde_json::json!({"rgb_color": [255, 128, 0]}))
-            )
-            .is_ok()
-        );
-        assert!(
-            CommandAuthorizer::validate_command_schema(
-                &caps,
-                "turn_on",
-                &Some(serde_json::json!({"rgb_color": [255, 300, 0]}))
-            )
-            .is_err()
-        );
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "turn_on",
+            &Some(serde_json::json!({"brightness": 200}))
+        )
+        .is_ok());
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "turn_on",
+            &Some(serde_json::json!({"brightness": 999}))
+        )
+        .is_err());
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "turn_on",
+            &Some(serde_json::json!({"rgb_color": [255, 128, 0]}))
+        )
+        .is_ok());
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "turn_on",
+            &Some(serde_json::json!({"rgb_color": [255, 300, 0]}))
+        )
+        .is_err());
         // 1000K is outside this entity's advertised range.
-        assert!(
-            CommandAuthorizer::validate_command_schema(
-                &caps,
-                "turn_on",
-                &Some(serde_json::json!({"color_temp_kelvin": 1000}))
-            )
-            .is_err()
-        );
+        assert!(CommandAuthorizer::validate_command_schema(
+            &caps,
+            "turn_on",
+            &Some(serde_json::json!({"color_temp_kelvin": 1000}))
+        )
+        .is_err());
     }
 
     #[test]
@@ -623,14 +595,12 @@ mod tests {
         // `turn_on` on a thermostat reporting a mode is NOT a no-op.
         assert!(CommandAuthorizer::check_no_op(&cooling, "turn_on", &None).is_ok());
         // Re-asserting a setpoint is legitimate; thermostats drift.
-        assert!(
-            CommandAuthorizer::check_no_op(
-                &cooling,
-                "set_temperature",
-                &Some(serde_json::json!({"temperature": 72}))
-            )
-            .is_ok()
-        );
+        assert!(CommandAuthorizer::check_no_op(
+            &cooling,
+            "set_temperature",
+            &Some(serde_json::json!({"temperature": 72}))
+        )
+        .is_ok());
 
         assert!(matches!(
             CommandAuthorizer::check_no_op(
@@ -640,14 +610,12 @@ mod tests {
             ),
             Err(CommandAuthError::NoOp(_))
         ));
-        assert!(
-            CommandAuthorizer::check_no_op(
-                &cooling,
-                "set_hvac_mode",
-                &Some(serde_json::json!({"hvac_mode": "off"}))
-            )
-            .is_ok()
-        );
+        assert!(CommandAuthorizer::check_no_op(
+            &cooling,
+            "set_hvac_mode",
+            &Some(serde_json::json!({"hvac_mode": "off"}))
+        )
+        .is_ok());
     }
 
     #[test]
@@ -659,14 +627,12 @@ mod tests {
             CommandAuthorizer::check_no_op(&on, "turn_on", &None),
             Err(CommandAuthError::NoOp(_))
         ));
-        assert!(
-            CommandAuthorizer::check_no_op(
-                &on,
-                "turn_on",
-                &Some(serde_json::json!({"brightness": 120}))
-            )
-            .is_ok()
-        );
+        assert!(CommandAuthorizer::check_no_op(
+            &on,
+            "turn_on",
+            &Some(serde_json::json!({"brightness": 120}))
+        )
+        .is_ok());
         assert!(CommandAuthorizer::check_no_op(&off, "turn_on", &None).is_ok());
     }
 }

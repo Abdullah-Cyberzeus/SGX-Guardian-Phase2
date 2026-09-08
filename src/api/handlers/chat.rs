@@ -2,11 +2,11 @@ use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::error::ApiError;
 use crate::api::state::AppState;
 use crate::chat::models::{ChatMessageRecord, MessageStatus};
-use axum::Extension;
 use axum::extract::{
-    Json, Query, State,
     ws::{Message, WebSocket, WebSocketUpgrade},
+    Json, Query, State,
 };
+use axum::Extension;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

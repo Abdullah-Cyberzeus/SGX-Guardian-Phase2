@@ -21,22 +21,34 @@ fn failure_policy_default_is_continue() {
 
 #[test]
 fn failure_policy_continue_serializes_lowercase() {
-    assert_eq!(serde_json::to_string(&FailurePolicy::Continue).unwrap(), "\"continue\"");
+    assert_eq!(
+        serde_json::to_string(&FailurePolicy::Continue).unwrap(),
+        "\"continue\""
+    );
 }
 
 #[test]
 fn failure_policy_abort_serializes_lowercase() {
-    assert_eq!(serde_json::to_string(&FailurePolicy::Abort).unwrap(), "\"abort\"");
+    assert_eq!(
+        serde_json::to_string(&FailurePolicy::Abort).unwrap(),
+        "\"abort\""
+    );
 }
 
 #[test]
 fn failure_policy_log_serializes_lowercase() {
-    assert_eq!(serde_json::to_string(&FailurePolicy::Log).unwrap(), "\"log\"");
+    assert_eq!(
+        serde_json::to_string(&FailurePolicy::Log).unwrap(),
+        "\"log\""
+    );
 }
 
 #[test]
 fn failure_policy_retry_serializes_lowercase() {
-    assert_eq!(serde_json::to_string(&FailurePolicy::Retry).unwrap(), "\"retry\"");
+    assert_eq!(
+        serde_json::to_string(&FailurePolicy::Retry).unwrap(),
+        "\"retry\""
+    );
 }
 
 #[test]
@@ -50,7 +62,10 @@ fn trigger_state_changed_round_trips_with_state() {
         entity_id: "switch.a".into(),
         to_state: Some("on".into()),
     };
-    assert_eq!(serde_json::from_value::<RuleTrigger>(serde_json::to_value(&trigger).unwrap()).unwrap(), trigger);
+    assert_eq!(
+        serde_json::from_value::<RuleTrigger>(serde_json::to_value(&trigger).unwrap()).unwrap(),
+        trigger
+    );
 }
 
 #[test]
@@ -59,7 +74,10 @@ fn trigger_state_changed_round_trips_without_state() {
         entity_id: "switch.a".into(),
         to_state: None,
     };
-    assert_eq!(serde_json::from_value::<RuleTrigger>(serde_json::to_value(&trigger).unwrap()).unwrap(), trigger);
+    assert_eq!(
+        serde_json::from_value::<RuleTrigger>(serde_json::to_value(&trigger).unwrap()).unwrap(),
+        trigger
+    );
 }
 
 #[test]
@@ -79,7 +97,10 @@ fn condition_state_round_trips() {
         operator: "equals".into(),
         value: "on".into(),
     };
-    assert_eq!(serde_json::from_value::<RuleCondition>(serde_json::to_value(&condition).unwrap()).unwrap(), condition);
+    assert_eq!(
+        serde_json::from_value::<RuleCondition>(serde_json::to_value(&condition).unwrap()).unwrap(),
+        condition
+    );
 }
 
 #[test]
@@ -88,7 +109,10 @@ fn condition_presence_round_trips() {
         operator: "equals".into(),
         value: "home".into(),
     };
-    assert_eq!(serde_json::from_value::<RuleCondition>(serde_json::to_value(&condition).unwrap()).unwrap(), condition);
+    assert_eq!(
+        serde_json::from_value::<RuleCondition>(serde_json::to_value(&condition).unwrap()).unwrap(),
+        condition
+    );
 }
 
 #[test]
@@ -115,19 +139,21 @@ fn command_action_preserves_service_data() {
     )
     .unwrap();
     match action {
-        RuleAction::Command { service_data, .. } => assert_eq!(service_data.unwrap()["brightness"], 10),
+        RuleAction::Command { service_data, .. } => {
+            assert_eq!(service_data.unwrap()["brightness"], 10)
+        }
         _ => panic!("expected command"),
     }
 }
 
 #[test]
 fn notification_action_defaults_failure_policy() {
-    let action: RuleAction = serde_json::from_str(
-        r#"{"type":"notification","message":"m","severity":"info"}"#,
-    )
-    .unwrap();
+    let action: RuleAction =
+        serde_json::from_str(r#"{"type":"notification","message":"m","severity":"info"}"#).unwrap();
     match action {
-        RuleAction::Notification { on_failure, .. } => assert_eq!(on_failure, FailurePolicy::Continue),
+        RuleAction::Notification { on_failure, .. } => {
+            assert_eq!(on_failure, FailurePolicy::Continue)
+        }
         _ => panic!("expected notification"),
     }
 }
@@ -139,7 +165,10 @@ fn notification_action_round_trips() {
         severity: "critical".into(),
         on_failure: FailurePolicy::Log,
     };
-    assert_eq!(serde_json::from_value::<RuleAction>(serde_json::to_value(&action).unwrap()).unwrap(), action);
+    assert_eq!(
+        serde_json::from_value::<RuleAction>(serde_json::to_value(&action).unwrap()).unwrap(),
+        action
+    );
 }
 
 #[test]
@@ -150,8 +179,13 @@ fn delay_action_accepts_zero_boundary() {
 
 #[test]
 fn delay_action_accepts_u64_max_boundary() {
-    let action = RuleAction::Delay { delay_secs: u64::MAX };
-    assert_eq!(serde_json::from_value::<RuleAction>(serde_json::to_value(&action).unwrap()).unwrap(), action);
+    let action = RuleAction::Delay {
+        delay_secs: u64::MAX,
+    };
+    assert_eq!(
+        serde_json::from_value::<RuleAction>(serde_json::to_value(&action).unwrap()).unwrap(),
+        action
+    );
 }
 
 #[test]
@@ -205,5 +239,8 @@ fn rule_round_trips_complex_payload() {
         "actions":[{"type":"notification","message":"hi","severity":"info","on_failure":"retry"}]}"#,
     )
     .unwrap();
-    assert_eq!(serde_json::from_value::<AutomationRule>(serde_json::to_value(&rule).unwrap()).unwrap(), rule);
+    assert_eq!(
+        serde_json::from_value::<AutomationRule>(serde_json::to_value(&rule).unwrap()).unwrap(),
+        rule
+    );
 }

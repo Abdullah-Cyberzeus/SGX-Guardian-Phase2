@@ -33,14 +33,8 @@ async fn fixture() -> Fixture {
     let owner_token = env.owner_token().await;
     env.create_circle(&owner_token, CIRCLE).await;
 
-    let (status, body) = support::call(
-        env.router(),
-        "GET",
-        "/api/v1/pwa/onboarding",
-        None,
-        None,
-    )
-    .await;
+    let (status, body) =
+        support::call(env.router(), "GET", "/api/v1/pwa/onboarding", None, None).await;
     assert_eq!(status, StatusCode::OK, "onboarding should succeed: {body}");
     let fingerprint = body["fingerprint"]
         .as_str()
@@ -344,11 +338,16 @@ async fn full_enrollment_lifecycle_from_mint_through_owner_approval() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "join should succeed: {body}");
-    assert_eq!(body["status"], "pending", "approval is still required: {body}");
+    assert_eq!(
+        body["status"], "pending",
+        "approval is still required: {body}"
+    );
     assert_eq!(body["approvalId"], approval_id, "{body}");
     assert_eq!(body["role"], "member", "{body}");
     assert!(
-        body["token"].as_str().is_some_and(|token| !token.is_empty()),
+        body["token"]
+            .as_str()
+            .is_some_and(|token| !token.is_empty()),
         "a session is issued even while pending: {body}"
     );
     assert_eq!(body["guardianFingerprint"], fixture.fingerprint, "{body}");
@@ -453,7 +452,11 @@ async fn a_claim_cannot_be_redeemed_twice() {
         "POST",
         "/api/v1/pwa/onboarding/join",
         None,
-        Some(join_body(&claim, &fixture.fingerprint, "three@example.test")),
+        Some(join_body(
+            &claim,
+            &fixture.fingerprint,
+            "three@example.test",
+        )),
     )
     .await;
     assert_eq!(first, StatusCode::OK, "{first_body}");
@@ -544,7 +547,10 @@ async fn approved_member(fixture: &Fixture, email: &str) -> (String, String) {
 
 /// Mints an enrollment claim for a second Circle owned by the same Guardian.
 async fn mint_for(fixture: &Fixture, circle_id: &str) -> (String, String) {
-    fixture.env.create_circle(&fixture.owner_token, circle_id).await;
+    fixture
+        .env
+        .create_circle(&fixture.owner_token, circle_id)
+        .await;
     let (status, body) = support::call(
         fixture.env.router(),
         "POST",
@@ -580,9 +586,16 @@ async fn an_active_member_can_request_an_additional_circle_and_the_owner_approve
         Some(json!({"inviteToken": second_claim})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "additional join should succeed: {body}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "additional join should succeed: {body}"
+    );
     assert_eq!(body["enrollment"]["state"], "pending", "{body}");
-    assert_eq!(body["enrollment"]["circleId"], "pwa-second-circle", "{body}");
+    assert_eq!(
+        body["enrollment"]["circleId"], "pwa-second-circle",
+        "{body}"
+    );
 
     // Re-submitting the same claim replays the pending request rather than
     // creating a second one.
@@ -595,7 +608,10 @@ async fn an_active_member_can_request_an_additional_circle_and_the_owner_approve
     )
     .await;
     assert_eq!(replay_status, StatusCode::OK, "{replay_body}");
-    assert_eq!(replay_body["enrollment"]["state"], "pending", "{replay_body}");
+    assert_eq!(
+        replay_body["enrollment"]["state"], "pending",
+        "{replay_body}"
+    );
 
     let (approve_status, approve_body) = support::call(
         fixture.env.router(),
@@ -753,7 +769,9 @@ async fn contacts_lists_this_guardian_and_its_approved_browser_members() {
         "a member still sees the Guardian: {body}"
     );
     assert!(
-        !member_view.iter().any(|contact| contact["memberType"] == "browser"),
+        !member_view
+            .iter()
+            .any(|contact| contact["memberType"] == "browser"),
         "a member must not be listed as their own contact: {body}"
     );
 }
@@ -767,10 +785,9 @@ async fn contacts_projects_verified_peers_from_the_trusted_peer_registry() {
     let fixture = fixture().await;
     let (_token, member_did) = approved_member(&fixture, "peer@example.test").await;
 
-    let registry = std::path::Path::new(&fixture.env.state.log_dir_primary)
-        .join("trusted_peers.json");
-    std::fs::create_dir_all(registry.parent().expect("registry parent"))
-        .expect("create log dir");
+    let registry =
+        std::path::Path::new(&fixture.env.state.log_dir_primary).join("trusted_peers.json");
+    std::fs::create_dir_all(registry.parent().expect("registry parent")).expect("create log dir");
     std::fs::write(
         &registry,
         serde_json::to_vec(&json!([{
@@ -823,7 +840,10 @@ async fn minting_replays_a_cached_response_for_a_repeated_idempotency_key() {
         first.1["enrollment"]["approvalId"], second.1["enrollment"]["approvalId"],
         "the same key must replay the original invitation rather than minting a second one"
     );
-    assert_eq!(first.1["link"], second.1["link"], "including its claim link");
+    assert_eq!(
+        first.1["link"], second.1["link"],
+        "including its claim link"
+    );
 }
 
 #[tokio::test]
@@ -860,7 +880,11 @@ async fn additional_circle_join_refuses_spent_archived_and_duplicated_requests()
         "POST",
         "/api/v1/pwa/onboarding/join",
         None,
-        Some(join_body(&spent_claim, &fixture.fingerprint, "spender@example.test")),
+        Some(join_body(
+            &spent_claim,
+            &fixture.fingerprint,
+            "spender@example.test",
+        )),
     )
     .await;
     assert_eq!(join_status, StatusCode::OK, "{join_response}");
@@ -913,8 +937,7 @@ async fn additional_circle_join_refuses_spent_archived_and_duplicated_requests()
     assert_eq!(status, StatusCode::CONFLICT, "a duplicate request: {body}");
 
     // An archived Circle cannot be joined at all.
-    let (_archived_approval, archived_claim) =
-        mint_for(&fixture, "pwa-archived-circle").await;
+    let (_archived_approval, archived_claim) = mint_for(&fixture, "pwa-archived-circle").await;
     let (archive_status, archive_body) = support::call(
         fixture.env.router(),
         "POST",
@@ -957,7 +980,9 @@ async fn post_json_with_key(
             format!("Bearer {}", fixture.owner_token),
         )
         .header("idempotency-key", key)
-        .body(Body::from(serde_json::to_vec(body).expect("serialize body")))
+        .body(Body::from(
+            serde_json::to_vec(body).expect("serialize body"),
+        ))
         .expect("build request");
     let response = fixture
         .env
@@ -1006,7 +1031,9 @@ async fn post_with_idempotency_key(
         .uri("/api/v1/pwa/onboarding/join")
         .header(header::CONTENT_TYPE, "application/json")
         .header("idempotency-key", key)
-        .body(Body::from(serde_json::to_vec(body).expect("serialize body")))
+        .body(Body::from(
+            serde_json::to_vec(body).expect("serialize body"),
+        ))
         .expect("build request");
     let response = router.oneshot(request).await.expect("router response");
     let status = response.status();

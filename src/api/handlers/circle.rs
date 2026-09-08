@@ -12,15 +12,15 @@ use crate::circle::{Circle, CircleError};
 use crate::did::Did;
 use crate::vc::credential::{CredentialRole, VerifiableCredential};
 use crate::vc::issue::{
-    self, IssueMembershipOutcome, IssueRequest, VcAdminAction, default_permissions_for_role,
+    self, default_permissions_for_role, IssueMembershipOutcome, IssueRequest, VcAdminAction,
 };
 use axum::Extension;
 use axum::{
-    Json,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{header, HeaderMap, StatusCode},
+    Json,
 };
-use base64::{Engine as _, engine::general_purpose};
+use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -2444,12 +2444,18 @@ mod tests {
         let error = detail(State(h.state.clone()), None, Path("circle-ghost".into()))
             .await
             .expect_err("unknown circle");
-        assert!(matches!(error, ApiError::NotFound(_) | ApiError::Forbidden(_)));
+        assert!(matches!(
+            error,
+            ApiError::NotFound(_) | ApiError::Forbidden(_)
+        ));
 
         let error = archive(State(h.state.clone()), Path("circle-ghost".into()))
             .await
             .expect_err("unknown circle cannot be archived");
-        assert!(matches!(error, ApiError::NotFound(_) | ApiError::Forbidden(_)));
+        assert!(matches!(
+            error,
+            ApiError::NotFound(_) | ApiError::Forbidden(_)
+        ));
     }
 
     #[tokio::test]
@@ -2477,11 +2483,7 @@ mod tests {
             .await
             .expect("list members");
         assert_eq!(members.0.count, members.0.members.len());
-        assert!(members
-            .0
-            .members
-            .iter()
-            .any(|member| member.did == subject));
+        assert!(members.0.members.iter().any(|member| member.did == subject));
 
         // Re-adding an active member reuses the existing credential.
         let (status, reused) = add_member(
@@ -2622,11 +2624,7 @@ mod tests {
             .await
             .expect("list invites");
         assert_eq!(listed.0.count, listed.0.invites.len());
-        assert!(listed
-            .0
-            .invites
-            .iter()
-            .any(|invite| invite.id == invite_id));
+        assert!(listed.0.invites.iter().any(|invite| invite.id == invite_id));
 
         // The preview endpoint reads the token without redeeming it.
         let preview = join_preview(
@@ -2777,9 +2775,11 @@ mod tests {
         let error = reject_invite(State(h.state.clone()), Path("invite-ghost".into()))
             .await
             .expect_err("an unknown invite cannot be rejected");
-        assert!(matches!(error, ApiError::NotFound(_) | ApiError::BadRequest(_)));
+        assert!(matches!(
+            error,
+            ApiError::NotFound(_) | ApiError::BadRequest(_)
+        ));
     }
-
 
     #[test]
     fn push_container_host_port_ignores_unknown_nodes() {

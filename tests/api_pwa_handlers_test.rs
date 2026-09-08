@@ -3,8 +3,8 @@ use sgx_guardian_client::api::handlers::pwa::{
     MemberEnrollmentListResponse, MemberEnrollmentView, MemberInvitePreviewRequest,
     MemberInvitePreviewResponse, MemberJoinRequest, MemberJoinResponse,
     MintMemberEnrollmentRequest, MintMemberEnrollmentResponse, OnboardingCircleSummary,
-    OnboardingResponse, PwaContact, PwaContactsResponse, PwaHealthResponse,
-    PwaIdentityResponse, RegistrationRemovalResponse,
+    OnboardingResponse, PwaContact, PwaContactsResponse, PwaHealthResponse, PwaIdentityResponse,
+    RegistrationRemovalResponse,
 };
 
 fn enrollment(state: &str) -> MemberEnrollmentView {
@@ -74,12 +74,21 @@ fn pwa_contacts_response_serializes_totals() {
         presence_heartbeat_seconds: 30,
         presence_expiry_seconds: 90,
     };
-    assert_eq!(serde_json::to_value(response).unwrap()["presenceExpirySeconds"], 90);
+    assert_eq!(
+        serde_json::to_value(response).unwrap()["presenceExpirySeconds"],
+        90
+    );
 }
 
 #[test]
 fn pwa_identity_response_serializes_did() {
-    assert_eq!(serde_json::to_value(PwaIdentityResponse { did: "did:g".into() }).unwrap()["did"], "did:g");
+    assert_eq!(
+        serde_json::to_value(PwaIdentityResponse {
+            did: "did:g".into()
+        })
+        .unwrap()["did"],
+        "did:g"
+    );
 }
 
 #[test]
@@ -104,16 +113,23 @@ fn onboarding_response_serializes_circle_summaries() {
         fingerprint: "AAAA-BBBB-CCCC-DDDD".into(),
         fingerprint_algorithm: "alg",
         fingerprint_bits: 80,
-        circles: vec![OnboardingCircleSummary { id: "c".into(), name: "Circle".into() }],
+        circles: vec![OnboardingCircleSummary {
+            id: "c".into(),
+            name: "Circle".into(),
+        }],
         internet_required: false,
         multiple_guardian_note: "note",
     };
-    assert_eq!(serde_json::to_value(response).unwrap()["circles"][0]["id"], "c");
+    assert_eq!(
+        serde_json::to_value(response).unwrap()["circles"][0]["id"],
+        "c"
+    );
 }
 
 #[test]
 fn preview_request_accepts_owner_host() {
-    let req: MemberInvitePreviewRequest = serde_json::from_str(r#"{"inviteToken":"t","ownerHost":"http://owner"}"#).unwrap();
+    let req: MemberInvitePreviewRequest =
+        serde_json::from_str(r#"{"inviteToken":"t","ownerHost":"http://owner"}"#).unwrap();
     assert_eq!(req.owner_host.as_deref(), Some("http://owner"));
 }
 
@@ -134,7 +150,10 @@ fn preview_response_serializes_role() {
         role: "member",
         approval_required: true,
     };
-    assert_eq!(serde_json::to_value(response).unwrap()["approvalRequired"], true);
+    assert_eq!(
+        serde_json::to_value(response).unwrap()["approvalRequired"],
+        true
+    );
 }
 
 #[test]
@@ -165,18 +184,27 @@ fn member_join_response_round_trips_pending_fields() {
         approval_id: Some("a".into()),
         approval_claim: Some("claim".into()),
     };
-    let parsed: MemberJoinResponse = serde_json::from_str(&serde_json::to_string(&response).unwrap()).unwrap();
+    let parsed: MemberJoinResponse =
+        serde_json::from_str(&serde_json::to_string(&response).unwrap()).unwrap();
     assert_eq!(parsed.approval_id.as_deref(), Some("a"));
 }
 
 #[test]
 fn registration_removal_response_serializes_status() {
-    assert_eq!(serde_json::to_value(RegistrationRemovalResponse { status: "removed", revoked_sessions: 2 }).unwrap()["revokedSessions"], 2);
+    assert_eq!(
+        serde_json::to_value(RegistrationRemovalResponse {
+            status: "removed",
+            revoked_sessions: 2
+        })
+        .unwrap()["revokedSessions"],
+        2
+    );
 }
 
 #[test]
 fn mint_request_defaults_expiry() {
-    let req: MintMemberEnrollmentRequest = serde_json::from_str(r#"{"baseUrl":"http://local"}"#).unwrap();
+    let req: MintMemberEnrollmentRequest =
+        serde_json::from_str(r#"{"baseUrl":"http://local"}"#).unwrap();
     assert!(req.expires_in_minutes.is_none());
 }
 
@@ -187,12 +215,29 @@ fn mint_response_round_trips_enrollment() {
         expires_at: "t".into(),
         enrollment: enrollment("pending"),
     };
-    assert_eq!(serde_json::from_str::<MintMemberEnrollmentResponse>(&serde_json::to_string(&response).unwrap()).unwrap().enrollment.state, "pending");
+    assert_eq!(
+        serde_json::from_str::<MintMemberEnrollmentResponse>(
+            &serde_json::to_string(&response).unwrap()
+        )
+        .unwrap()
+        .enrollment
+        .state,
+        "pending"
+    );
 }
 
 #[test]
 fn enrollment_list_serializes_empty() {
-    assert_eq!(serde_json::to_value(MemberEnrollmentListResponse { enrollments: vec![] }).unwrap()["enrollments"].as_array().unwrap().len(), 0);
+    assert_eq!(
+        serde_json::to_value(MemberEnrollmentListResponse {
+            enrollments: vec![]
+        })
+        .unwrap()["enrollments"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 #[test]
@@ -209,7 +254,10 @@ fn approval_status_response_serializes_state() {
         circle_name: "Circle".into(),
         member_did: "did:m".into(),
     };
-    assert_eq!(serde_json::to_value(response).unwrap()["circleName"], "Circle");
+    assert_eq!(
+        serde_json::to_value(response).unwrap()["circleName"],
+        "Circle"
+    );
 }
 
 macro_rules! enrollment_view_cases {

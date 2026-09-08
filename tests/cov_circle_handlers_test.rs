@@ -83,7 +83,11 @@ async fn circle_mutations_without_authentication_return_401() {
             )
             .await
             .expect("response");
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{method} {uri}");
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "{method} {uri}"
+        );
     }
 }
 
@@ -112,7 +116,11 @@ async fn other_wave_b_routes_without_authentication_return_401() {
             )
             .await
             .expect("response");
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{method} {uri}");
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "{method} {uri}"
+        );
     }
 }
 

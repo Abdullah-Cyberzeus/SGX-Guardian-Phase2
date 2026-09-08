@@ -52,7 +52,10 @@ fn empty_entity_is_not_presence_entity() {
 
 #[tokio::test]
 async fn new_tracker_starts_unknown() {
-    assert_eq!(PresenceTracker::new().get_presence_status().await, PresenceState::Unknown);
+    assert_eq!(
+        PresenceTracker::new().get_presence_status().await,
+        PresenceState::Unknown
+    );
 }
 
 #[tokio::test]
@@ -65,29 +68,42 @@ async fn person_home_sets_home() {
 #[tokio::test]
 async fn device_tracker_on_sets_home() {
     let tracker = PresenceTracker::new();
-    tracker.update_entity_state("device_tracker.phone", "on").await;
+    tracker
+        .update_entity_state("device_tracker.phone", "on")
+        .await;
     assert_eq!(tracker.get_presence_status().await, PresenceState::Home);
 }
 
 #[tokio::test]
 async fn person_not_home_sets_nobody_home() {
     let tracker = PresenceTracker::new();
-    tracker.update_entity_state("person.alice", "not_home").await;
-    assert_eq!(tracker.get_presence_status().await, PresenceState::NobodyHome);
+    tracker
+        .update_entity_state("person.alice", "not_home")
+        .await;
+    assert_eq!(
+        tracker.get_presence_status().await,
+        PresenceState::NobodyHome
+    );
 }
 
 #[tokio::test]
 async fn person_off_sets_nobody_home() {
     let tracker = PresenceTracker::new();
     tracker.update_entity_state("person.alice", "off").await;
-    assert_eq!(tracker.get_presence_status().await, PresenceState::NobodyHome);
+    assert_eq!(
+        tracker.get_presence_status().await,
+        PresenceState::NobodyHome
+    );
 }
 
 #[tokio::test]
 async fn unknown_state_counts_as_nobody_home_once_tracked() {
     let tracker = PresenceTracker::new();
     tracker.update_entity_state("person.alice", "unknown").await;
-    assert_eq!(tracker.get_presence_status().await, PresenceState::NobodyHome);
+    assert_eq!(
+        tracker.get_presence_status().await,
+        PresenceState::NobodyHome
+    );
 }
 
 #[tokio::test]
@@ -118,7 +134,10 @@ async fn updating_same_entity_replaces_state() {
     let tracker = PresenceTracker::new();
     tracker.update_entity_state("person.a", "home").await;
     tracker.update_entity_state("person.a", "not_home").await;
-    assert_eq!(tracker.get_presence_status().await, PresenceState::NobodyHome);
+    assert_eq!(
+        tracker.get_presence_status().await,
+        PresenceState::NobodyHome
+    );
 }
 
 #[tokio::test]
@@ -133,27 +152,38 @@ async fn updating_same_entity_back_home_restores_home() {
 async fn home_matching_is_case_sensitive() {
     let tracker = PresenceTracker::new();
     tracker.update_entity_state("person.a", "Home").await;
-    assert_eq!(tracker.get_presence_status().await, PresenceState::NobodyHome);
+    assert_eq!(
+        tracker.get_presence_status().await,
+        PresenceState::NobodyHome
+    );
 }
 
 #[tokio::test]
 async fn on_matching_is_case_sensitive() {
     let tracker = PresenceTracker::new();
     tracker.update_entity_state("device_tracker.a", "ON").await;
-    assert_eq!(tracker.get_presence_status().await, PresenceState::NobodyHome);
+    assert_eq!(
+        tracker.get_presence_status().await,
+        PresenceState::NobodyHome
+    );
 }
 
 #[tokio::test]
 async fn empty_state_counts_as_nobody_home() {
     let tracker = PresenceTracker::new();
     tracker.update_entity_state("person.a", "").await;
-    assert_eq!(tracker.get_presence_status().await, PresenceState::NobodyHome);
+    assert_eq!(
+        tracker.get_presence_status().await,
+        PresenceState::NobodyHome
+    );
 }
 
 #[tokio::test]
 async fn entity_with_prefix_and_extra_dot_is_tracked() {
     let tracker = PresenceTracker::new();
-    tracker.update_entity_state("person.alice.phone", "home").await;
+    tracker
+        .update_entity_state("person.alice.phone", "home")
+        .await;
     assert_eq!(tracker.get_presence_status().await, PresenceState::Home);
 }
 

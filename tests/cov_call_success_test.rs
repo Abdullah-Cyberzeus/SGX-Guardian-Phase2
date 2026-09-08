@@ -29,7 +29,10 @@ static PEER_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// send succeeds instead of failing with "No route to host". The overlay-range
 /// check in `nebula_signaling` applies only to *inbound* accepts, so a
 /// loopback peer address is fine for the send path.
-async fn with_overlay_and_peer() -> (tokio::sync::MutexGuard<'static, ()>, tokio::task::JoinHandle<()>) {
+async fn with_overlay_and_peer() -> (
+    tokio::sync::MutexGuard<'static, ()>,
+    tokio::task::JoinHandle<()>,
+) {
     let guard = PEER_LOCK.lock().await;
     std::env::set_var("SGX_NEBULA_LOCAL_IP_OVERRIDE", OVERLAY_IP);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -217,7 +220,11 @@ async fn signals_media_ready_and_quality_report_round_trip_on_an_accepted_call()
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "list_signals should succeed: {body}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "list_signals should succeed: {body}"
+    );
 
     let (status, body) = support::call(
         env.router(),
@@ -273,7 +280,11 @@ async fn call_history_and_events_respond_for_the_device_owner() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "call_history should succeed: {body}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "call_history should succeed: {body}"
+    );
 }
 
 #[tokio::test]

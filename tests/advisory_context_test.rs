@@ -48,7 +48,11 @@ fn ctx() -> DeviceContext {
         cves: (0..7)
             .map(|idx| CveFinding {
                 cve: format!("CVE-2026-{idx:04}"),
-                cvss: if idx % 2 == 0 { Some(5.0 + idx as f32) } else { None },
+                cvss: if idx % 2 == 0 {
+                    Some(5.0 + idx as f32)
+                } else {
+                    None
+                },
             })
             .collect(),
     }
@@ -156,7 +160,10 @@ fn device_lines_label_handles_hostname_only() {
         vendor: None,
         ..ctx()
     };
-    assert_eq!(device_context_lines(Some(&device))[0], "Device context: 10.0.0.20 (host)");
+    assert_eq!(
+        device_context_lines(Some(&device))[0],
+        "Device context: 10.0.0.20 (host)"
+    );
 }
 
 #[test]
@@ -165,7 +172,10 @@ fn device_lines_label_handles_vendor_only() {
         hostname: None,
         ..ctx()
     };
-    assert_eq!(device_context_lines(Some(&device))[0], "Device context: 10.0.0.20 (vendor)");
+    assert_eq!(
+        device_context_lines(Some(&device))[0],
+        "Device context: 10.0.0.20 (vendor)"
+    );
 }
 
 #[test]
@@ -175,13 +185,22 @@ fn device_lines_label_handles_ip_only() {
         vendor: None,
         ..ctx()
     };
-    assert_eq!(device_context_lines(Some(&device))[0], "Device context: 10.0.0.20");
+    assert_eq!(
+        device_context_lines(Some(&device))[0],
+        "Device context: 10.0.0.20"
+    );
 }
 
 #[test]
 fn device_lines_limit_risk_reasons_and_cves() {
     let lines = device_context_lines(Some(&ctx()));
-    assert_eq!(lines.iter().filter(|line| line.starts_with("risk-")).count(), 5);
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.starts_with("risk-"))
+            .count(),
+        5
+    );
     assert_eq!(lines.iter().filter(|line| line.contains("CVE-")).count(), 5);
 }
 
@@ -214,16 +233,32 @@ fn cve_references_limit_to_ten() {
 #[test]
 fn connected_device_conversion_extracts_risk_reasons() {
     let converted = device_context_from_connected_device(device(DeviceStatus::Drifted));
-    assert!(converted.risk_reasons.iter().any(|line| line.contains("Open ports")));
-    assert!(converted.risk_reasons.iter().any(|line| line.contains("Drifted")));
-    assert!(converted.risk_reasons.iter().any(|line| line.contains("Linux")));
+    assert!(converted
+        .risk_reasons
+        .iter()
+        .any(|line| line.contains("Open ports")));
+    assert!(converted
+        .risk_reasons
+        .iter()
+        .any(|line| line.contains("Drifted")));
+    assert!(converted
+        .risk_reasons
+        .iter()
+        .any(|line| line.contains("Linux")));
 }
 
 #[test]
 fn connected_device_conversion_deduplicates_and_sorts_cves() {
     let converted = device_context_from_connected_device(device(DeviceStatus::Approved));
-    let cves: Vec<_> = converted.cves.iter().map(|finding| finding.cve.as_str()).collect();
-    assert_eq!(cves, vec!["CVE-2023-9999", "CVE-2024-1111", "CVE-2024-2222"]);
+    let cves: Vec<_> = converted
+        .cves
+        .iter()
+        .map(|finding| finding.cve.as_str())
+        .collect();
+    assert_eq!(
+        cves,
+        vec!["CVE-2023-9999", "CVE-2024-1111", "CVE-2024-2222"]
+    );
 }
 
 #[test]
@@ -240,7 +275,8 @@ fn connected_device_conversion_ignores_invalid_cve_tokens() {
 #[test]
 fn load_device_context_missing_file_returns_none() {
     let dir = tempfile::tempdir().unwrap();
-    let loaded = load_device_context_for_alert_ip(&dir.path().join("missing.json"), "a", "b").unwrap();
+    let loaded =
+        load_device_context_for_alert_ip(&dir.path().join("missing.json"), "a", "b").unwrap();
     assert!(loaded.is_none());
 }
 
@@ -261,12 +297,19 @@ fn load_device_context_malformed_file_errors() {
 #[test]
 fn load_device_context_matches_src_or_dst_ip() {
     let file = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), serde_json::to_vec(&vec![device(DeviceStatus::Approved)]).unwrap())
-        .unwrap();
-    assert!(load_device_context_for_alert_ip(file.path(), "10.0.0.10", "x")
-        .unwrap()
-        .is_some());
-    assert!(load_device_context_for_alert_ip(file.path(), "x", "10.0.0.10")
-        .unwrap()
-        .is_some());
+    std::fs::write(
+        file.path(),
+        serde_json::to_vec(&vec![device(DeviceStatus::Approved)]).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        load_device_context_for_alert_ip(file.path(), "10.0.0.10", "x")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        load_device_context_for_alert_ip(file.path(), "x", "10.0.0.10")
+            .unwrap()
+            .is_some()
+    );
 }

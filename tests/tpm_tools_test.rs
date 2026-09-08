@@ -1,5 +1,8 @@
 use sgx_guardian_client::tpm::tools::Tpm2Cli;
-use sgx_guardian_client::tpm::{dev_fallback_allowed, dik, dkp::TpmDkpManager, probe_required_capabilities, should_attempt, tpm_required, TpmConfig, TpmError};
+use sgx_guardian_client::tpm::{
+    dev_fallback_allowed, dik, dkp::TpmDkpManager, probe_required_capabilities, should_attempt,
+    tpm_required, TpmConfig, TpmError,
+};
 
 struct EnvGuard {
     key: &'static str,
@@ -61,7 +64,11 @@ fn handle_exists_false_when_getcap_missing() {
 
 #[test]
 fn readpublic_der_errors_when_tool_missing() {
-    with_empty_path(|cli| assert!(cli.readpublic_der(0x8100_0010, "/tmp/sgx-no-tpm/pub.der").is_err()));
+    with_empty_path(|cli| {
+        assert!(cli
+            .readpublic_der(0x8100_0010, "/tmp/sgx-no-tpm/pub.der")
+            .is_err())
+    });
 }
 
 #[test]
@@ -81,12 +88,20 @@ fn evict_handle_with_owner_auth_errors_when_tool_missing() {
 
 #[test]
 fn sign_plain_errors_when_tool_missing() {
-    with_empty_path(|cli| assert!(cli.sign_plain(0x8100_0010, "/tmp/in", "/tmp/out", None).is_err()));
+    with_empty_path(|cli| {
+        assert!(cli
+            .sign_plain(0x8100_0010, "/tmp/in", "/tmp/out", None)
+            .is_err())
+    });
 }
 
 #[test]
 fn sign_plain_with_key_auth_errors_when_tool_missing() {
-    with_empty_path(|cli| assert!(cli.sign_plain(0x8100_0010, "/tmp/in", "/tmp/out", Some("auth")).is_err()));
+    with_empty_path(|cli| {
+        assert!(cli
+            .sign_plain(0x8100_0010, "/tmp/in", "/tmp/out", Some("auth"))
+            .is_err())
+    });
 }
 
 #[test]
@@ -105,22 +120,30 @@ fn provision_signing_key_errors_when_tool_missing() {
 
 #[test]
 fn tpm_error_tool_display_mentions_tool() {
-    assert!(TpmError::Tool("tpm2_getcap".into(), "missing".into()).to_string().contains("tpm2_getcap"));
+    assert!(TpmError::Tool("tpm2_getcap".into(), "missing".into())
+        .to_string()
+        .contains("tpm2_getcap"));
 }
 
 #[test]
 fn tpm_error_not_available_display() {
-    assert!(TpmError::NotAvailable("no device".into()).to_string().contains("tpm not available"));
+    assert!(TpmError::NotAvailable("no device".into())
+        .to_string()
+        .contains("tpm not available"));
 }
 
 #[test]
 fn tpm_error_key_display() {
-    assert!(TpmError::Key("bad".into()).to_string().contains("tpm key error"));
+    assert!(TpmError::Key("bad".into())
+        .to_string()
+        .contains("tpm key error"));
 }
 
 #[test]
 fn tpm_error_parse_display() {
-    assert!(TpmError::Parse("bad".into()).to_string().contains("invalid TPM output"));
+    assert!(TpmError::Parse("bad".into())
+        .to_string()
+        .contains("invalid TPM output"));
 }
 
 #[test]
@@ -237,7 +260,10 @@ fn probe_required_capabilities_errors_when_tools_missing() {
 fn dik_ensure_errors_before_tooling_when_implicit_missing_device() {
     let mut config = cfg();
     config.explicit_backend = false;
-    assert!(matches!(dik::ensure(&config), Err(TpmError::NotAvailable(_))));
+    assert!(matches!(
+        dik::ensure(&config),
+        Err(TpmError::NotAvailable(_))
+    ));
 }
 
 #[test]

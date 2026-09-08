@@ -371,17 +371,21 @@ fn registry_request_deserializes_optional_status_body() {
 #[test]
 fn overlay_snapshot_invalid_schema_errors() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
-    assert!(apply_overlay_snapshot(r#"{"not":"overlay"}"#, tmp.path().to_str().unwrap())
-        .unwrap_err()
-        .contains("invalid overlay snapshot schema"));
+    assert!(
+        apply_overlay_snapshot(r#"{"not":"overlay"}"#, tmp.path().to_str().unwrap())
+            .unwrap_err()
+            .contains("invalid overlay snapshot schema")
+    );
 }
 
 #[test]
 fn lighthouse_snapshot_invalid_schema_errors() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
-    assert!(apply_lighthouse_snapshot(r#"{"not":"lighthouse"}"#, tmp.path().to_str().unwrap())
-        .unwrap_err()
-        .contains("invalid lighthouse snapshot schema"));
+    assert!(
+        apply_lighthouse_snapshot(r#"{"not":"lighthouse"}"#, tmp.path().to_str().unwrap())
+            .unwrap_err()
+            .contains("invalid lighthouse snapshot schema")
+    );
 }
 
 #[test]

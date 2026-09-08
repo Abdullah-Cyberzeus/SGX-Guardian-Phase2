@@ -1,8 +1,8 @@
 use crate::api::auth::ecdsa::normalize_p256_signature;
 use crate::api::auth::store::{SessionRec, User};
 use crate::key_manager::KeyManager;
-use anyhow::{Result, anyhow};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
 use ring::signature::{self, UnparsedPublicKey};
 use serde::{Deserialize, Serialize};

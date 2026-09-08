@@ -111,8 +111,12 @@ mod tests {
         let digest_hex = hex::encode(digest);
         let signature: Signature = signing_key.sign(&digest);
         let signature_b64 = general_purpose::STANDARD.encode(signature.to_der().as_bytes());
-        let pubkey_b64 = general_purpose::STANDARD
-            .encode(signing_key.verifying_key().to_encoded_point(false).as_bytes());
+        let pubkey_b64 = general_purpose::STANDARD.encode(
+            signing_key
+                .verifying_key()
+                .to_encoded_point(false)
+                .as_bytes(),
+        );
         serde_json::json!({
             "version": 1,
             "policy_b64": policy_b64,

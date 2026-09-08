@@ -57,13 +57,18 @@ fn status(
         kernel_version: kernel.into(),
         device_model: model.into(),
         guardian_binary_hash: None,
-        boot_chain_intact: hab_enabled && !hab_events_found && !model.is_empty() && !kernel.is_empty(),
+        boot_chain_intact: hab_enabled
+            && !hab_events_found
+            && !model.is_empty()
+            && !kernel.is_empty(),
     }
 }
 
 #[test]
 fn unknown_measurement_contains_unknown_kernel_hash() {
-    assert!(BootChainStatus::unknown().to_measurement_string().contains("KERNEL_HASH:unknown"));
+    assert!(BootChainStatus::unknown()
+        .to_measurement_string()
+        .contains("KERNEL_HASH:unknown"));
 }
 
 #[test]
@@ -76,7 +81,9 @@ fn measurement_includes_boolean_fields() {
 
 #[test]
 fn measurement_includes_model_text() {
-    assert!(status(true, false, false, "imx8", "k").to_measurement_string().contains("MODEL:imx8"));
+    assert!(status(true, false, false, "imx8", "k")
+        .to_measurement_string()
+        .contains("MODEL:imx8"));
 }
 
 #[test]
@@ -97,7 +104,9 @@ fn measurement_hash_changes_for_different_kernel() {
 fn save_creates_parent_directories() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("nested").join("boot.json");
-    BootChainStatus::unknown().save(path.to_str().unwrap()).unwrap();
+    BootChainStatus::unknown()
+        .save(path.to_str().unwrap())
+        .unwrap();
     assert!(path.exists());
 }
 
@@ -106,7 +115,8 @@ fn saved_json_round_trips() {
     let file = NamedTempFile::new().unwrap();
     let original = status(true, true, false, "model", "kernel");
     original.save(file.path().to_str().unwrap()).unwrap();
-    let parsed: BootChainStatus = serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
+    let parsed: BootChainStatus =
+        serde_json::from_str(&std::fs::read_to_string(file.path()).unwrap()).unwrap();
     assert!(parsed.hab_enabled);
     assert_eq!(parsed.device_model, "model");
 }
@@ -115,7 +125,8 @@ fn saved_json_round_trips() {
 fn serde_round_trip_preserves_binary_hash() {
     let mut s = status(true, true, false, "m", "k");
     s.guardian_binary_hash = Some("aa".repeat(32));
-    let parsed: BootChainStatus = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+    let parsed: BootChainStatus =
+        serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
     assert_eq!(parsed.guardian_binary_hash, s.guardian_binary_hash);
 }
 
@@ -183,7 +194,9 @@ fn dump_ocotp_returns_when_env_not_set() {
 #[test]
 fn save_to_directory_path_errors() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(BootChainStatus::unknown().save(dir.path().to_str().unwrap()).is_err());
+    assert!(BootChainStatus::unknown()
+        .save(dir.path().to_str().unwrap())
+        .is_err());
 }
 
 #[test]
@@ -200,5 +213,7 @@ fn deserialize_rejects_missing_required_field() {
 
 #[test]
 fn measurement_with_empty_model_keeps_empty_model_field() {
-    assert!(status(false, false, false, "", "kernel").to_measurement_string().contains("MODEL:,"));
+    assert!(status(false, false, false, "", "kernel")
+        .to_measurement_string()
+        .contains("MODEL:,"));
 }

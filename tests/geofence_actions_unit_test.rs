@@ -120,13 +120,16 @@ fn serde_defaults_missing_fields() {
 #[test]
 fn serde_round_trips_all_action_variants() {
     let actions = vec![
-        GeofenceAction::RaiseAlert { severity: Some("critical".into()) },
+        GeofenceAction::RaiseAlert {
+            severity: Some("critical".into()),
+        },
         GeofenceAction::Notify { severity: None },
         GeofenceAction::RunScan,
         GeofenceAction::LockNetwork,
         GeofenceAction::EmergencyKeyRotation,
     ];
-    let decoded: Vec<GeofenceAction> = serde_json::from_str(&serde_json::to_string(&actions).unwrap()).unwrap();
+    let decoded: Vec<GeofenceAction> =
+        serde_json::from_str(&serde_json::to_string(&actions).unwrap()).unwrap();
     assert_eq!(decoded, actions);
 }
 
@@ -159,10 +162,14 @@ async fn execute_non_destructive_actions_succeed_in_dry_run() {
     let zone = zone(ZoneAutomation::default());
     for action in [
         GeofenceAction::RaiseAlert { severity: None },
-        GeofenceAction::Notify { severity: Some("low".into()) },
+        GeofenceAction::Notify {
+            severity: Some("low".into()),
+        },
         GeofenceAction::RunScan,
     ] {
-        executor::execute("node-a", &zone, "entry", 0.1, action).await.unwrap();
+        executor::execute("node-a", &zone, "entry", 0.1, action)
+            .await
+            .unwrap();
     }
 }
 
@@ -186,9 +193,15 @@ async fn destructive_action_is_downgraded_when_confidence_low() {
         min_confidence: 0.9,
         ..Default::default()
     });
-    executor::execute("node-a", &zone, "exit", 0.89, GeofenceAction::EmergencyKeyRotation)
-        .await
-        .unwrap();
+    executor::execute(
+        "node-a",
+        &zone,
+        "exit",
+        0.89,
+        GeofenceAction::EmergencyKeyRotation,
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -211,7 +224,9 @@ async fn dispatch_without_state_runs_entry_and_exit_in_dry_run() {
     let _env = EnvGuard::set("SGX_GEOFENCE_ACTIONS_DRYRUN", "1");
     let zone = zone(ZoneAutomation {
         on_entry: vec![GeofenceAction::Notify { severity: None }],
-        on_exit: vec![GeofenceAction::RaiseAlert { severity: Some("high".into()) }],
+        on_exit: vec![GeofenceAction::RaiseAlert {
+            severity: Some("high".into()),
+        }],
         ..Default::default()
     });
     executor::dispatch_without_state("node-a", &zone, "entry", 1.0).await;

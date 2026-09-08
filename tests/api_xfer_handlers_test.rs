@@ -1,6 +1,5 @@
 use sgx_guardian_client::api::handlers::xfer::{
-    CancelResponse, InboxResponse, SendRequest, SendResponse, TransferListResponse,
-    TransferSummary,
+    CancelResponse, InboxResponse, SendRequest, SendResponse, TransferListResponse, TransferSummary,
 };
 use sgx_guardian_client::xfer::engine::{
     bytes_transferred, cancel_transfer, last_transfer, send_source, transfers_received,
@@ -61,14 +60,24 @@ fn send_request_accepts_vault_only() {
 
 #[test]
 fn send_request_accepts_both_for_handler_validation() {
-    let req: SendRequest = serde_json::from_str(r#"{"peer_did":"did:p","path":"p","vault_id":"v"}"#).unwrap();
+    let req: SendRequest =
+        serde_json::from_str(r#"{"peer_did":"did:p","path":"p","vault_id":"v"}"#).unwrap();
     assert!(req.path.is_some() && req.vault_id.is_some());
 }
 
 #[test]
 fn send_response_round_trips() {
-    let response = SendResponse { status: "accepted".into(), transfer_id: "t".into(), message: "queued".into() };
-    assert_eq!(serde_json::from_str::<SendResponse>(&serde_json::to_string(&response).unwrap()).unwrap().transfer_id, "t");
+    let response = SendResponse {
+        status: "accepted".into(),
+        transfer_id: "t".into(),
+        message: "queued".into(),
+    };
+    assert_eq!(
+        serde_json::from_str::<SendResponse>(&serde_json::to_string(&response).unwrap())
+            .unwrap()
+            .transfer_id,
+        "t"
+    );
 }
 
 #[test]
@@ -106,19 +115,38 @@ fn transfer_list_response_serializes_counters() {
         bytes_transferred: 3,
         last_transfer: None,
     };
-    assert_eq!(serde_json::to_value(response).unwrap()["bytes_transferred"], 3);
+    assert_eq!(
+        serde_json::to_value(response).unwrap()["bytes_transferred"],
+        3
+    );
 }
 
 #[test]
 fn cancel_response_serializes_message() {
-    let response = CancelResponse { status: "cancelled".into(), transfer_id: "t".into(), message: "done".into() };
-    assert_eq!(serde_json::to_value(response).unwrap()["status"], "cancelled");
+    let response = CancelResponse {
+        status: "cancelled".into(),
+        transfer_id: "t".into(),
+        message: "done".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(response).unwrap()["status"],
+        "cancelled"
+    );
 }
 
 #[test]
 fn inbox_response_serializes_empty() {
-    let response = InboxResponse { count: 0, files: vec![] };
-    assert_eq!(serde_json::to_value(response).unwrap()["files"].as_array().unwrap().len(), 0);
+    let response = InboxResponse {
+        count: 0,
+        files: vec![],
+    };
+    assert_eq!(
+        serde_json::to_value(response).unwrap()["files"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 #[test]
@@ -209,15 +237,41 @@ max_file_env_tests! {
 
 #[tokio::test]
 async fn send_source_disabled_rejects_path_before_filesystem() {
-    let cfg = XferConfig { enabled: false, port: 1, chunk_bytes: 65_536, max_file_bytes: 1 };
-    let err = send_source("node".into(), cfg, "did:a".into(), "did:p".into(), SendSource::Path("missing".into())).await.unwrap_err();
+    let cfg = XferConfig {
+        enabled: false,
+        port: 1,
+        chunk_bytes: 65_536,
+        max_file_bytes: 1,
+    };
+    let err = send_source(
+        "node".into(),
+        cfg,
+        "did:a".into(),
+        "did:p".into(),
+        SendSource::Path("missing".into()),
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(err, XferError::Conflict(_)));
 }
 
 #[tokio::test]
 async fn send_source_disabled_rejects_vault_before_lookup() {
-    let cfg = XferConfig { enabled: false, port: 1, chunk_bytes: 65_536, max_file_bytes: 1 };
-    let err = send_source("node".into(), cfg, "did:a".into(), "did:p".into(), SendSource::VaultId("vault".into())).await.unwrap_err();
+    let cfg = XferConfig {
+        enabled: false,
+        port: 1,
+        chunk_bytes: 65_536,
+        max_file_bytes: 1,
+    };
+    let err = send_source(
+        "node".into(),
+        cfg,
+        "did:a".into(),
+        "did:p".into(),
+        SendSource::VaultId("vault".into()),
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(err, XferError::Conflict(_)));
 }
 
@@ -257,52 +311,80 @@ fn send_source_vault_variant_debug_mentions_vault() {
 
 #[test]
 fn xfer_error_display_file_too_large() {
-    assert_eq!(XferError::FileTooLarge { size: 2, max: 1 }.to_string(), "file too large: 2 > 1");
+    assert_eq!(
+        XferError::FileTooLarge { size: 2, max: 1 }.to_string(),
+        "file too large: 2 > 1"
+    );
 }
 
 #[test]
 fn xfer_error_display_circle_mismatch() {
-    assert!(XferError::CircleMismatch { expected: "a".into(), got: "b".into() }.to_string().contains("expected a"));
+    assert!(XferError::CircleMismatch {
+        expected: "a".into(),
+        got: "b".into()
+    }
+    .to_string()
+    .contains("expected a"));
 }
 
 #[test]
 fn xfer_error_display_cancelled() {
-    assert_eq!(XferError::Cancelled("t".into()).to_string(), "transfer cancelled: t");
+    assert_eq!(
+        XferError::Cancelled("t".into()).to_string(),
+        "transfer cancelled: t"
+    );
 }
 
 #[test]
 fn xfer_error_display_peer_not_found() {
-    assert!(XferError::PeerNotFound("did:p".into()).to_string().contains("peer not found"));
+    assert!(XferError::PeerNotFound("did:p".into())
+        .to_string()
+        .contains("peer not found"));
 }
 
 #[test]
 fn xfer_error_display_source_not_found() {
-    assert!(XferError::SourceNotFound("missing".into()).to_string().contains("source not found"));
+    assert!(XferError::SourceNotFound("missing".into())
+        .to_string()
+        .contains("source not found"));
 }
 
 #[test]
 fn xfer_error_display_transfer_not_found() {
-    assert!(XferError::TransferNotFound("t".into()).to_string().contains("transfer not found"));
+    assert!(XferError::TransferNotFound("t".into())
+        .to_string()
+        .contains("transfer not found"));
 }
 
 #[test]
 fn xfer_error_display_hash_mismatch() {
-    assert!(XferError::HashMismatch { expected: "a".into(), got: "b".into() }.to_string().contains("hash mismatch"));
+    assert!(XferError::HashMismatch {
+        expected: "a".into(),
+        got: "b".into()
+    }
+    .to_string()
+    .contains("hash mismatch"));
 }
 
 #[test]
 fn xfer_error_display_invalid_proof() {
-    assert!(XferError::InvalidProof("sig".into()).to_string().contains("invalid transfer proof"));
+    assert!(XferError::InvalidProof("sig".into())
+        .to_string()
+        .contains("invalid transfer proof"));
 }
 
 #[test]
 fn xfer_error_display_revoked_peer() {
-    assert!(XferError::RevokedPeer("did:p".into()).to_string().contains("peer is revoked"));
+    assert!(XferError::RevokedPeer("did:p".into())
+        .to_string()
+        .contains("peer is revoked"));
 }
 
 #[test]
 fn xfer_error_display_invalid_structure() {
-    assert!(XferError::InvalidStructure("bad".into()).to_string().contains("invalid transfer structure"));
+    assert!(XferError::InvalidStructure("bad".into())
+        .to_string()
+        .contains("invalid transfer structure"));
 }
 
 #[test]
