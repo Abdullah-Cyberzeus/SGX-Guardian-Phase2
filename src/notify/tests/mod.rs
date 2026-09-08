@@ -11,15 +11,12 @@ use crate::notify::NotifyConfig;
 use crate::threat::threat_alert::{Severity, ThreatAlert, ThreatCategory};
 use crate::vc::issue::DEVICE_KEY_DIR_ENV;
 use chrono::Utc;
-use std::sync::{Mutex, OnceLock};
 use tempfile::TempDir;
 use tokio::time::{timeout, Duration};
 
-static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
 struct NotifyEnv {
-    _guard: std::sync::MutexGuard<'static, ()>,
-    _did_guard: std::sync::MutexGuard<'static, ()>,
+    _guard: crate::test_support::EnvLockGuard,
+    _did_guard: crate::test_support::EnvLockGuard,
     _td: TempDir,
     restore: Vec<(&'static str, Option<String>)>,
     node_id: String,
@@ -27,10 +24,7 @@ struct NotifyEnv {
 
 impl NotifyEnv {
     fn new(node_id: &str, seed: u8) -> Self {
-        let guard = TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let guard = crate::test_support::env_lock();
         let did_guard = doc_persistence::lock_test_env();
         let td = TempDir::new().expect("notify tempdir");
         let base = td.path();
@@ -376,7 +370,33 @@ async fn alert_publisher_maps_actionable_severities_and_suppresses_info() {
 
     let info = sample_alert(Severity::Info);
     super::publish_alert("nodeA", &info);
-    assert!(timeout(Duration::from_millis(50), rx.recv()).await.is_err());
+    // The bus is process-wide and other tests publish to it concurrently, so
+    // assert that *this* alert never arrives rather than that nothing does.
+    assert!(
+        !received_ref_id_within(&mut rx, &info.alert_id, Duration::from_millis(50)).await,
+        "an Info alert must be suppressed"
+    );
+}
+
+/// Drains `rx` until `deadline`, reporting whether an event referencing
+/// `ref_id` showed up. Events published by other tests are ignored.
+async fn received_ref_id_within(
+    rx: &mut tokio::sync::broadcast::Receiver<NotificationEvent>,
+    ref_id: &str,
+    deadline: Duration,
+) -> bool {
+    let until = tokio::time::Instant::now() + deadline;
+    loop {
+        let remaining = until.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        match timeout(remaining, rx.recv()).await {
+            Ok(Ok(event)) if event.ref_id.as_deref() == Some(ref_id) => return true,
+            Ok(Ok(_)) => continue,
+            Ok(Err(_)) | Err(_) => return false,
+        }
+    }
 }
 
 #[tokio::test]

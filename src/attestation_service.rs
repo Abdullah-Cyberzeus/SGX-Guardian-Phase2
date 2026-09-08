@@ -3048,13 +3048,16 @@ mod tests {
     struct EnvVarGuard {
         key: &'static str,
         prev: Option<OsString>,
+        // Held for the guard's lifetime: these variables are process-global.
+        _lock: crate::test_support::EnvLockGuard,
     }
 
     impl EnvVarGuard {
         fn set(key: &'static str, value: &Path) -> Self {
+            let _lock = crate::test_support::env_lock();
             let prev = std::env::var_os(key);
             std::env::set_var(key, value);
-            Self { key, prev }
+            Self { key, prev, _lock }
         }
     }
 

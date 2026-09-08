@@ -220,6 +220,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_access_token_errors_without_client_id_before_network() {
+        let _lock = crate::test_support::async_env_lock().await;
         let old = std::env::var_os("SGX_NEST_CLIENT_ID");
         std::env::remove_var("SGX_NEST_CLIENT_ID");
         let creds = NestCredentials::new(
@@ -240,6 +241,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_access_token_errors_without_client_secret_before_network() {
+        let _lock = crate::test_support::async_env_lock().await;
         let old = std::env::var_os("SGX_NEST_CLIENT_SECRET");
         std::env::remove_var("SGX_NEST_CLIENT_SECRET");
         let creds = NestCredentials::new(

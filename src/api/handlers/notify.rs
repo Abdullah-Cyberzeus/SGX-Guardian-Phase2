@@ -376,19 +376,16 @@ mod tests {
     use crate::vc::issue::DEVICE_KEY_DIR_ENV;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
     use tower::ServiceExt;
-
-    static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     /// Sets up a fully signed local DID document + prefs/notify storage in a
     /// tempdir, mirroring `crate::notify::tests::NotifyEnv`. Needed because
     /// `get_prefs`/`put_prefs`/`stream` sign and verify notification
     /// preferences against the node's own DID document.
     struct NotifyApiEnv {
-        _guard: std::sync::MutexGuard<'static, ()>,
-        _did_guard: std::sync::MutexGuard<'static, ()>,
+        _guard: crate::test_support::EnvLockGuard,
+        _did_guard: crate::test_support::EnvLockGuard,
         _td: TempDir,
         restore: Vec<(&'static str, Option<String>)>,
         node_id: String,
@@ -397,10 +394,7 @@ mod tests {
 
     impl NotifyApiEnv {
         fn new(node_id: &str, seed: u8) -> Self {
-            let guard = TEST_ENV_LOCK
-                .get_or_init(|| Mutex::new(()))
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
+            let guard = crate::test_support::env_lock();
             let did_guard = doc_persistence::lock_test_env();
             let td = TempDir::new().expect("notify api tempdir");
             let base = td.path();

@@ -1436,7 +1436,7 @@ mod tests {
 
     #[tokio::test]
     async fn outbound_secure_messages_use_the_tcp_transport() {
-        let _env_guard = crate::test_utils::TEST_ENV_LOCK.lock().await;
+        let _env_guard = crate::test_support::env_lock();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let previous_port = std::env::var("SGX_CALL_SIGNALING_PORT").ok();
@@ -1568,7 +1568,7 @@ mod tests {
 
     #[tokio::test]
     async fn overlay_configuration_and_listener_bind_fail_closed() {
-        let _env_guard = crate::test_utils::TEST_ENV_LOCK.lock().await;
+        let _env_guard = crate::test_support::env_lock();
         let previous_ip = std::env::var("SGX_NEBULA_LOCAL_IP_OVERRIDE").ok();
         let previous_port = std::env::var("SGX_CALL_SIGNALING_PORT").ok();
         std::env::set_var("SGX_NEBULA_LOCAL_IP_OVERRIDE", " 127.0.0.1 ");

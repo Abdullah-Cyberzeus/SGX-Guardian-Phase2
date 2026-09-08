@@ -38,6 +38,11 @@ struct TestEnv {
     _did_base: TempDir,
     _peer_docs: TempDir,
     _key_dir: TempDir,
+    // Held for the whole lifetime of the redirect. `TestEnv` repoints
+    // `VC_BASE_ENV` and the DID document paths, which are process-global, and
+    // its `Drop` then *removes* them — which used to yank the VC store out
+    // from under concurrent tests in `api` and `vc`.
+    _env_lock: crate::test_support::EnvLockGuard,
 }
 
 struct NodeCrlBase {
@@ -58,6 +63,7 @@ impl NodeCrlBase {
 
 impl TestEnv {
     fn new() -> Self {
+        let _env_lock = crate::test_support::env_lock();
         let crl_base = TempDir::new().expect("crl tempdir");
         let vc_base = TempDir::new().expect("vc tempdir");
         let did_base = TempDir::new().expect("did tempdir");
@@ -82,6 +88,7 @@ impl TestEnv {
             _did_base: did_base,
             _peer_docs: peer_docs,
             _key_dir: key_dir,
+            _env_lock,
         }
     }
 
@@ -100,7 +107,7 @@ impl Drop for TestEnv {
     }
 }
 
-fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+fn test_lock() -> crate::test_support::EnvLockGuard {
     doc_persistence::lock_test_env()
 }
 

@@ -335,6 +335,7 @@ mod tests {
 
     #[test]
     fn test_classify_eth_with_env_override_as_satellite() {
+        let _lock = crate::test_support::env_lock();
         std::env::set_var("SGX_SATELLITE_INTERFACES", "ens37");
         assert_eq!(
             InterfaceDetector::classify_interface("ens37"),

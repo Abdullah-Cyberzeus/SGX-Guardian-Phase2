@@ -535,6 +535,10 @@ mod tests {
 
     #[tokio::test]
     async fn private_route_requires_bearer_token() {
+        // `private_route_allows_requests_when_login_is_disabled` flips a
+        // process-global login override. Share its lock so this test cannot
+        // observe auth switched off underneath it.
+        let _test_lock = async_env_lock().await;
         let (base_url, _token, handle) = spawn_secured_app().await;
         let response = reqwest::Client::new()
             .get(format!("{}/api/v1/private", base_url))
@@ -547,6 +551,10 @@ mod tests {
 
     #[tokio::test]
     async fn private_route_accepts_valid_bearer_token() {
+        // `private_route_allows_requests_when_login_is_disabled` flips a
+        // process-global login override. Share its lock so this test cannot
+        // observe auth switched off underneath it.
+        let _test_lock = async_env_lock().await;
         let (base_url, token, handle) = spawn_secured_app().await;
         let response = reqwest::Client::new()
             .get(format!("{}/api/v1/private", base_url))
@@ -630,6 +638,10 @@ mod tests {
 
     #[tokio::test]
     async fn websocket_route_accepts_access_token_query_param() {
+        // `private_route_allows_requests_when_login_is_disabled` flips a
+        // process-global login override. Share its lock so this test cannot
+        // observe auth switched off underneath it.
+        let _test_lock = async_env_lock().await;
         let (base_url, token, handle) = spawn_secured_app().await;
         let response = reqwest::Client::new()
             .get(format!(
@@ -647,6 +659,10 @@ mod tests {
 
     #[tokio::test]
     async fn websocket_route_rejects_missing_token() {
+        // `private_route_allows_requests_when_login_is_disabled` flips a
+        // process-global login override. Share its lock so this test cannot
+        // observe auth switched off underneath it.
+        let _test_lock = async_env_lock().await;
         let (base_url, _token, handle) = spawn_secured_app().await;
         let response = reqwest::Client::new()
             .get(format!("{}/api/v1/call/session-1/ws", base_url))

@@ -1963,13 +1963,17 @@ mod tests {
     struct EnvGuard {
         key: &'static str,
         previous: Option<std::ffi::OsString>,
+        // Held for the guard's lifetime; the environment is process-global.
+        _lock: crate::test_support::EnvLockGuard,
     }
 
     impl EnvGuard {
         fn set(key: &'static str, value: Option<&str>) -> Self {
+            let _lock = crate::test_support::env_lock();
             let guard = Self {
                 key,
                 previous: std::env::var_os(key),
+                _lock,
             };
             if let Some(value) = value {
                 std::env::set_var(key, value);

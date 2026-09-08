@@ -658,8 +658,14 @@ fn validate_member_registration(
     if user.role != UserRole::Member {
         return Ok(());
     }
+    // A member with no Circles must not get a session. Downstream scope checks
+    // (`scoped_circle_contact_dids`, and the transfer and PWA roster builders)
+    // treat an empty Circle list as the administrative "no filter" sentinel, so
+    // such a session would widen to every Circle peer this Guardian knows
+    // instead of narrowing to none.
     if user.status != "active"
         || user.browser_registration_id.is_none()
+        || user.circle_ids.is_empty()
         || user
             .registration_expires_at
             .is_none_or(|expiry| expiry <= chrono::Utc::now().timestamp())

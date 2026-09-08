@@ -144,7 +144,7 @@ fn build_resolver() -> Resolver {
     Resolver::new(Default::default())
 }
 
-fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+fn env_lock() -> crate::test_support::EnvLockGuard {
     crate::test_support::blocking_env_lock()
 }
 

@@ -317,44 +317,33 @@ mod tests {
     use super::*;
     use crate::api::state::AppState;
     use std::ffi::OsString;
-    use std::path::{Path, PathBuf};
-    use tempfile::TempDir;
+    use std::path::Path;
 
-    use crate::test_utils::TEST_ENV_LOCK;
 
+    /// Redirects only the two paths `guardian_key_paths` actually reads.
+    ///
+    /// An earlier revision also set `SGX_PA_CLI_PATH` and
+    /// `SGX_GUARDIAN_KEYGEN_DIR` here, back when key generation shelled out to
+    /// `sgx-pa-cli`. Generation is in-process via `PaKey` now, so this module
+    /// never reads either one — and `SGX_PA_CLI_PATH` is still live for `dkp`
+    /// and `rules::exec::actions`, so clobbering it from here corrupted their
+    /// tests whenever the two overlapped.
     struct EnvGuard {
         priv_prev: Option<OsString>,
         pub_prev: Option<OsString>,
-        keygen_dir_prev: Option<OsString>,
-        cli_prev: Option<OsString>,
     }
 
     impl EnvGuard {
-        fn new(
-            priv_path: &Path,
-            pub_path: &Path,
-            keygen_dir: &Path,
-            cli_path: Option<&Path>,
-        ) -> Self {
+        fn new(priv_path: &Path, pub_path: &Path) -> Self {
             let priv_prev = std::env::var_os("SGX_GUARDIAN_PRIV_KEY_PATH");
             let pub_prev = std::env::var_os("SGX_GUARDIAN_PUB_KEY_PATH");
-            let keygen_dir_prev = std::env::var_os("SGX_GUARDIAN_KEYGEN_DIR");
-            let cli_prev = std::env::var_os("SGX_PA_CLI_PATH");
 
             std::env::set_var("SGX_GUARDIAN_PRIV_KEY_PATH", priv_path);
             std::env::set_var("SGX_GUARDIAN_PUB_KEY_PATH", pub_path);
-            std::env::set_var("SGX_GUARDIAN_KEYGEN_DIR", keygen_dir);
-            if let Some(p) = cli_path {
-                std::env::set_var("SGX_PA_CLI_PATH", p);
-            } else {
-                std::env::remove_var("SGX_PA_CLI_PATH");
-            }
 
             Self {
                 priv_prev,
                 pub_prev,
-                keygen_dir_prev,
-                cli_prev,
             }
         }
     }
@@ -363,8 +352,6 @@ mod tests {
         fn drop(&mut self) {
             restore_env("SGX_GUARDIAN_PRIV_KEY_PATH", self.priv_prev.take());
             restore_env("SGX_GUARDIAN_PUB_KEY_PATH", self.pub_prev.take());
-            restore_env("SGX_GUARDIAN_KEYGEN_DIR", self.keygen_dir_prev.take());
-            restore_env("SGX_PA_CLI_PATH", self.cli_prev.take());
         }
     }
 
@@ -385,26 +372,13 @@ mod tests {
         )
     }
 
-    fn write_fake_cli(dir: &TempDir, script_body: &str) -> PathBuf {
-        let script_path = dir.path().join("fake-sgx-pa-cli.sh");
-        let script = format!("#!/usr/bin/env bash\nset -eu\n{}\n", script_body);
-        std::fs::write(&script_path, script).expect("write fake cli script");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
-                .expect("chmod fake cli");
-        }
-        script_path
-    }
-
     #[tokio::test]
     async fn status_false_when_keys_missing() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let priv_path = dir.path().join("guardian_private.key");
         let pub_path = dir.path().join("guardian_public.key");
-        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path(), None);
+        let _env = EnvGuard::new(&priv_path, &pub_path);
 
         let Json(resp) = status(State(test_state())).await.expect("status response");
         assert!(!resp.exists);
@@ -415,15 +389,11 @@ mod tests {
 
     #[tokio::test]
     async fn generate_creates_target_keys() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let priv_path = dir.path().join("guardian_private.key.installed");
         let pub_path = dir.path().join("guardian_public.key.installed");
-        let cli_path = write_fake_cli(
-            &dir,
-            "if [ \"${1:-}\" != \"keygen\" ]; then\n  exit 22\nfi\nprintf 'PRIVATE-KEY-DATA' > guardian_private.key\nprintf 'PUBLIC-KEY-DATA' > guardian_public.key\necho generated\nexit 0",
-        );
-        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path(), Some(&cli_path));
+        let _env = EnvGuard::new(&priv_path, &pub_path);
 
         let Json(resp) = generate(
             State(test_state()),
@@ -436,26 +406,38 @@ mod tests {
         assert!(resp.success);
         assert!(priv_path.exists());
         assert!(pub_path.exists());
+
+        // The key material is DER, not text, so assert it is a real, reloadable
+        // P-256 keypair rather than comparing against a literal.
+        let pub_bytes = std::fs::read(&pub_path).expect("read public key");
+        assert!(!pub_bytes.is_empty());
+        let reloaded = PaKey::load_or_generate_at(
+            priv_path.to_str().expect("priv path"),
+            pub_path.to_str().expect("pub path"),
+        )
+        .expect("generated private key must reload as valid PKCS#8");
         assert_eq!(
-            std::fs::read_to_string(&priv_path).expect("priv read"),
-            "PRIVATE-KEY-DATA"
+            reloaded.pubkey_der(),
+            pub_bytes.as_slice(),
+            "published public key must match the stored private key"
         );
+
         assert_eq!(
-            std::fs::read_to_string(&pub_path).expect("pub read"),
-            "PUBLIC-KEY-DATA"
+            resp.fingerprint.as_deref(),
+            Some(hex::encode(&Sha256::digest(&pub_bytes)[..8]).as_str()),
+            "reported fingerprint must describe the key actually written"
         );
     }
 
     #[tokio::test]
     async fn generate_rejects_existing_keys_without_force() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let priv_path = dir.path().join("guardian_private.key.installed");
         let pub_path = dir.path().join("guardian_public.key.installed");
         std::fs::write(&priv_path, "OLD_PRIVATE").expect("seed private");
         std::fs::write(&pub_path, "OLD_PUBLIC").expect("seed public");
-        let cli_path = write_fake_cli(&dir, "echo should-not-run >&2\nexit 99");
-        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path(), Some(&cli_path));
+        let _env = EnvGuard::new(&priv_path, &pub_path);
 
         let Json(resp) = generate(
             State(test_state()),
@@ -471,17 +453,19 @@ mod tests {
 
     #[tokio::test]
     async fn force_backs_up_old_keys() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let priv_path = dir.path().join("guardian_private.key.installed");
         let pub_path = dir.path().join("guardian_public.key.installed");
-        std::fs::write(&priv_path, "OLD_PRIVATE").expect("seed private");
-        std::fs::write(&pub_path, "OLD_PUBLIC").expect("seed public");
-        let cli_path = write_fake_cli(
-            &dir,
-            "if [ \"${1:-}\" != \"keygen\" ]; then\n  exit 22\nfi\nprintf 'NEW_PRIVATE' > guardian_private.key\nprintf 'NEW_PUBLIC' > guardian_public.key\nexit 0",
-        );
-        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path(), Some(&cli_path));
+        // Seed a real previous keypair so the rotation replaces valid material.
+        PaKey::load_or_generate_at(
+            priv_path.to_str().expect("priv path"),
+            pub_path.to_str().expect("pub path"),
+        )
+        .expect("seed previous keypair");
+        let old_priv = std::fs::read(&priv_path).expect("read seeded private");
+        let old_pub = std::fs::read(&pub_path).expect("read seeded public");
+        let _env = EnvGuard::new(&priv_path, &pub_path);
 
         let Json(resp) = generate(
             State(test_state()),
@@ -493,28 +477,37 @@ mod tests {
 
         assert!(resp.success);
         assert_eq!(resp.backups.len(), 2);
-        assert_eq!(
-            std::fs::read_to_string(&priv_path).expect("new private"),
-            "NEW_PRIVATE"
-        );
-        assert_eq!(
-            std::fs::read_to_string(&pub_path).expect("new public"),
-            "NEW_PUBLIC"
-        );
+
+        // Both previous files must survive at their backup paths...
+        for backup in &resp.backups {
+            assert!(
+                Path::new(&backup.backup_path).exists(),
+                "backup {} must exist",
+                backup.backup_path
+            );
+        }
+
+        // ...and the live paths must now hold different, still-valid material.
+        let new_priv = std::fs::read(&priv_path).expect("read new private");
+        let new_pub = std::fs::read(&pub_path).expect("read new public");
+        assert_ne!(new_priv, old_priv, "force must rotate the private key");
+        assert_ne!(new_pub, old_pub, "force must rotate the public key");
+        let reloaded = PaKey::load_or_generate_at(
+            priv_path.to_str().expect("priv path"),
+            pub_path.to_str().expect("pub path"),
+        )
+        .expect("rotated private key must reload as valid PKCS#8");
+        assert_eq!(reloaded.pubkey_der(), new_pub.as_slice());
     }
 
     #[tokio::test]
     async fn response_never_contains_private_key_data() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let priv_path = dir.path().join("guardian_private.key.installed");
         let pub_path = dir.path().join("guardian_public.key.installed");
         let secret = "DO_NOT_LEAK_PRIVATE_KEY_VALUE";
-        let cli_path = write_fake_cli(
-            &dir,
-            "printf 'DO_NOT_LEAK_PRIVATE_KEY_VALUE' > guardian_private.key\nprintf 'PUBLIC_DATA' > guardian_public.key\nexit 0",
-        );
-        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path(), Some(&cli_path));
+        let _env = EnvGuard::new(&priv_path, &pub_path);
 
         let Json(resp) = generate(
             State(test_state()),
@@ -530,15 +523,11 @@ mod tests {
 
     #[tokio::test]
     async fn permissions_are_set_correctly() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let priv_path = dir.path().join("guardian_private.key.installed");
         let pub_path = dir.path().join("guardian_public.key.installed");
-        let cli_path = write_fake_cli(
-            &dir,
-            "printf 'PRIVATE' > guardian_private.key\nprintf 'PUBLIC' > guardian_public.key\nexit 0",
-        );
-        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path(), Some(&cli_path));
+        let _env = EnvGuard::new(&priv_path, &pub_path);
 
         let Json(resp) = generate(
             State(test_state()),
@@ -568,13 +557,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cli_failure_returns_success_false() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+    async fn corrupt_private_key_reports_failure_without_silently_regenerating() {
+        let _lock = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let priv_path = dir.path().join("guardian_private.key.installed");
         let pub_path = dir.path().join("guardian_public.key.installed");
-        let cli_path = write_fake_cli(&dir, "echo 'simulated keygen failure' >&2\nexit 7");
-        let _env = EnvGuard::new(&priv_path, &pub_path, dir.path(), Some(&cli_path));
+        // Only the private key exists, so `generate` does not take the
+        // already-exists short circuit — and its contents are not valid PKCS#8.
+        let corrupt = b"not-a-pkcs8-document";
+        std::fs::write(&priv_path, corrupt).expect("seed corrupt private key");
+        let _env = EnvGuard::new(&priv_path, &pub_path);
 
         let Json(resp) = generate(
             State(test_state()),
@@ -583,7 +575,19 @@ mod tests {
         )
         .await
         .expect("generate response");
-        assert!(!resp.success);
-        assert!(resp.stderr.contains("simulated keygen failure"));
+
+        assert!(!resp.success, "corrupt key material must not report success");
+        assert!(
+            resp.stderr.contains("PaKey generation failed"),
+            "stderr should explain the failure, got {:?}",
+            resp.stderr
+        );
+        // The unreadable key must be left untouched rather than overwritten,
+        // so an operator can still recover it.
+        assert_eq!(
+            std::fs::read(&priv_path).expect("read private"),
+            corrupt,
+            "a failed generation must not destroy existing key material"
+        );
     }
 }

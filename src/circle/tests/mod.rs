@@ -31,10 +31,15 @@ struct EnvGuard {
     device_key_dir_prev: Option<OsString>,
     vid_state_dir_prev: Option<OsString>,
     _td: TempDir,
+    // Held for the guard's lifetime. This redirects nine process-global paths
+    // (`VC_BASE_ENV` and the DID document paths among them) that `api::tests`
+    // and the `api::handlers` suites read concurrently.
+    _env_lock: crate::test_support::EnvLockGuard,
 }
 
 impl EnvGuard {
     fn new() -> Self {
+        let _env_lock = crate::test_support::env_lock();
         let td = TempDir::new().expect("tempdir");
         let self_doc = td.path().join("did_doc.json");
         let peers_dir = td.path().join("peers");
@@ -77,6 +82,7 @@ impl EnvGuard {
             device_key_dir_prev,
             vid_state_dir_prev,
             _td: td,
+            _env_lock,
         }
     }
 }

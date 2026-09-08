@@ -1,14 +1,103 @@
 use once_cell::sync::Lazy;
 use tokio::sync::{Mutex, MutexGuard};
 
-static TEST_ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-
-pub async fn async_env_lock() -> MutexGuard<'static, ()> {
-    TEST_ENV_LOCK.lock().await
+/// The one lock guarding the process environment for the whole test binary.
+///
+/// There used to be nine separate `TEST_ENV_LOCK` statics — one per module —
+/// each guarding the *same* process-global environment. Tests in different
+/// modules therefore held different mutexes and still raced, which is what
+/// made ~40 tests fail under the default multi-threaded runner while passing
+/// under `--test-threads=1`. Every module now routes here, so the exclusion is
+/// real.
+///
+/// Two properties are load-bearing:
+///
+/// * **Reentrant.** Several tests legitimately take two of these guards at once
+///   (`api::mod`'s vault + xfer harness, `notify`'s env + DID guards) back when
+///   those were distinct mutexes. Collapsing them onto one plain mutex would
+///   deadlock each of those on itself, so a thread that already holds the lock
+///   may take it again and only releases on the outermost drop.
+/// * **Synchronous.** The same helpers are built from both `#[test]` and
+///   `#[tokio::test]` functions, and a `tokio::sync::Mutex` can serve neither
+///   pair: `blocking_lock()` panics inside a runtime and `.await` is
+///   unavailable in a sync test. Every `#[tokio::test]` here is the default
+///   current-thread flavor, so holding this guard across an `.await` is sound
+///   (the future becomes `!Send`, which `block_on` does not require).
+struct EnvLockState {
+    owner: Option<std::thread::ThreadId>,
+    depth: usize,
 }
 
-pub fn blocking_env_lock() -> MutexGuard<'static, ()> {
-    TEST_ENV_LOCK.blocking_lock()
+static ENV_LOCK: Lazy<(std::sync::Mutex<EnvLockState>, std::sync::Condvar)> = Lazy::new(|| {
+    (
+        std::sync::Mutex::new(EnvLockState {
+            owner: None,
+            depth: 0,
+        }),
+        std::sync::Condvar::new(),
+    )
+});
+
+/// Released when the outermost guard on this thread drops.
+pub struct EnvLockGuard {
+    _not_send: std::marker::PhantomData<*const ()>,
+}
+
+impl Drop for EnvLockGuard {
+    fn drop(&mut self) {
+        let (mutex, condvar) = &*ENV_LOCK;
+        let mut state = mutex
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.depth -= 1;
+        if state.depth == 0 {
+            state.owner = None;
+            condvar.notify_one();
+        }
+    }
+}
+
+/// Acquires the environment lock, tolerating a mutex poisoned by an earlier
+/// test's panic — the guarded data is bookkeeping only, so failing here would
+/// turn one test failure into a cascade.
+pub fn env_lock() -> EnvLockGuard {
+    let me = std::thread::current().id();
+    let (mutex, condvar) = &*ENV_LOCK;
+    let mut state = mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    loop {
+        match state.owner {
+            None => {
+                state.owner = Some(me);
+                state.depth = 1;
+                break;
+            }
+            Some(owner) if owner == me => {
+                state.depth += 1;
+                break;
+            }
+            Some(_) => {
+                state = condvar
+                    .wait(state)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+            }
+        }
+    }
+    EnvLockGuard {
+        _not_send: std::marker::PhantomData,
+    }
+}
+
+/// Kept so the many `async_env_lock().await` call sites read naturally; the
+/// wait itself is a plain blocking acquire, which is what the mixed sync/async
+/// call sites require.
+pub async fn async_env_lock() -> EnvLockGuard {
+    env_lock()
+}
+
+pub fn blocking_env_lock() -> EnvLockGuard {
+    env_lock()
 }
 
 /// Serializes every test that binds the fixed `REGISTRY_SYNC_PORT`.

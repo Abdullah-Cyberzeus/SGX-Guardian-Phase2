@@ -433,10 +433,16 @@ mod tests {
 
     /// Sets an environment variable for the duration of a test and puts the
     /// previous value back afterwards.
-    struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
+    struct EnvGuard(
+        Vec<(&'static str, Option<std::ffi::OsString>)>,
+        // Held for the guard's lifetime so a concurrent test cannot observe or
+        // overwrite these variables mid-read.
+        crate::test_support::EnvLockGuard,
+    );
 
     impl EnvGuard {
         fn set(pairs: &[(&'static str, &str)]) -> Self {
+            let lock = crate::test_support::env_lock();
             let saved = pairs
                 .iter()
                 .map(|(key, value)| {
@@ -445,7 +451,7 @@ mod tests {
                     (*key, previous)
                 })
                 .collect();
-            Self(saved)
+            Self(saved, lock)
         }
     }
 

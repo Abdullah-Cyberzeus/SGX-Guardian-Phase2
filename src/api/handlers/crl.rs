@@ -1149,7 +1149,7 @@ mod tests {
 
     #[tokio::test]
     async fn device_id_resolution_reports_a_missing_self_document() {
-        let _lock = crate::test_utils::TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let temp = tempfile::tempdir().expect("tempdir");
         let previous_self = std::env::var_os(crate::did::doc_persistence::SELF_DOC_PATH_ENV);
         let previous_peers = std::env::var_os(crate::did::doc_persistence::PEERS_DOC_DIR_ENV);

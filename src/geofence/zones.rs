@@ -532,14 +532,12 @@ mod tests {
 
     struct EnvGuard {
         original: Vec<(&'static str, Option<String>)>,
-        _lock: std::sync::MutexGuard<'static, ()>,
+        _lock: crate::test_support::EnvLockGuard,
     }
 
     impl EnvGuard {
         fn set_many(set: &[(&'static str, &str)], remove: &[&'static str]) -> Self {
-            let lock = crate::geofence::persistence::TEST_ENV_LOCK
-                .lock()
-                .expect("env lock poisoned");
+            let lock = crate::test_support::env_lock();
             let mut keys = Vec::new();
             for (key, _) in set {
                 if !keys.contains(key) {

@@ -83,7 +83,7 @@ pub fn add_numbers(a: i32, b: i32) -> i32 {
 
 #[cfg(test)]
 pub mod test_utils {
-    use once_cell::sync::Lazy;
-    pub static TEST_ENV_LOCK: Lazy<tokio::sync::Mutex<()>> =
-        Lazy::new(|| tokio::sync::Mutex::new(()));
+    // Re-export rather than define: this used to be a second, independent
+    // mutex guarding the same process environment as `test_support`'s.
+    pub use crate::test_support::env_lock;
 }

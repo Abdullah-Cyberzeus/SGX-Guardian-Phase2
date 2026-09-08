@@ -444,7 +444,6 @@ mod tests {
     use std::ffi::OsString;
     use tempfile::TempDir;
 
-    use crate::test_utils::TEST_ENV_LOCK;
 
     struct EnvGuard {
         sys_net_prev: Option<OsString>,
@@ -500,7 +499,7 @@ mod tests {
 
     #[tokio::test]
     async fn transport_list_route_returns_interfaces() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         seed_sys_net(&tmp);
         let lock_dir = tmp.path().join("cot");
@@ -525,7 +524,7 @@ mod tests {
 
     #[tokio::test]
     async fn transport_status_route_returns_lock_value() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         seed_sys_net(&tmp);
         let lock_dir = tmp.path().join("cot");
@@ -629,7 +628,7 @@ mod tests {
 
     #[tokio::test]
     async fn transport_lock_and_unlock_routes_update_lock_file() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         seed_sys_net(&tmp);
         let lock_dir = tmp.path().join("cot");

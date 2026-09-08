@@ -12,9 +12,6 @@ pub const GEOFENCE_BASE: &str = "/var/lib/sgx-guardian/geofence";
 pub const GEOFENCE_BASE_ENV: &str = "SGX_GUARDIAN_GEOFENCE_BASE";
 pub const MAX_EVENTS: usize = 10_000;
 
-#[cfg(test)]
-pub static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 pub fn base_dir() -> PathBuf {
     env::var(GEOFENCE_BASE_ENV)
         .map(PathBuf::from)

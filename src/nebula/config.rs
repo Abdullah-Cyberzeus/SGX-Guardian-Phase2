@@ -590,6 +590,7 @@ mod tests {
 
     #[test]
     fn test_lighthouse_relay_fallback_can_be_disabled() {
+        let _lock = crate::test_support::env_lock();
         let mut pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
         pool.allocate("nodeB").unwrap();
         let dir = tmp("relay_disabled");

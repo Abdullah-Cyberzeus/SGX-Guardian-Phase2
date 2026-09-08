@@ -475,18 +475,15 @@ mod tests {
     use super::*;
     use crate::geofence::actions::{GeofenceAction, ZoneAutomation};
     use crate::geofence::model::{GeofenceRegistry, ZoneKind};
-    use std::sync::MutexGuard;
 
     struct EnvGuard {
         original: Vec<(&'static str, Option<String>)>,
-        _lock: MutexGuard<'static, ()>,
+        _lock: crate::test_support::EnvLockGuard,
     }
 
     impl EnvGuard {
         fn set_many(set: &[(&'static str, &str)], remove: &[&'static str]) -> Self {
-            let lock = persistence::TEST_ENV_LOCK
-                .lock()
-                .expect("env lock poisoned");
+            let lock = crate::test_support::env_lock();
             let mut keys = Vec::new();
             for (key, _) in set {
                 if !keys.contains(key) {

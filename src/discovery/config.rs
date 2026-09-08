@@ -152,6 +152,10 @@ struct RawNmapConfig {
     #[serde(default, rename = "scan_schedule")]
     scan_schedule: Option<ScanScheduleProfile>,
     intensity: Option<ScanIntensity>,
+    // Legacy configs spell this key `schedule`. Without the rename serde never
+    // matched it, so `schedule: daily` silently fell back to the Hourly
+    // default and ran daily scans every hour.
+    #[serde(rename = "schedule")]
     legacy_schedule: Option<ScanSchedule>,
 }
 
@@ -254,8 +258,15 @@ impl<'de> Deserialize<'de> for NmapConfig {
         let raw = RawNmapConfig::deserialize(deserializer)?;
         let schedules_present = raw.schedules.is_some();
         let scan_schedules_present = raw.scan_schedules.is_some();
+        // A legacy config (`schedule:`/`intensity:` with no modern `schedules`
+        // block) is driven entirely by `scheduled_intensity`, which stands down
+        // as soon as any modern task exists. Synthesizing one here would
+        // therefore replace the administrator's configured cadence with an
+        // unrelated weekly task, so legacy configs get no backfill.
+        let legacy_mode =
+            !schedules_present && (raw.intensity.is_some() || raw.legacy_schedule.is_some());
         let mut scan_schedules = raw.scan_schedules.unwrap_or_default();
-        if !scan_schedules_present {
+        if !scan_schedules_present && !legacy_mode {
             if let Some(schedule) = raw.scan_schedule {
                 scan_schedules.push(schedule);
             } else {
@@ -326,7 +337,7 @@ impl<'de> Deserialize<'de> for NmapConfig {
         // Preserve an explicitly saved empty list. It means the administrator
         // removed all tasks; recreating a legacy weekly task here made the UI
         // appear to ignore deletes and user-selected schedules.
-        if cfg.scan_schedules.is_empty() && !scan_schedules_present {
+        if cfg.scan_schedules.is_empty() && !scan_schedules_present && !legacy_mode {
             cfg.scan_schedules.push(ScanScheduleProfile {
                 id: default_schedule_id(),
                 frequency: ScheduleFrequency::Weekly,
@@ -802,7 +813,7 @@ fn prefix_to_mask(prefix: u8) -> u32 {
 mod tests {
     use super::{
         auto_detect_local_cidr_or_default, NmapConfig, PortMergeStrategy, ScanIntensity,
-        ScanSchedule, ScheduleFrequency, ScheduledScanKind,
+        ScanSchedule, ScheduledScanKind,
     };
 
     #[test]
@@ -814,7 +825,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_scan_schedule_backfills_default_task_and_enables_config() {
+    fn explicitly_empty_scan_schedule_is_preserved_and_enabled_flag_is_respected() {
         let yaml = r#"
 enabled: false
 target_cidr: null
@@ -831,10 +842,14 @@ schedules:
 "#;
 
         let cfg: NmapConfig = serde_yaml::from_str(yaml).expect("config should parse");
-        assert!(cfg.enabled);
-        assert_eq!(cfg.scan_schedules.len(), 1);
-        assert_eq!(cfg.scan_schedules[0].frequency, ScheduleFrequency::Weekly);
-        assert_eq!(cfg.scan_schedules[0].intensity, ScanIntensity::Aggressive);
+        // An explicit empty list means the administrator deleted every task.
+        // Recreating one here made the UI look like it ignored deletes.
+        assert!(
+            cfg.scan_schedules.is_empty(),
+            "an explicitly empty scan_schedules must not be backfilled"
+        );
+        // And parsing must never enable scanning the config switched off.
+        assert!(!cfg.enabled);
     }
 
     #[test]

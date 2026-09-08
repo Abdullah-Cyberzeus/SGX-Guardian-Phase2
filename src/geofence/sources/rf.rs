@@ -574,10 +574,9 @@ mod tests {
     use super::*;
     use std::collections::{HashMap, VecDeque};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex, MutexGuard};
+    use std::sync::{Arc, Mutex};
     use tokio::time::{sleep, Duration};
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
     type ScanResultQueue = Arc<Mutex<VecDeque<GeofenceResult<Vec<ApObservation>>>>>;
 
     #[derive(Default)]
@@ -746,12 +745,12 @@ mod tests {
 
     struct EnvGuard {
         original: Vec<(&'static str, Option<String>)>,
-        _lock: MutexGuard<'static, ()>,
+        _lock: crate::test_support::EnvLockGuard,
     }
 
     impl EnvGuard {
         fn set_many(set: &[(&'static str, &str)], remove: &[&'static str]) -> Self {
-            let lock = ENV_LOCK.lock().expect("env lock poisoned");
+            let lock = crate::test_support::env_lock();
             let mut keys = Vec::new();
             for (key, _) in set {
                 if !keys.contains(key) {

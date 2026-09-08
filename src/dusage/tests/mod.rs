@@ -1,10 +1,7 @@
 use super::*;
-use once_cell::sync::Lazy;
 use std::ffi::OsString;
 use std::path::Path;
 use tempfile::TempDir;
-
-static ENV_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
 
 struct EnvGuard {
     values: Vec<(&'static str, Option<OsString>)>,
@@ -63,7 +60,7 @@ fn write_iface(root: &Path, iface: &str, rx: u64, tx: u64) {
 
 #[tokio::test]
 async fn sys_reader_and_sampler_compute_period_delta() {
-    let _guard = ENV_LOCK.lock().await;
+    let _guard = crate::test_support::env_lock();
     let td = TempDir::new().expect("tempdir");
     let sys_root = td.path().join("sys/class/net");
     let dusage_base = td.path().join("dusage");
@@ -89,7 +86,7 @@ async fn sys_reader_and_sampler_compute_period_delta() {
 
 #[tokio::test]
 async fn counter_reset_rebaselines_without_spurious_spike() {
-    let _guard = ENV_LOCK.lock().await;
+    let _guard = crate::test_support::env_lock();
     let td = TempDir::new().expect("tempdir");
     let sys_root = td.path().join("sys/class/net");
     let dusage_base = td.path().join("dusage");
@@ -118,7 +115,7 @@ async fn counter_reset_rebaselines_without_spurious_spike() {
 
 #[tokio::test]
 async fn new_and_removed_interfaces_are_handled() {
-    let _guard = ENV_LOCK.lock().await;
+    let _guard = crate::test_support::env_lock();
     let td = TempDir::new().expect("tempdir");
     let sys_root = td.path().join("sys/class/net");
     let dusage_base = td.path().join("dusage");

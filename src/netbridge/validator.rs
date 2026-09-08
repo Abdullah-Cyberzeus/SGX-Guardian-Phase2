@@ -480,11 +480,23 @@ mod tests {
         let validator = Validator::new();
         // Bind to port 0 to let the OS pick a free ephemeral UDP port, then
         // release it immediately so the port is free again for the check.
-        let probe = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind probe socket");
-        let port = probe.local_addr().expect("local addr").port();
-        drop(probe);
+        //
+        // Releasing and re-checking is inherently racy: a concurrent test can
+        // claim the just-freed ephemeral port in between. That is a lost race
+        // rather than a real conflict, so retry with a fresh port instead of
+        // failing the run on it.
+        let mut last = None;
+        for _ in 0..10 {
+            let probe = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind probe socket");
+            let port = probe.local_addr().expect("local addr").port();
+            drop(probe);
 
-        assert!(validator.check_port_available(port).is_ok());
+            match validator.check_port_available(port) {
+                Ok(()) => return,
+                other => last = Some((port, other)),
+            }
+        }
+        panic!("no freed ephemeral port ever reported available; last: {last:?}");
     }
 
     #[test]

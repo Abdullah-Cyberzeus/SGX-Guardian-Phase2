@@ -533,7 +533,7 @@ mod tests {
         caller_did: String,
     }
 
-    async fn harness() -> (tokio::sync::MutexGuard<'static, ()>, Harness) {
+    async fn harness() -> (crate::test_support::EnvLockGuard, Harness) {
         let lock = crate::test_support::async_env_lock().await;
         let env = crate::test_support::guardian::GuardianEnv::new();
         let (base, state) = test_state("nodeA");

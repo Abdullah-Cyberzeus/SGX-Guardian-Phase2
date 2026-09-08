@@ -536,7 +536,7 @@ mod tests {
     #[cfg(unix)]
     struct FakeChipEnv {
         _path_guard: PathGuardDkp,
-        _env_lock: tokio::sync::MutexGuard<'static, ()>,
+        _env_lock: crate::test_support::EnvLockGuard,
     }
 
     #[cfg(unix)]

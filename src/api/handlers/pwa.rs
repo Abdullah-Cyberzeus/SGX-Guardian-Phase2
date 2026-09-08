@@ -2167,6 +2167,7 @@ mod tests {
 
     #[test]
     fn registration_days_uses_positive_values_and_falls_back_for_invalid_values() {
+        let _lock = crate::test_support::env_lock();
         const KEY: &str = "SGX_PWA_REGISTRATION_DAYS";
         let previous = std::env::var_os(KEY);
 

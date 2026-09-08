@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn load_rbac_rules_with_explicit_rules() {
         let td = tempdir().expect("failed to create temp dir");
-        std::env::set_var("SGX_GUARDIAN_POLICY_DIR", td.path());
+        let _guard = PolicyDirEnvGuard::set(td.path());
 
         let policy_with_rbac = r#"
 policy_id: test
@@ -303,7 +303,7 @@ rbac_rules:
     #[test]
     fn load_rbac_rules_returns_defaults_when_missing() {
         let td = tempdir().expect("failed to create temp dir");
-        std::env::set_var("SGX_GUARDIAN_POLICY_DIR", td.path());
+        let _guard = PolicyDirEnvGuard::set(td.path());
 
         ensure_policy_dir().expect("create policy dir");
         // Don't write a policy file
@@ -315,13 +315,21 @@ rbac_rules:
 
     struct PolicyDirEnvGuard {
         previous: Option<std::ffi::OsString>,
+        // Held for the guard's lifetime: `POLICY_DIR_ENV` is process-global, so
+        // without this these tests redirected each other's policy directory
+        // (and every other env-mutating test's) under the parallel runner.
+        _env_lock: crate::test_support::EnvLockGuard,
     }
 
     impl PolicyDirEnvGuard {
         fn set(path: &Path) -> Self {
+            let _env_lock = crate::test_support::env_lock();
             let previous = std::env::var_os(POLICY_DIR_ENV);
             std::env::set_var(POLICY_DIR_ENV, path);
-            Self { previous }
+            Self {
+                previous,
+                _env_lock,
+            }
         }
     }
 
@@ -341,6 +349,7 @@ rbac_rules:
 
     #[test]
     fn policy_paths_use_default_or_env_override() {
+        let _env_lock = crate::test_support::env_lock();
         std::env::remove_var(POLICY_DIR_ENV);
         assert_eq!(active_policy_file_path(), PathBuf::from(ACTIVE_POLICY));
 

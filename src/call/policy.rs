@@ -123,7 +123,7 @@ rules:
 
     #[tokio::test]
     async fn test_call_policy_enforcer_denies_wildcard_tcp_call() {
-        let _env_guard = crate::test_utils::TEST_ENV_LOCK.lock().await;
+        let _env_guard = crate::test_support::env_lock();
         let dir = tempdir().expect("create temp dir");
         let previous_policy_dir = env::var("SGX_GUARDIAN_POLICY_DIR").ok();
         let previous_signaling_port = env::var("SGX_CALL_SIGNALING_PORT").ok();

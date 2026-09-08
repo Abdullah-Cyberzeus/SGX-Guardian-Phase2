@@ -2409,13 +2409,18 @@ mod tests {
 
     struct VcEnvGuard {
         prev: Option<std::ffi::OsString>,
+        // Held for the guard's lifetime. On drop this *removes* `VC_BASE_ENV`,
+        // which made concurrent tests in `api::handlers::circle` see an absent
+        // VC store and fail to resolve their own membership credential.
+        _lock: crate::test_support::EnvLockGuard,
     }
 
     impl VcEnvGuard {
         fn new(path: &std::path::Path) -> Self {
+            let _lock = crate::test_support::env_lock();
             let prev = std::env::var_os(crate::vc::persistence::VC_BASE_ENV);
             std::env::set_var(crate::vc::persistence::VC_BASE_ENV, path);
-            Self { prev }
+            Self { prev, _lock }
         }
     }
 

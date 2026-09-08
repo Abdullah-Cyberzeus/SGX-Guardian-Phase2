@@ -216,13 +216,20 @@ mod tests {
 
     /// Points the gateway probe at a listener under the test's control, so
     /// the reachable and unreachable branches are both exercised offline.
-    struct GatewayGuard(Option<std::ffi::OsString>);
+    struct GatewayGuard(
+        Option<std::ffi::OsString>,
+        // `SGX_SAT_GATEWAY_ADDR` is process-global, and these tests point it at
+        // ports whose reachability is the thing under assertion — one test's
+        // live listener would otherwise satisfy another test's probe.
+        crate::test_support::EnvLockGuard,
+    );
 
     impl GatewayGuard {
         fn set(addr: &str) -> Self {
+            let lock = crate::test_support::env_lock();
             let previous = std::env::var_os("SGX_SAT_GATEWAY_ADDR");
             std::env::set_var("SGX_SAT_GATEWAY_ADDR", addr);
-            Self(previous)
+            Self(previous, lock)
         }
     }
 

@@ -372,7 +372,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_excludes_self_and_peers_without_an_attested_virtual_id() {
+    async fn list_excludes_self_but_still_reports_peers_without_an_attested_virtual_id() {
         let (state, _base, _config) = state_with_logs();
         write_peers(
             &state,
@@ -383,7 +383,24 @@ mod tests {
             ]),
         );
         let response = list(State(state)).await.expect("list should not error");
-        assert!(response.0.peers.is_empty());
+
+        // Only this node is dropped. A peer missing a VirtualID stays listed
+        // and carries the reason it cannot be called — dropping it instead
+        // would make the peer vanish from the UI with nothing to explain why.
+        let peer_ids: Vec<&str> = response
+            .0
+            .peers
+            .iter()
+            .map(|peer| peer.peer_id.as_str())
+            .collect();
+        assert_eq!(peer_ids, vec!["nodeB"]);
+
+        let peer = &response.0.peers[0];
+        assert!(!peer.call_available);
+        assert_eq!(
+            peer.call_unavailable_reason.as_deref(),
+            Some("Peer registry has no attested VirtualID")
+        );
     }
 
     #[tokio::test]
@@ -423,6 +440,10 @@ mod tests {
 
     #[tokio::test]
     async fn list_reports_offline_when_the_signaling_port_is_unreachable() {
+        // `SGX_CALL_SIGNALING_PORT` is process-global and the sibling
+        // reachability tests point it at a port they really bind, so this
+        // redirect has to be exclusive.
+        let _env_lock = crate::test_support::async_env_lock().await;
         let (state, _base, _config) = state_with_logs();
         write_peers(
             &state,
@@ -445,6 +466,10 @@ mod tests {
 
     #[tokio::test]
     async fn list_reports_online_when_the_signaling_port_is_reachable() {
+        // `SGX_CALL_SIGNALING_PORT` is process-global and the sibling
+        // reachability tests point it at a port they really bind, so this
+        // redirect has to be exclusive.
+        let _env_lock = crate::test_support::async_env_lock().await;
         let (state, _base, _config) = state_with_logs();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -561,6 +586,10 @@ mod tests {
 
     #[tokio::test]
     async fn call_peer_online_returns_false_for_an_unreachable_port() {
+        // `SGX_CALL_SIGNALING_PORT` is process-global and the sibling
+        // reachability tests point it at a port they really bind, so this
+        // redirect has to be exclusive.
+        let _env_lock = crate::test_support::async_env_lock().await;
         std::env::set_var("SGX_CALL_SIGNALING_PORT", "1");
         let online = call_peer_online("127.0.0.1").await;
         std::env::remove_var("SGX_CALL_SIGNALING_PORT");

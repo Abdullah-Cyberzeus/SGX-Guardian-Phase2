@@ -779,10 +779,14 @@ mod tests {
         peers_dir_prev: Option<OsString>,
         aggregate_prev: Option<OsString>,
         counter_prev: Option<OsString>,
+        // Held for the guard's lifetime; these DID document paths are
+        // process-global and read by every other suite's handlers.
+        _lock: crate::test_support::EnvLockGuard,
     }
 
     impl EnvGuard {
         fn new(self_doc_path: &Path, peers_dir: &Path, aggregate_path: &Path) -> Self {
+            let _lock = crate::test_support::env_lock();
             let counter_path = self_doc_path.with_file_name("self_version_counter");
             let self_doc_prev = std::env::var_os(SELF_DOC_PATH_ENV);
             let peers_dir_prev = std::env::var_os(PEERS_DOC_DIR_ENV);
@@ -793,6 +797,7 @@ mod tests {
             std::env::set_var(CA_AGGREGATE_PATH_ENV, aggregate_path);
             std::env::set_var(VERSION_COUNTER_PATH_ENV, counter_path);
             Self {
+                _lock,
                 self_doc_prev,
                 peers_dir_prev,
                 aggregate_prev,
@@ -2722,6 +2727,9 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn signup_creates_initial_admin_and_returns_session() {
+        // Other tests toggle the process-global login mode via
+        // `ScopedLoginMode`; share their lock so auth stays enabled here.
+        let _login_lock = crate::test_support::async_env_lock().await;
         let state = auth_test_state(AuthLockoutConfig::default());
         let (base_url, handle) = spawn_secured_api_with_state(state.clone()).await;
         let client = reqwest::Client::new();
@@ -2761,6 +2769,9 @@ mod tests {
 
     #[tokio::test]
     async fn signup_rejects_weak_password() {
+        // Other tests toggle the process-global login mode via
+        // `ScopedLoginMode`; share their lock so auth stays enabled here.
+        let _login_lock = crate::test_support::async_env_lock().await;
         let state = auth_test_state(AuthLockoutConfig::default());
         let (base_url, handle) = spawn_api_with_state(state).await;
         let client = reqwest::Client::new();
@@ -2776,6 +2787,9 @@ mod tests {
 
     #[tokio::test]
     async fn login_wrong_password_increments_failed_attempts() {
+        // Other tests toggle the process-global login mode via
+        // `ScopedLoginMode`; share their lock so auth stays enabled here.
+        let _login_lock = crate::test_support::async_env_lock().await;
         let state = auth_test_state(AuthLockoutConfig {
             max_failed_attempts: 5,
             attempt_window_secs: 300,
@@ -2799,6 +2813,9 @@ mod tests {
 
     #[tokio::test]
     async fn login_threshold_sets_locked_until() {
+        // Other tests toggle the process-global login mode via
+        // `ScopedLoginMode`; share their lock so auth stays enabled here.
+        let _login_lock = crate::test_support::async_env_lock().await;
         let state = auth_test_state(AuthLockoutConfig {
             max_failed_attempts: 5,
             attempt_window_secs: 300,
@@ -2830,6 +2847,9 @@ mod tests {
 
     #[tokio::test]
     async fn login_rejects_correct_password_during_lockout() {
+        // Other tests toggle the process-global login mode via
+        // `ScopedLoginMode`; share their lock so auth stays enabled here.
+        let _login_lock = crate::test_support::async_env_lock().await;
         let state = auth_test_state(AuthLockoutConfig {
             max_failed_attempts: 5,
             attempt_window_secs: 300,
@@ -2854,6 +2874,9 @@ mod tests {
 
     #[tokio::test]
     async fn login_allows_success_after_lockout_expires() {
+        // Other tests toggle the process-global login mode via
+        // `ScopedLoginMode`; share their lock so auth stays enabled here.
+        let _login_lock = crate::test_support::async_env_lock().await;
         // A long lockout, expired by rewriting the stored deadline rather than
         // by sleeping. `locked_until` is whole seconds and `is_locked` is
         // `locked_until > now`, so a 1-second lockout plus a real sleep raced
@@ -2896,6 +2919,9 @@ mod tests {
 
     #[tokio::test]
     async fn login_success_resets_failed_attempts() {
+        // Other tests toggle the process-global login mode via
+        // `ScopedLoginMode`; share their lock so auth stays enabled here.
+        let _login_lock = crate::test_support::async_env_lock().await;
         let state = auth_test_state(AuthLockoutConfig {
             max_failed_attempts: 5,
             attempt_window_secs: 300,
@@ -2933,6 +2959,9 @@ mod tests {
 
     #[tokio::test]
     async fn login_rate_limit_returns_too_many_requests() {
+        // Other tests toggle the process-global login mode via
+        // `ScopedLoginMode`; share their lock so auth stays enabled here.
+        let _login_lock = crate::test_support::async_env_lock().await;
         let state = auth_test_state_with_limits(
             AuthLockoutConfig {
                 max_failed_attempts: 5,
@@ -2964,6 +2993,9 @@ mod tests {
 
     #[tokio::test]
     async fn fresh_login_token_works_on_session_and_node_status() {
+        // Other tests toggle the process-global login mode via
+        // `ScopedLoginMode`; share their lock so auth stays enabled here.
+        let _login_lock = crate::test_support::async_env_lock().await;
         let state = auth_test_state(AuthLockoutConfig::default());
         seed_auth_user(&state, "admin@example.com", "GuardianPass123!").await;
         write_test_node_config(&state);
@@ -3009,6 +3041,9 @@ mod tests {
 
     #[tokio::test]
     async fn logout_revokes_active_session() {
+        // Other tests toggle the process-global login mode via
+        // `ScopedLoginMode`; share their lock so auth stays enabled here.
+        let _login_lock = crate::test_support::async_env_lock().await;
         let state = auth_test_state(AuthLockoutConfig::default());
         seed_auth_user(&state, "admin@example.com", "GuardianPass123!").await;
         let (base_url, handle) = spawn_secured_api_with_state(state).await;
@@ -3043,6 +3078,9 @@ mod tests {
 
     #[tokio::test]
     async fn tampered_login_token_returns_unauthorized() {
+        // Other tests toggle the process-global login mode via
+        // `ScopedLoginMode`; share their lock so auth stays enabled here.
+        let _login_lock = crate::test_support::async_env_lock().await;
         let state = auth_test_state(AuthLockoutConfig::default());
         seed_auth_user(&state, "admin@example.com", "GuardianPass123!").await;
         write_test_node_config(&state);

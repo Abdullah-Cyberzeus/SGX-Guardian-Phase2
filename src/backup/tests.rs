@@ -20,8 +20,6 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
-use tokio::sync::Mutex;
 
 #[test]
 fn encrypted_bundle_round_trips_and_rejects_wrong_secret_or_tamper() {
@@ -539,7 +537,7 @@ fn destructive_restore_is_enabled_by_default_without_environment_gate() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn restore_apply_is_available_by_default_and_requires_confirm_then_commits() {
-    let _lock = policy_env_lock().lock().await;
+    let _lock = policy_env_lock();
     let (temp, state) = test_state("nodeA");
     write_seed(
         temp.path().join("identity/crl/crl.json"),
@@ -618,7 +616,7 @@ async fn restore_apply_is_available_by_default_and_requires_confirm_then_commits
 
 #[tokio::test(flavor = "current_thread")]
 async fn restore_apply_denies_policy_rollback_as_atomic_skip() {
-    let _lock = policy_env_lock().lock().await;
+    let _lock = policy_env_lock();
     let case = policy_restore_case("1.0.0", "1.0.1")
         .await
         .expect("policy restore case");
@@ -664,7 +662,7 @@ fn policy_file_contents_reads_policy_files_in_stable_order() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn restore_apply_allows_authorised_policy_rollback() {
-    let _lock = policy_env_lock().lock().await;
+    let _lock = policy_env_lock();
     let case = policy_restore_case("1.0.0", "1.0.1")
         .await
         .expect("policy restore case");
@@ -800,9 +798,11 @@ struct PolicyRestoreCase {
     backup_backup_yaml: String,
 }
 
-fn policy_env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
+/// Was a private mutex; these tests redirect the same process-global policy
+/// directory that `policy_state` and the API handlers do, so they have to
+/// exclude those too, not just each other.
+fn policy_env_lock() -> crate::test_support::EnvLockGuard {
+    crate::test_support::env_lock()
 }
 
 async fn policy_restore_case(

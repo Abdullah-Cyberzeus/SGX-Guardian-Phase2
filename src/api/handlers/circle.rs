@@ -2220,7 +2220,7 @@ mod tests {
         owner_did: String,
     }
 
-    async fn harness() -> (tokio::sync::MutexGuard<'static, ()>, Harness) {
+    async fn harness() -> (crate::test_support::EnvLockGuard, Harness) {
         let lock = crate::test_support::async_env_lock().await;
         let env = GuardianEnv::new();
         let base = TempDir::new().expect("tempdir");

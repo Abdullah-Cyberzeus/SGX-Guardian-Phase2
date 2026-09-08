@@ -190,7 +190,7 @@ mod tests {
     /// `SGX_FORCE_SOFTWARE_KEYS`), so a real signer and real rule storage can be built in a
     /// tempdir rather than needing `/var/lib/sgx-guardian`.
     struct RulesEnv {
-        _guard: tokio::sync::MutexGuard<'static, ()>,
+        _guard: crate::test_support::EnvLockGuard,
         _td: tempfile::TempDir,
         restore: Vec<(&'static str, Option<String>)>,
         state: Arc<AppState>,

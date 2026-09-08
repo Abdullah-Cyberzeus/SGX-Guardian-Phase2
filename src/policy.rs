@@ -529,6 +529,9 @@ rules: []
 
     #[test]
     fn load_policy_runtime_updates_cache_and_invalid_yaml_does_not_replace_existing_policy() {
+        // The active-policy cache is a process-global; these two tests both
+        // clear and repopulate it, so they must not interleave.
+        let _lock = crate::test_support::env_lock();
         clear_active_policy_cache();
 
         load_policy_runtime(ACTIVE_POLICY_YAML).expect("load runtime policy");
@@ -548,6 +551,9 @@ rules: []
 
     #[test]
     fn runtime_cache_returns_cloned_policy_not_shared_mutable_state() {
+        // The active-policy cache is a process-global; these two tests both
+        // clear and repopulate it, so they must not interleave.
+        let _lock = crate::test_support::env_lock();
         clear_active_policy_cache();
         load_policy_runtime(ACTIVE_POLICY_YAML).expect("load runtime policy");
 

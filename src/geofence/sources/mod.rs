@@ -411,18 +411,16 @@ mod tests {
     use super::*;
     use crate::geofence::model::{ApObservation, StoredLocation};
     use std::collections::VecDeque;
-    use std::sync::{Arc, Mutex, MutexGuard};
+    use std::sync::{Arc, Mutex};
 
     struct EnvGuard {
         original: Vec<(&'static str, Option<String>)>,
-        _lock: MutexGuard<'static, ()>,
+        _lock: crate::test_support::EnvLockGuard,
     }
 
     impl EnvGuard {
         fn set_many(set: &[(&'static str, &str)], remove: &[&'static str]) -> Self {
-            let lock = persistence::TEST_ENV_LOCK
-                .lock()
-                .expect("env lock poisoned");
+            let lock = crate::test_support::env_lock();
             let mut keys = Vec::new();
             for (key, _) in set {
                 if !keys.contains(key) {

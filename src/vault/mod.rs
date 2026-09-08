@@ -53,14 +53,9 @@ pub(crate) fn write_lock() -> &'static tokio::sync::Mutex<()> {
 }
 
 #[cfg(test)]
-static TEST_ENV_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-
 #[cfg(test)]
-pub(crate) async fn lock_test_env() -> tokio::sync::MutexGuard<'static, ()> {
-    TEST_ENV_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await
+pub(crate) async fn lock_test_env() -> crate::test_support::EnvLockGuard {
+    crate::test_support::env_lock()
 }
 
 #[cfg(test)]

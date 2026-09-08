@@ -10,6 +10,14 @@ use sgx_guardian_client::xfer::errors::XferError;
 use sgx_guardian_client::xfer::persistence::XFER_BASE_ENV;
 use sgx_guardian_client::xfer::{XferConfig, MAX_TRANSFER_FILE_BYTES};
 
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 struct EnvGuard {
     key: &'static str,
     old: Option<std::ffi::OsString>,
@@ -115,6 +123,7 @@ fn inbox_response_serializes_empty() {
 
 #[test]
 fn default_xfer_config_has_safe_limits() {
+    let _env_lock = lock_env();
     let _a = EnvGuard::remove("SGX_XFER_ENABLED");
     let _b = EnvGuard::remove("SGX_XFER_PORT");
     let _c = EnvGuard::remove("SGX_XFER_CHUNK_BYTES");
@@ -129,6 +138,7 @@ macro_rules! enabled_env_tests {
     ($($name:ident => $value:expr, $expected:expr),+ $(,)?) => {$(
         #[test]
         fn $name() {
+            let _env_lock = lock_env();
             let _guard = EnvGuard::set("SGX_XFER_ENABLED", $value);
             assert_eq!(XferConfig::from_env().enabled, $expected);
         }
@@ -147,6 +157,7 @@ macro_rules! port_env_tests {
     ($($name:ident => $value:expr, $expected:expr),+ $(,)?) => {$(
         #[test]
         fn $name() {
+            let _env_lock = lock_env();
             let _guard = EnvGuard::set("SGX_XFER_PORT", $value);
             assert_eq!(XferConfig::from_env().port, $expected);
         }
@@ -164,6 +175,7 @@ macro_rules! chunk_env_tests {
     ($($name:ident => $value:expr, $expected:expr),+ $(,)?) => {$(
         #[test]
         fn $name() {
+            let _env_lock = lock_env();
             let _guard = EnvGuard::set("SGX_XFER_CHUNK_BYTES", $value);
             assert_eq!(XferConfig::from_env().chunk_bytes, $expected);
         }
@@ -181,6 +193,7 @@ macro_rules! max_file_env_tests {
     ($($name:ident => $value:expr, $expected:expr),+ $(,)?) => {$(
         #[test]
         fn $name() {
+            let _env_lock = lock_env();
             let _guard = EnvGuard::set("SGX_XFER_MAX_FILE_BYTES", $value);
             assert_eq!(XferConfig::from_env().max_file_bytes, $expected);
         }
@@ -210,6 +223,7 @@ async fn send_source_disabled_rejects_vault_before_lookup() {
 
 #[tokio::test]
 async fn cancel_missing_transfer_returns_false() {
+    let _env_lock = lock_env();
     let dir = tempfile::tempdir().unwrap();
     let _guard = EnvGuard::set(XFER_BASE_ENV, dir.path());
     assert!(!cancel_transfer("missing").await.unwrap());
@@ -217,6 +231,7 @@ async fn cancel_missing_transfer_returns_false() {
 
 #[tokio::test]
 async fn cancel_empty_transfer_id_returns_false() {
+    let _env_lock = lock_env();
     let dir = tempfile::tempdir().unwrap();
     let _guard = EnvGuard::set(XFER_BASE_ENV, dir.path());
     assert!(!cancel_transfer("").await.unwrap());
@@ -298,6 +313,7 @@ fn send_source_clone_preserves_variant() {
 
 #[tokio::test]
 async fn cancel_missing_transfer_is_idempotent() {
+    let _env_lock = lock_env();
     let dir = tempfile::tempdir().unwrap();
     let _guard = EnvGuard::set(XFER_BASE_ENV, dir.path());
     assert!(!cancel_transfer("missing").await.unwrap());

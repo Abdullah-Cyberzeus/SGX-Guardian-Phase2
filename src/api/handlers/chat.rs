@@ -1469,6 +1469,7 @@ mod tests {
     /// free, unlike a `role: "member"` session would be.
     #[tokio::test]
     async fn mark_as_read_updates_read_by_for_admin_caller() {
+        let _lock = crate::test_support::async_env_lock().await;
         let td = TempDir::new().expect("tempdir");
         // `chat::storage`'s BASE_DIR is a process-wide `Lazy`, bound on first
         // use — safe to set here since this is the only test in the binary

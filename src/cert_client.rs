@@ -575,14 +575,10 @@ mod tests {
         CredentialRole, CredentialStatus, CredentialSubject, MembershipStatus,
         VerifiableCredential, TYPE_CIRCLE_MEMBERSHIP, TYPE_VC, VC_CONTEXT_CORE,
     };
-    use once_cell::sync::Lazy;
-    use std::sync::Mutex;
     use tempfile::TempDir;
     use tokio::net::TcpListener;
     use tokio_stream::wrappers::TcpListenerStream;
     use tonic::transport::Server;
-
-    static TEST_ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
     /// gRPC CertService double that always returns a canned response.
     struct MockCertService {
@@ -638,7 +634,7 @@ mod tests {
 
     #[test]
     fn ensure_local_membership_vc_saves_and_surfaces_saved_vc() {
-        let _guard = TEST_ENV_LOCK.lock().expect("test env lock");
+        let _guard = crate::test_support::env_lock();
         let temp = TempDir::new().expect("tempdir");
         let previous = std::env::var_os(crate::vc::persistence::VC_BASE_ENV);
         std::env::set_var(crate::vc::persistence::VC_BASE_ENV, temp.path());
@@ -753,7 +749,7 @@ mod tests {
 
     #[test]
     fn membership_vc_rejects_empty_or_malformed_payload_without_local_state() {
-        let _guard = TEST_ENV_LOCK.lock().expect("test env lock");
+        let _guard = crate::test_support::env_lock();
         let temp = TempDir::new().expect("tempdir");
         let previous = std::env::var_os(crate::vc::persistence::VC_BASE_ENV);
         std::env::set_var(crate::vc::persistence::VC_BASE_ENV, temp.path());
@@ -904,7 +900,7 @@ mod tests {
 
     #[tokio::test]
     async fn request_certificate_from_ca_completes_approved_flow_without_privileged_writes() {
-        let _guard = TEST_ENV_LOCK.lock().expect("test env lock");
+        let _guard = crate::test_support::env_lock();
         let temp = TempDir::new().expect("tempdir");
         let previous = std::env::var_os(crate::vc::persistence::VC_BASE_ENV);
         std::env::set_var(crate::vc::persistence::VC_BASE_ENV, temp.path());
@@ -980,7 +976,7 @@ mod tests {
 
     #[test]
     fn resolve_nodea_ip_for_bootstrap_prefers_env_var_over_config_files() {
-        let _guard = TEST_ENV_LOCK.lock().expect("test env lock");
+        let _guard = crate::test_support::env_lock();
 
         // The config-file fallback reads hardcoded, unoverridable system
         // paths. Only assert the fallback-to-None behavior when those paths
@@ -1018,7 +1014,7 @@ mod tests {
 
     #[test]
     fn ensure_local_membership_vc_returns_none_when_payload_empty_but_local_vc_present() {
-        let _guard = TEST_ENV_LOCK.lock().expect("test env lock");
+        let _guard = crate::test_support::env_lock();
         let temp = TempDir::new().expect("tempdir");
         let previous = std::env::var_os(crate::vc::persistence::VC_BASE_ENV);
         std::env::set_var(crate::vc::persistence::VC_BASE_ENV, temp.path());

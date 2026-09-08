@@ -871,7 +871,6 @@ mod tests {
     use std::ffi::OsString;
     use tempfile::TempDir;
 
-    use crate::test_utils::TEST_ENV_LOCK;
 
     struct EnvGuard {
         nebula_prev: Option<OsString>,
@@ -1006,7 +1005,7 @@ relay:
 
     #[tokio::test]
     async fn relay_list_route_filters_only_relay_only_nodes_and_resolves_runtime_fields() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let config_dir = tmp.path().join("config");
         fs::create_dir_all(&config_dir).expect("config dir");
@@ -1036,7 +1035,7 @@ relay:
 
     #[tokio::test]
     async fn lighthouse_list_route_filters_only_lighthouse_only_nodes() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
 
         seed_role_registry_runtime_and_stats(&tmp);
@@ -1059,7 +1058,7 @@ relay:
 
     #[tokio::test]
     async fn member_list_route_filters_only_members() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
 
         seed_role_registry_runtime_and_stats(&tmp);
@@ -1081,7 +1080,7 @@ relay:
 
     #[tokio::test]
     async fn relay_lighthouse_list_route_filters_only_dual_role_nodes() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let config_dir = tmp.path().join("config");
         fs::create_dir_all(&config_dir).expect("config dir");
@@ -1107,7 +1106,7 @@ relay:
 
     #[tokio::test]
     async fn role_list_routes_return_empty_when_lighthouse_registry_is_missing() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let nebula_dir = tmp.path().join("nebula");
         fs::create_dir_all(&nebula_dir).expect("nebula dir");
@@ -1132,7 +1131,7 @@ relay:
 
     #[tokio::test]
     async fn relay_limits_route_updates_runtime_registry_only() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         seed_role_registry_runtime_and_stats(&tmp);
         let _env = EnvGuard::new(&tmp.path().join("nebula").to_string_lossy());
@@ -1160,7 +1159,7 @@ relay:
 
     #[tokio::test]
     async fn relay_toggle_route_enable_disable_enable_keeps_single_entry() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let nebula_dir = tmp.path().join("nebula");
         let config_dir = tmp.path().join("config");
@@ -1285,7 +1284,7 @@ relay:
 
     #[tokio::test]
     async fn lighthouse_toggle_route_enable_disable_preserves_single_entry_and_relay_role() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let nebula_dir = tmp.path().join("nebula");
         let config_dir = tmp.path().join("config");
@@ -1385,7 +1384,7 @@ relay:
 
     #[tokio::test]
     async fn lighthouse_toggle_route_upserts_missing_node_from_overlay_and_yaml() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let nebula_dir = tmp.path().join("nebula");
         let config_dir = tmp.path().join("config");
@@ -1449,7 +1448,7 @@ relay:
 
     #[tokio::test]
     async fn relay_toggle_route_rejects_missing_enabled_field() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let nebula_dir = tmp.path().join("nebula");
         let config_dir = tmp.path().join("config");

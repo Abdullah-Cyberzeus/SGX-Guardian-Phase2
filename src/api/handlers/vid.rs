@@ -152,6 +152,8 @@ mod tests {
 
     #[tokio::test]
     async fn show_reports_an_error_when_no_runtime_virtual_id_exists() {
+        // `RUNTIME_VID_STATE_DIR_ENV` is redirected by `circle::tests` too.
+        let _lock = crate::test_support::async_env_lock().await;
         let temp = TempDir::new().expect("tempdir");
         let state = test_state(temp.path());
         let previous = std::env::var_os(crate::virtual_id::RUNTIME_VID_STATE_DIR_ENV);

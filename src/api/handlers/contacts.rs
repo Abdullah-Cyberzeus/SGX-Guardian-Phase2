@@ -392,11 +392,13 @@ mod tests {
         )
         .await
         .expect("seed admin contact");
-        let member_owner_did =
-            crate::api::handlers::browser_member::did_for_registration("member1");
+        // Seed the member's entry under the very key the handler scopes by, so
+        // this stays a test about isolation rather than about key derivation.
+        let member_session = as_member("member1", vec![]);
+        let member_owner = contact_owner(&member_session);
         store::create(
             &contacts_path(&state),
-            Some(member_owner_did.as_str()),
+            member_owner.as_deref(),
             ContactDraft {
                 did: "did:guardian:member-contact".to_string(),
                 name: None,
@@ -411,7 +413,6 @@ mod tests {
         assert_eq!(admin_view.total, 1);
         assert_eq!(admin_view.contacts[0].did, "did:guardian:admin-contact");
 
-        let member_session = as_member("member1", vec![]);
         let Json(member_view) = list(State(state.clone()), member_session)
             .await
             .expect("member list");

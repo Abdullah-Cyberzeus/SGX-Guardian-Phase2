@@ -454,8 +454,13 @@ mod tests {
     use crate::rules::model::RuleDraft;
     use crate::rules::persistence::RulesPaths;
 
-    /// Serializes tests that mutate the process-wide `SGX_PA_CLI_PATH` env var.
-    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    /// Serializes tests that mutate the process-wide `SGX_PA_CLI_PATH` env
+    /// var. Routed through the crate-wide lock because `api::handlers::dkp`,
+    /// `api::handlers::threat` and `api::handlers::discovery` redirect the same
+    /// variable — a lock private to this module excluded none of them.
+    fn env_guard() -> crate::test_support::EnvLockGuard {
+        crate::test_support::env_lock()
+    }
 
     fn test_config(base: &std::path::Path) -> RulesConfig {
         RulesConfig {
@@ -568,7 +573,7 @@ mod tests {
 
     #[test]
     fn resolve_pa_cli_path_prefers_env_override_when_file_exists() {
-        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = env_guard();
         let dir = tempfile::tempdir().unwrap();
         let fake_cli = dir.path().join("sgx-pa-cli");
         make_executable(&fake_cli, "#!/bin/sh\nexit 0\n");
@@ -582,7 +587,7 @@ mod tests {
 
     #[test]
     fn resolve_pa_cli_path_ignores_override_pointing_to_missing_file() {
-        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = env_guard();
         std::env::set_var(
             "SGX_PA_CLI_PATH",
             "/nonexistent/path/sgx-pa-cli-does-not-exist",
@@ -728,7 +733,7 @@ mod tests {
 
     #[tokio::test]
     async fn emergency_key_rotation_reports_executed_on_success() {
-        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = env_guard();
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("sgx-pa-cli");
         make_executable(&script, "#!/bin/sh\necho rotated\nexit 0\n");
@@ -743,7 +748,7 @@ mod tests {
 
     #[tokio::test]
     async fn emergency_key_rotation_reports_failed_on_nonzero_exit() {
-        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = env_guard();
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("sgx-pa-cli");
         make_executable(&script, "#!/bin/sh\necho boom 1>&2\nexit 1\n");
@@ -758,7 +763,7 @@ mod tests {
 
     #[tokio::test]
     async fn emergency_key_rotation_reports_failed_when_cli_not_found() {
-        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = env_guard();
         std::env::remove_var("SGX_PA_CLI_PATH");
         // This assumes the sandbox has no real `sgx-pa-cli` on PATH or in the
         // hardcoded fallback directories, which holds for standard dev/CI images.
@@ -769,7 +774,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_action_dispatches_every_variant_via_safe_paths() {
-        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = env_guard();
         std::env::remove_var("SGX_PA_CLI_PATH");
 
         let dir = tempfile::tempdir().unwrap();

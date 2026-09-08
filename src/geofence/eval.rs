@@ -314,14 +314,12 @@ mod tests {
     struct EnvGuard {
         key: &'static str,
         original: Option<String>,
-        _lock: std::sync::MutexGuard<'static, ()>,
+        _lock: crate::test_support::EnvLockGuard,
     }
 
     impl EnvGuard {
         fn set(key: &'static str, value: &str) -> Self {
-            let lock = persistence::TEST_ENV_LOCK
-                .lock()
-                .expect("env lock poisoned");
+            let lock = crate::test_support::env_lock();
             let original = std::env::var(key).ok();
             std::env::set_var(key, value);
             Self {

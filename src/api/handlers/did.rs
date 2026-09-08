@@ -322,6 +322,14 @@ pub async fn document_publish(
         }
     }
     let req: PublishDocumentRequest = parse_required_json_body(&body)?;
+    // Validate the caller's own input before consulting discovery. Resolving
+    // the CA first made a blank `node_name` surface as "CA host is
+    // unavailable", which sent callers looking at their network instead of at
+    // the field they left empty.
+    let node_name = match req.node_name.as_deref() {
+        Some(value) => required_nonempty_field(value, "node_name")?,
+        None => state.node_id.clone(),
+    };
     let detected_ca = resolved_ca_host(&state.node_id).ok_or_else(|| {
         ApiError::BadRequest(
             "CA host is unavailable; wait for nodeA discovery/config sync or set SGX_CA_HOST"
@@ -335,10 +343,6 @@ pub async fn document_publish(
     // compatibility, but always use the value detected at request time.
     let _requested_ca_host = req.ca_host;
     let ca_host = detected_ca;
-    let node_name = match req.node_name.as_deref() {
-        Some(value) => required_nonempty_field(value, "node_name")?,
-        None => state.node_id.clone(),
-    };
     let doc = load_self_document()?;
     let floor_version = known_floor_version(&doc);
     doc_sign::verify_with_replay_protection(&doc, floor_version)
@@ -697,7 +701,6 @@ mod tests {
     use base64::engine::general_purpose;
     use std::ffi::OsString;
 
-    use crate::test_utils::TEST_ENV_LOCK;
 
     struct EnvGuard {
         did_prev: Option<OsString>,
@@ -765,7 +768,7 @@ mod tests {
 
     #[tokio::test]
     async fn did_status_route_returns_expected_fields() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let did_path = tmp.path().join("identity").join("did.json");
         let dkp_path = tmp.path().join("keys").join("dkp_pub.der");
@@ -780,7 +783,7 @@ mod tests {
 
     #[tokio::test]
     async fn did_resolve_marks_deactivated_record() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let did_path = tmp.path().join("identity").join("did.json");
         let dkp_path = tmp.path().join("keys").join("dkp_pub.der");
@@ -804,7 +807,7 @@ mod tests {
 
     #[tokio::test]
     async fn did_deactivate_requires_confirm_true() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let did_path = tmp.path().join("identity").join("did.json");
         let dkp_path = tmp.path().join("keys").join("dkp_pub.der");
@@ -827,7 +830,7 @@ mod tests {
 
     #[tokio::test]
     async fn did_deactivate_returns_restart_required() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let did_path = tmp.path().join("identity").join("did.json");
         let dkp_path = tmp.path().join("keys").join("dkp_pub.der");
@@ -881,7 +884,7 @@ mod tests {
 
     #[tokio::test]
     async fn deactivate_requires_explicit_confirmation() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let _env = EnvGuard::new(
             dir.path().join("did.json").to_str().expect("did path"),
@@ -907,7 +910,7 @@ mod tests {
 
     #[tokio::test]
     async fn deactivate_reports_a_missing_did_record() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let did_path = dir.path().join("did.json");
         let _env = EnvGuard::new(
@@ -937,7 +940,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_rejects_a_blank_did_query_parameter() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let _docs = DocEnvGuard::new(dir.path());
         let state = test_app_state(dir.path());
@@ -1019,7 +1022,7 @@ mod tests {
 
     #[tokio::test]
     async fn document_publish_validates_its_body_before_touching_the_ca() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let _docs = DocEnvGuard::new(dir.path());
         let state = test_app_state(dir.path());
@@ -1040,35 +1043,46 @@ mod tests {
             "{error:?}"
         );
 
-        // Blank required fields, then a CA host that is not the configured one.
-        for (label, body, expected) in [
-            (
-                "blank ca_host",
-                serde_json::json!({"ca_host": "  ", "node_name": "nodeA"}),
-                "ca_host is required",
+        // A blank node_name is rejected before any document or CA work.
+        let error = document_publish(
+            State(state.clone()),
+            axum::http::HeaderMap::new(),
+            Bytes::from(
+                serde_json::to_vec(
+                    &serde_json::json!({"ca_host": "192.168.50.101", "node_name": " "}),
+                )
+                .expect("serialize"),
             ),
-            (
-                "blank node_name",
-                serde_json::json!({"ca_host": "192.168.50.101", "node_name": " "}),
-                "node_name is required",
-            ),
-            (
-                "wrong ca_host",
-                serde_json::json!({"ca_host": "10.0.0.9", "node_name": "nodeA"}),
-                "ca_host must be 192.168.50.101",
-            ),
-        ] {
+        )
+        .await
+        .err()
+        .expect("a blank node_name must be rejected");
+        assert!(
+            matches!(&error, ApiError::BadRequest(message) if message.contains("node_name is required")),
+            "{error:?}"
+        );
+
+        // `ca_host` is kept only for wire compatibility — the server resolves
+        // CA routing itself — so neither a blank nor a mismatched value may be
+        // rejected on its own account. Each must fall through to the
+        // self-document lookup instead.
+        for (label, ca_host) in [("blank ca_host", "  "), ("mismatched ca_host", "10.0.0.9")] {
             let error = document_publish(
                 State(state.clone()),
                 axum::http::HeaderMap::new(),
-                Bytes::from(serde_json::to_vec(&body).expect("serialize")),
+                Bytes::from(
+                    serde_json::to_vec(
+                        &serde_json::json!({"ca_host": ca_host, "node_name": "nodeA"}),
+                    )
+                    .expect("serialize"),
+                ),
             )
             .await
             .err()
-            .unwrap_or_else(|| panic!("{label} must be rejected"));
+            .unwrap_or_else(|| panic!("{label} still has no self document to publish"));
             assert!(
-                matches!(&error, ApiError::BadRequest(message) if message.contains(expected)),
-                "{label}: {error:?}"
+                matches!(&error, ApiError::NotFound(_)),
+                "{label} must not be rejected for its ca_host: {error:?}"
             );
         }
 
@@ -1094,7 +1108,7 @@ mod tests {
 
     #[tokio::test]
     async fn document_verify_reports_an_unsigned_document_as_invalid() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let _docs = DocEnvGuard::new(dir.path());
         let state = test_app_state(dir.path());
@@ -1131,7 +1145,7 @@ mod tests {
 
     #[tokio::test]
     async fn document_peers_lists_only_documents_that_verify() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let _docs = DocEnvGuard::new(dir.path());
         let state = test_app_state(dir.path());
@@ -1166,7 +1180,7 @@ mod tests {
 
     #[tokio::test]
     async fn document_peer_requires_a_did_and_reports_unknown_peers() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let _docs = DocEnvGuard::new(dir.path());
         let state = test_app_state(dir.path());
@@ -1502,7 +1516,7 @@ mod tests {
 
     #[tokio::test]
     async fn verify_request_path_defaults_to_the_configured_self_document() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
         let resolved = verify_request_path(None).expect("default path");
         assert_eq!(resolved, doc_persistence::configured_self_doc_path());
     }
@@ -1511,7 +1525,7 @@ mod tests {
     /// the configured DID document directories.
     #[tokio::test]
     async fn verify_request_path_rejects_blank_missing_and_out_of_tree_paths() {
-        let _lock = TEST_ENV_LOCK.lock().await;
+        let _lock = crate::test_support::env_lock();
 
         assert!(matches!(
             verify_request_path(Some("   ".to_string())),

@@ -308,6 +308,9 @@ mod tests {
 
     #[tokio::test]
     async fn status_reports_an_idle_journal_for_a_fresh_backup_root() {
+        // `BACKUP_BASE_ENV` is process-global and `api::tests` redirects it too,
+        // so this redirect has to be exclusive for as long as it is in effect.
+        let _lock = crate::test_support::async_env_lock().await;
         let temp = TempDir::new().expect("tempdir");
         let state = test_state(temp.path());
         let previous = std::env::var_os(crate::backup::BACKUP_BASE_ENV);
