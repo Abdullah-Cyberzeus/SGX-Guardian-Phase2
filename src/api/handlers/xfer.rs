@@ -2,14 +2,14 @@ use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::error::ApiError;
 use crate::api::idempotency;
 use crate::api::state::AppState;
-use crate::vault::namespace::validate_vault_id;
 use crate::vault::VaultConfig;
+use crate::vault::namespace::validate_vault_id;
 use crate::xfer::errors::XferError;
 use crate::xfer::store::{self, LocalTransferRecord, ReceiverState, SenderProgress};
 use axum::{
+    Extension, Json,
     extract::{Path, State},
     http::HeaderMap,
-    Extension, Json,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -230,7 +230,7 @@ pub async fn send(
         (Some(_), Some(_)) | (None, None) => {
             return Err(ApiError::BadRequest(
                 "exactly one of path or vault_id must be provided".to_string(),
-            ))
+            ));
         }
     };
     let response = SendResponse {

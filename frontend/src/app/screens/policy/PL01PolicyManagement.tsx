@@ -612,6 +612,7 @@ export function PL01PolicyManagement() {
   const [keyStatus, setKeyStatus] = useState<{ exists: boolean; privateKeyExists: boolean; publicKeyExists: boolean; privateKeyPath: string; publicKeyPath: string; provider: string; algorithm: string; fingerprint?: string } | null>(null);
   const [keyLoading, setKeyLoading] = useState(false);
   const [isGeneratingKey, setIsGeneratingKey] = useState(false);
+  const hasUsablePaKeypair = Boolean(keyStatus?.exists && keyStatus.privateKeyExists && keyStatus.publicKeyExists && keyStatus.fingerprint);
 
   const loadKeyStatus = async () => {
     setKeyLoading(true);
@@ -1589,13 +1590,13 @@ export function PL01PolicyManagement() {
                   <Key size={16} style={{ color: "var(--primary)" }} />
                   <div className="flex-1">
                     <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", color: "var(--foreground)" }}>
-                      {keyStatus?.fingerprint ? `guardian_policy_key` : keyLoading ? "Loading…" : "guardian_policy_key"}
+                      {hasUsablePaKeypair ? "pa_admin" : keyLoading ? "Loading…" : "No usable PA keypair"}
                     </p>
                     <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
-                      {keyStatus?.algorithm ?? "ECDSA-P256"}
+                      {keyStatus?.algorithm ?? (keyLoading ? "Loading…" : "Not available")}
                     </p>
                   </div>
-                  <CheckCircle2 size={16} style={{ color: "var(--chart-2)" }} />
+                  {hasUsablePaKeypair && <CheckCircle2 size={16} style={{ color: "var(--chart-2)" }} />}
                 </div>
               </div>
 
@@ -1636,18 +1637,20 @@ export function PL01PolicyManagement() {
                 <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em" }}>
                   Policy Authority Key
                 </p>
-                <span
-                  className="px-2 py-1 rounded"
-                  style={{
-                    backgroundColor: "color-mix(in srgb, var(--chart-2) 15%, transparent)",
-                    fontFamily: "Inter, sans-serif",
-                    fontSize: "var(--text-xs)",
-                    fontWeight: "var(--font-weight-medium)",
-                    color: "var(--chart-2)",
-                  }}
-                >
-                  Active
-                </span>
+                {hasUsablePaKeypair && (
+                  <span
+                    className="px-2 py-1 rounded"
+                    style={{
+                      backgroundColor: "color-mix(in srgb, var(--chart-2) 15%, transparent)",
+                      fontFamily: "Inter, sans-serif",
+                      fontSize: "var(--text-xs)",
+                      fontWeight: "var(--font-weight-medium)",
+                      color: "var(--chart-2)",
+                    }}
+                  >
+                    Active
+                  </span>
+                )}
               </div>
 
               <div className="flex items-center gap-3 mb-4">
@@ -1659,20 +1662,20 @@ export function PL01PolicyManagement() {
                 </div>
                 <div>
                   <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
-                    guardian_primary
+                    {hasUsablePaKeypair ? "pa_admin" : keyLoading ? "Loading…" : "No usable PA keypair"}
                   </p>
                   <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
-                    {keyStatus?.algorithm ?? "ECDSA-P256"}
+                    {keyStatus?.algorithm ?? (keyLoading ? "Loading…" : "Not available")}
                   </p>
                 </div>
               </div>
 
               <div className="rounded-lg border overflow-hidden" style={{ backgroundColor: "var(--background)", borderColor: "var(--border)" }}>
                 {[
-                  { label: "Public Key", value: keyStatus?.publicKeyPath ?? "Loading…" },
+                  { label: "Public Key", value: keyStatus?.publicKeyExists ? keyStatus.publicKeyPath : keyLoading ? "Loading…" : "Not found" },
                   { label: "Private Key", value: keyStatus ? (keyStatus.privateKeyExists ? "Available (mode 0600)" : "Not found") : "Loading…" },
-                  { label: "Provider", value: keyStatus?.provider ?? "software" },
-                  { label: "Fingerprint", value: keyStatus?.fingerprint ?? (keyLoading ? "Loading…" : "Unknown") },
+                  { label: "Provider", value: keyStatus?.provider ?? (keyLoading ? "Loading…" : "Not available") },
+                  { label: "Fingerprint", value: keyStatus?.fingerprint ?? (keyLoading ? "Loading…" : "Not available") },
                 ].map(({ label, value }, i, arr) => (
                   <div
                     key={label}

@@ -1910,7 +1910,14 @@ export function SC05CRLStatus() {
   const [verifyResult, setVerifyResult] = useState<CrlVerifyResponse | null>(null);
   const [verifyCheckedAt, setVerifyCheckedAt] = useState<string | null>(null);
   const [verifyRaw, setVerifyRaw] = useState<CrlVerifyResponse | null>(null);
-  const [verifyStale, setVerifyStale] = useState(false);
+  const verifyStale = Boolean(
+    root &&
+    verifyResult &&
+    (
+      verifyResult.sequence !== root.sequence ||
+      verifyResult.merkle_root !== root.merkle_root
+    )
+  );
   const [verifying, setVerifying] = useState(false);
 
   const [didInput, setDidInput] = useState("");
@@ -2045,7 +2052,12 @@ export function SC05CRLStatus() {
       setVerifyResult(result);
       setVerifyRaw(result);
       setVerifyCheckedAt(new Date().toISOString());
-      setVerifyStale(false);
+      setRoot((previous) => result.sequence !== undefined && result.merkle_root
+        ? { sequence: result.sequence, merkle_root: result.merkle_root }
+        : previous);
+      setRootRaw((previous) => result.sequence !== undefined && result.merkle_root
+        ? { sequence: result.sequence, merkle_root: result.merkle_root }
+        : previous);
       if (result.ok) {
         toast.success("CRL verified");
       } else {
@@ -2054,8 +2066,8 @@ export function SC05CRLStatus() {
     } catch (err) {
       const message = errorMessage(err);
       toast.error("CRL verification failed", { description: message });
-      setVerifyResult({ ok: false, errors: [message] });
-      setVerifyRaw({ ok: false, errors: [message] });
+      setVerifyResult({ ok: false, errors: [message], sequence: root?.sequence, merkle_root: root?.merkle_root });
+      setVerifyRaw({ ok: false, errors: [message], sequence: root?.sequence, merkle_root: root?.merkle_root });
       setVerifyCheckedAt(new Date().toISOString());
     } finally {
       setVerifying(false);
@@ -2127,7 +2139,6 @@ export function SC05CRLStatus() {
   }
 
   async function afterMutation(entry?: CrlEntry) {
-    setVerifyStale(true);
     await loadCrl(false);
     if (entry) setSelectedEntry(entry);
   }

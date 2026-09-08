@@ -6,14 +6,14 @@ use crate::audit::logger::log_audit;
 use crate::vault::downloads::{self, DownloadRecord};
 use crate::vault::errors::VaultError;
 use crate::vault::folders::{self, FolderIndex, FolderNode};
-use crate::vault::namespace::{validate_folder_id, validate_vault_id, VaultNamespace};
+use crate::vault::namespace::{VaultNamespace, validate_folder_id, validate_vault_id};
 use crate::vault::{
-    download_path, ingest, persistence, quota as vault_quota, upload, VaultConfig, VaultRecord,
-    VaultSource,
+    VaultConfig, VaultRecord, VaultSource, download_path, ingest, persistence,
+    quota as vault_quota, upload,
 };
 use axum::body::{Body, Bytes};
 use axum::extract::{Multipart, Path, Query, State};
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use futures_core::Stream;

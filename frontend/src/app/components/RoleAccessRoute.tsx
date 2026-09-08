@@ -16,6 +16,10 @@ export function RoleAccessRoute() {
 
   if (isAdminRole(role)) return <Outlet />;
   if (isMemberRole(role)) {
+    const hasCircleAccess = (session?.circleIds.length || 0) > 0;
+    if (!hasCircleAccess && location.pathname !== "/join-circle") {
+      return <Navigate to="/join-circle" replace />;
+    }
     return memberCanOpenPath(location.pathname)
       ? <Outlet />
       : (

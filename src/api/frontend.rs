@@ -6,7 +6,7 @@
 use axum::response::Redirect;
 use axum::{
     body::Body,
-    http::{header, StatusCode, Uri},
+    http::{StatusCode, Uri, header},
     response::{IntoResponse, Response},
 };
 
@@ -81,9 +81,10 @@ mod tests {
                 "text/html; charset=utf-8"
             );
             let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-            assert!(body
-                .windows(b"<div id=\"root\">".len())
-                .any(|window| { window == b"<div id=\"root\">" }));
+            assert!(
+                body.windows(b"<div id=\"root\">".len())
+                    .any(|window| { window == b"<div id=\"root\">" })
+            );
         }
     }
 

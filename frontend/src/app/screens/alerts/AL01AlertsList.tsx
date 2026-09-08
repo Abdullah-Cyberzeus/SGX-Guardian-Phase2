@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import {
-  Clock, ChevronRight, ChevronDown, Trash2, Search, Shield, Archive,
+  Clock, ChevronLeft, ChevronRight, ChevronDown, Trash2, Search, Shield, Archive,
   CheckSquare, Square, X, AlertTriangle, Brain, Loader2, Network,
 } from "lucide-react";
-import { mockAlerts } from "../../data/mockData";
 import { useAlerts, useThreatStatus } from "../../hooks/useApiData";
 import type { ThreatStatus } from "../../services/threatService";
 import { ApiError } from "../../services/api";
 import { advisoryService, type AdvisoryRules, type RemediationRecommendation } from "../../services/advisoryService";
 import { managedDeviceService, type ManagedDevice } from "../../services/managedDeviceService";
-import { guardianAlertHeading, type Alert } from "../../services/alertService";
+import { alertService, guardianAlertHeading, type Alert } from "../../services/alertService";
 import { guardianDisplayText } from "../../utils/displayText";
 import { ThreatProtectionPanel } from "./AL08ThreatProtection";
 import { AL09LiveAttackTopology } from "./AL09LiveAttackTopology";
@@ -22,7 +21,7 @@ import { toast } from "sonner";
 type Mode = "active" | "archived" | "bulk";
 type SeverityFilter = "ALL" | "HIGH" | "MEDIUM" | "LOW";
 type StatusFilter = "ALL" | "Active" | "Acknowledged" | "Blocked" | "Quarantine";
-type AlertView = Alert & Partial<typeof mockAlerts[number]>;
+type AlertView = Alert;
 type RecommendationState =
   | { status: "idle" | "loading" }
   | { status: "available" | "fallback"; recommendation: RemediationRecommendation; rules?: AdvisoryRules | null }
@@ -100,7 +99,7 @@ function RecommendationCard({ state }: { state: RecommendationState }) {
       <div className="rounded-lg border p-4" style={{ backgroundColor: "var(--card)", borderColor: state.status === "unauthorized" ? "color-mix(in srgb, var(--chart-5) 28%, var(--border))" : "var(--border)" }}>
         <div className="flex items-center gap-2 mb-2">
           <Brain size={14} style={{ color: "var(--primary)" }} />
-          <span style={sectionLabel}>AI-READY REMEDIATION ADVISORY</span>
+          <span style={sectionLabel}>REMEDIATION ADVISORY</span>
         </div>
         <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{title}</p>
         <p className="mt-1" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.6 }}>{message}</p>
@@ -119,7 +118,7 @@ function RecommendationCard({ state }: { state: RecommendationState }) {
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2">
           <Brain size={14} style={{ color: "var(--primary)" }} />
-          <span style={sectionLabel}>AI REMEDIATION RECOMMENDATION</span>
+          <span style={sectionLabel}>REMEDIATION RECOMMENDATION</span>
         </div>
         <span className="rounded-full px-2 py-0.5" style={{ backgroundColor: isFallback ? "color-mix(in srgb, var(--chart-5) 13%, transparent)" : "color-mix(in srgb, var(--primary) 13%, transparent)", border: `1px solid ${isFallback ? "color-mix(in srgb, var(--chart-5) 25%, transparent)" : "color-mix(in srgb, var(--primary) 25%, transparent)"}`, color: isFallback ? "var(--chart-5)" : "var(--primary)", fontFamily: "Inter, sans-serif", fontSize: "10px", fontWeight: "var(--font-weight-semibold)" }}>
           {rec.source || "fallback"}
@@ -410,6 +409,8 @@ function AlertListPanel({
   toggleSelect, search, setSearch, severityFilter, setSeverityFilter,
   statusFilter, setStatusFilter, activeFilters, onSelectAlert, selectedAlertId, isPanel, alerts,
   threatStatus,
+  onArchive,
+  onDelete,
 }: {
   mode: Mode;
   setMode: (m: Mode) => void;
@@ -431,8 +432,24 @@ function AlertListPanel({
   isPanel?: boolean;
   alerts: AlertView[];
   threatStatus?: ThreatStatus | null;
+  onArchive: (alert: AlertView) => Promise<void>;
+  onDelete: (ids: string[]) => Promise<void>;
 }) {
   const navigate = useNavigate();
+  const pageSize = 10;
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = filtered.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const pageEnd = Math.min(filtered.length, currentPage * pageSize);
+  const pageAlerts = useMemo(
+    () => filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [currentPage, filtered],
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [mode, search, severityFilter, statusFilter]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -450,17 +467,15 @@ function AlertListPanel({
           together, so the alert list keeps full height on short viewports. */}
       <div className="flex-1 overflow-y-auto flex flex-col">
 
-      {/* AI Threat Intelligence */}
+      {/* Threat Intelligence */}
       <div className={`border-b border-border flex-shrink-0 ${isPanel ? "px-5 py-4" : "px-4 py-4"}`} style={{ backgroundColor: "var(--card)" }}>
         <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "10px" }}>
-          AI Threat Intelligence
+          Threat Intelligence
         </p>
         <div className="grid grid-cols-2 gap-2">
           {[
-            { label: "Threat Score", value: "34", color: "var(--destructive)", note: "Critical" },
-            { label: "IDS Alerts", value: threatStatus ? String(threatStatus.alert_count) : "12", color: "var(--destructive)", note: threatStatus ? "Guardian" : "+4 from yesterday" },
-            { label: "Blocked", value: threatStatus ? String(threatStatus.block_count) : "47", color: "var(--chart-2)", note: threatStatus ? "Active blocks" : "Auto-blocked" },
-            { label: "Quarantined", value: "3", color: "var(--chart-4)", note: "Pending review" },
+            { label: "IDS Alerts", value: String(alerts.length), color: "var(--destructive)", note: "Recorded events" },
+            { label: "Blocked", value: threatStatus ? String(threatStatus.block_count) : "—", color: "var(--chart-2)", note: "Active blocks" },
           ].map(({ label, value, color, note }) => (
             <div key={label} className="rounded-lg p-3" style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)", borderRadius: "var(--radius)" }}>
               <span style={{ fontFamily: "Inter, sans-serif", fontSize: "22px", fontWeight: 700, color, lineHeight: 1, display: "block", marginBottom: "2px" }}>{value}</span>
@@ -540,7 +555,10 @@ function AlertListPanel({
             <span key={f} className="flex items-center gap-1 px-2 py-1 rounded-full"
               style={{ backgroundColor: "color-mix(in srgb, var(--primary) 12%, transparent)", color: "var(--primary)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", border: "1px solid color-mix(in srgb, var(--primary) 25%, transparent)" }}>
               {f}
-              <button onClick={() => { if (f === severityFilter) setSeverityFilter("ALL"); else setStatusFilter("ALL"); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, lineHeight: 0 }}>
+              <button onClick={() => {
+                if (["HIGH", "MEDIUM", "LOW"].includes(f)) setSeverityFilter("ALL");
+                else setStatusFilter("ALL");
+              }} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, lineHeight: 0 }}>
                 <X size={11} style={{ color: "var(--primary)" }} />
               </button>
             </span>
@@ -569,7 +587,7 @@ function AlertListPanel({
             : <EmptyState icon={Shield} heading="Your network looks clean" subtext="No active security events detected." />
         ) : (
           <div className="pb-4">
-            {filtered.map((alert) => {
+            {pageAlerts.map((alert) => {
               const isExpanded = expandedId === alert.id;
               const isSelected = selectedIds.has(alert.id);
               const isHighlighted = selectedAlertId === alert.id;
@@ -614,8 +632,8 @@ function AlertListPanel({
                       </div>
                     </div>
                     {mode !== "bulk" && (
-                      <button onClick={(e) => { e.stopPropagation(); toast.success("Alert archived"); }} style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", flexShrink: 0 }}>
-                        <Trash2 size={15} style={{ color: "var(--muted-foreground)" }} />
+                      <button onClick={(e) => { e.stopPropagation(); void onArchive(alert); }} style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", flexShrink: 0 }}>
+                        <Archive size={15} style={{ color: "var(--muted-foreground)" }} />
                       </button>
                     )}
                   </div>
@@ -640,9 +658,9 @@ function AlertListPanel({
                           style={{ height: "38px", backgroundColor: "var(--primary)", color: "var(--primary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", borderRadius: "var(--radius)", border: "none", cursor: "pointer" }}>
                           View Full Details
                         </button>
-                        <button className="px-3 rounded-md transition-opacity active:opacity-80"
+                        <button onClick={() => void onArchive(alert)} className="px-3 rounded-md transition-opacity active:opacity-80"
                           style={{ height: "38px", backgroundColor: "var(--secondary)", color: "var(--secondary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)", border: "1px solid var(--border)", cursor: "pointer", borderRadius: "var(--radius)" }}>
-                          Archive
+                          {alert.archived ? "Restore" : "Archive"}
                         </button>
                       </div>
                     </div>
@@ -650,6 +668,36 @@ function AlertListPanel({
                 </div>
               );
             })}
+            {totalPages > 1 && (
+              <div className={`flex items-center justify-between gap-3 border-t border-border px-4 py-3 ${isPanel ? "px-5" : "px-4"}`} style={{ backgroundColor: "var(--card)" }}>
+                <p className="text-xs text-muted-foreground">
+                  Showing {pageStart}-{pageEnd} of {filtered.length}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPage((current) => Math.max(1, current - 1))}
+                    disabled={currentPage === 1}
+                    className="grid h-8 w-8 place-items-center rounded-full border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label="Previous alert page"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <span className="min-w-16 text-center text-xs text-muted-foreground">
+                    {currentPage} / {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                    disabled={currentPage === totalPages}
+                    className="grid h-8 w-8 place-items-center rounded-full border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label="Next alert page"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -661,12 +709,34 @@ function AlertListPanel({
         <div className="border-t border-border flex items-center gap-3 px-4 py-4 flex-shrink-0" style={{ backgroundColor: "var(--card)" }}>
           <button className="flex-1 flex items-center justify-center gap-2 rounded-md"
             style={{ height: "44px", backgroundColor: "var(--secondary)", color: "var(--secondary-foreground)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", border: "1px solid var(--border)", cursor: "pointer", borderRadius: "var(--radius)" }}
-            onClick={() => { if (selectedIds.size === 0) return; toast.success(`${selectedIds.size} alert${selectedIds.size > 1 ? "s" : ""} archived`); setSelectedIds(new Set()); setMode("active"); }}>
+            onClick={() => {
+              if (selectedIds.size === 0) return;
+              void (async () => {
+                try {
+                  await Promise.all(filtered.filter((alert) => selectedIds.has(alert.id)).map(onArchive));
+                  setSelectedIds(new Set());
+                  setMode("active");
+                } catch {
+                  // Each individual action already reports its server error.
+                }
+              })();
+            }}>
             <Archive size={15} /> Archive ({selectedIds.size})
           </button>
           <button className="flex-1 flex items-center justify-center gap-2 rounded-md"
             style={{ height: "44px", backgroundColor: "color-mix(in srgb, var(--destructive) 15%, transparent)", color: "var(--destructive)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", border: "1px solid color-mix(in srgb, var(--destructive) 30%, transparent)", cursor: "pointer", borderRadius: "var(--radius)" }}
-            onClick={() => { if (selectedIds.size === 0) return; toast.success(`${selectedIds.size} alert${selectedIds.size > 1 ? "s" : ""} deleted`); setSelectedIds(new Set()); setMode("active"); }}>
+            onClick={() => {
+              if (selectedIds.size === 0) return;
+              void (async () => {
+                try {
+                  await onDelete([...selectedIds]);
+                  setSelectedIds(new Set());
+                  setMode("active");
+                } catch {
+                  // deleteAlerts already reports its server error.
+                }
+              })();
+            }}>
             <Trash2 size={15} /> Delete ({selectedIds.size})
           </button>
         </div>
@@ -688,15 +758,12 @@ export function AL01AlertsList() {
   // Top-level view: alert list, live topology, and the Guardian Threat Protection panel.
   const [mainView, setMainView] = useState<"list" | "topology" | "threat">("list");
 
-  // Fetch alerts from API with fallback to mock data
-  const { data: alertsData, loading } = useAlerts();
+  const { data: alertsData, loading, refetch } = useAlerts();
   // Guardian IDS status feeds the intel card + the Threat Protection tab indicator.
   const { data: threatStatus } = useThreatStatus();
   const guardianActive = threatStatus?.suricata?.toLowerCase() === "active";
 
-  const alerts = useMemo(() => {
-    return (alertsData?.alerts ?? []) as AlertView[];
-  }, [alertsData]);
+  const alerts = useMemo(() => (alertsData?.alerts ?? []) as AlertView[], [alertsData]);
 
   const baseAlerts = useMemo(() => {
     return mode === "archived" ? alerts.filter((a: any) => a.archived) : alerts.filter((a: any) => !a.archived);
@@ -704,8 +771,9 @@ export function AL01AlertsList() {
 
   const filtered = useMemo(() => {
     return baseAlerts.filter((a: any) => {
+      const normalizedSeverity = String(a.severity ?? "").toUpperCase();
       const matchSearch = !search || a.title.toLowerCase().includes(search.toLowerCase()) || a.device.toLowerCase().includes(search.toLowerCase());
-      const matchSeverity = severityFilter === "ALL" || a.severity === severityFilter;
+      const matchSeverity = severityFilter === "ALL" || normalizedSeverity === severityFilter;
       const matchStatus = statusFilter === "ALL" || a.status === statusFilter
         || (statusFilter === "Quarantine" && a.status === "Blocked");
       return matchSearch && matchSeverity && matchStatus;
@@ -727,6 +795,33 @@ export function AL01AlertsList() {
     return selectedAlertId ? alerts.find((a: any) => a.id === selectedAlertId) : null;
   }, [selectedAlertId, alerts]);
 
+  const archiveAlert = async (alert: AlertView) => {
+    try {
+      if (alert.archived) {
+        await alertService.restore(alert.id);
+        toast.success("Alert restored to the active queue");
+      } else {
+        await alertService.archive(alert.id);
+        toast.success("Alert archived");
+      }
+      await refetch();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to update alert");
+      throw error;
+    }
+  };
+
+  const deleteAlerts = async (ids: string[]) => {
+    try {
+      await Promise.all(ids.map((id) => alertService.delete(id)));
+      toast.success(`${ids.length} alert${ids.length === 1 ? "" : "s"} deleted`);
+      await refetch();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to delete alerts");
+      throw error;
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full p-8">
@@ -740,6 +835,8 @@ export function AL01AlertsList() {
     toggleSelect, search, setSearch, severityFilter, setSeverityFilter,
     statusFilter, setStatusFilter, activeFilters, alerts,
     threatStatus,
+    onArchive: archiveAlert,
+    onDelete: deleteAlerts,
   };
 
   const MAIN_TABS: { key: "list" | "topology" | "threat"; label: string }[] = [
@@ -843,7 +940,7 @@ export function AL01AlertsList() {
               </div>
               <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-lg)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>Select an alert to view details</p>
               <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", maxWidth: "300px", lineHeight: 1.6 }}>
-                Click any alert from the list to see full AI analysis and take action inline — no navigation needed.
+                Click any alert from the list to see full analysis and take action inline.
               </p>
             </div>
           )}

@@ -493,8 +493,7 @@ function DigestRow({
 
 function PeerVidRow({ peer }: { peer: VidPeer }) {
   const [open, setOpen] = useState(false);
-  const { displayForDid } = useContactNames();
-  const peerLabel = displayForDid(peer.did, shortDid(peer.did));
+  const peerLabel = peer.nodeName?.trim() || "Unmapped Guardian";
   return (
     <div
       className="rounded-xl overflow-hidden"
@@ -516,11 +515,12 @@ function PeerVidRow({ peer }: { peer: VidPeer }) {
             <div
               className="truncate"
               style={{
-                fontFamily: "JetBrains Mono, monospace",
-                fontSize: "var(--text-xs)",
+                fontFamily: "Inter, sans-serif",
+                fontSize: "var(--text-sm)",
+                fontWeight: "var(--font-weight-semibold)",
                 color: "var(--foreground)",
               }}
-              title={peer.did}
+              title={peer.nodeName || "No DID registry node name is available"}
             >
               {peerLabel}
             </div>
@@ -530,8 +530,9 @@ function PeerVidRow({ peer }: { peer: VidPeer }) {
                 fontSize: "10px",
                 color: "var(--muted-foreground)",
               }}
+              title={peer.did}
             >
-              VID {shortHex(peer.virtualId, 10, 8)} · {fmtTime(peer.observedAt)}
+              DID {shortDid(peer.did)} · VID {shortHex(peer.virtualId, 10, 8)} · {fmtTime(peer.observedAt)}
             </div>
           </div>
         </div>
@@ -549,7 +550,8 @@ function PeerVidRow({ peer }: { peer: VidPeer }) {
           className="px-4 py-3 flex flex-col gap-2"
           style={{ borderTop: "1px solid var(--border)" }}
         >
-          <Field label="DID" value={displayForDid(peer.did, peer.did)} copyValue={peer.did} />
+          {peer.nodeName && <Field label="Guardian Node" value={peer.nodeName} />}
+          <Field label="DID" value={peer.did} mono copyValue={peer.did} />
           <Field
             label="Virtual ID"
             value={peer.virtualId}

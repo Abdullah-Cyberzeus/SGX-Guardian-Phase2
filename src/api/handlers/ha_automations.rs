@@ -1,8 +1,8 @@
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -28,7 +28,7 @@ pub async fn list_automations(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "AutomationEngine not initialized" })),
-            ))
+            ));
         }
     };
 
@@ -49,7 +49,7 @@ pub async fn create_automation(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "AutomationEngine not initialized" })),
-            ))
+            ));
         }
     };
 
@@ -82,7 +82,7 @@ pub async fn update_automation(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "AutomationEngine not initialized" })),
-            ))
+            ));
         }
     };
 
@@ -116,7 +116,7 @@ pub async fn delete_automation(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "AutomationEngine not initialized" })),
-            ))
+            ));
         }
     };
 
@@ -148,7 +148,7 @@ pub async fn enable_automation(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "AutomationEngine not initialized" })),
-            ))
+            ));
         }
     };
 
@@ -180,7 +180,7 @@ pub async fn disable_automation(
             return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({ "error": "AutomationEngine not initialized" })),
-            ))
+            ));
         }
     };
 

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use p256::ecdsa::Signature as P256Signature;
 
 // Some signing backends emit ASN.1 DER while our wire formats require fixed

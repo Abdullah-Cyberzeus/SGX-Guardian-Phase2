@@ -18,7 +18,6 @@ import {
   Check,
   X,
   LayoutList,
-  Braces,
   Trash2,
   History,
   CalendarClock,
@@ -53,6 +52,7 @@ import type {
   InventorySummary,
   OpenPort,
   RiskLevel,
+  ScheduleDay,
   ScheduleRun,
   ScheduleRunStatus,
   WhitelistDoc,
@@ -1268,7 +1268,7 @@ function WhitelistDetailDialog({
 
           {!hasFingerprint && (
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginTop: "12px" }}>
-              No expected fingerprint set. Edit this entry in the JSON view to add expected OS, ports, or IPs.
+              No expected fingerprint set for this entry.
             </p>
           )}
         </Dialog.Content>
@@ -1290,7 +1290,7 @@ function WhitelistTab({ inventoryDevices, data, loading, error, refetch, onSaved
   const [text, setText] = useState("");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [view, setView] = useState<"table" | "json">("table");
+  const [view, setView] = useState<"table">("table");
   const [detailMac, setDetailMac] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1369,66 +1369,50 @@ function WhitelistTab({ inventoryDevices, data, loading, error, refetch, onSaved
           </p>
           {loading && <Loader2 className="animate-spin" size={13} style={{ color: "var(--muted-foreground)" }} />}
         </div>
-        {/* View toggle: structured table vs raw JSON */}
         <div className="flex items-center gap-1 p-0.5 rounded-md" style={{ backgroundColor: "var(--muted)" }}>
-          {([["table", "Table", LayoutList], ["json", "JSON", Braces]] as const).map(([key, label, Icon]) => (
-            <button
-              key={key}
-              onClick={() => setView(key)}
-              className="flex items-center gap-1 px-2 py-1 rounded"
-              style={{
-                backgroundColor: view === key ? "var(--card)" : "transparent",
-                color: view === key ? "var(--foreground)" : "var(--muted-foreground)",
-                border: view === key ? "1px solid var(--border)" : "1px solid transparent",
-                cursor: "pointer",
-                fontFamily: "Inter, sans-serif",
-                fontSize: "var(--text-xs)",
-                fontWeight: "var(--font-weight-medium)",
-              }}
-            >
-              <Icon size={12} /> {label}
-            </button>
-          ))}
+          <button
+            type="button"
+            aria-pressed={view === "table"}
+            onClick={() => setView("table")}
+            className="flex items-center gap-1 px-2 py-1 rounded"
+            style={{
+              backgroundColor: "var(--card)",
+              color: "var(--foreground)",
+              border: "1px solid var(--border)",
+              cursor: "pointer",
+              fontFamily: "Inter, sans-serif",
+              fontSize: "var(--text-xs)",
+              fontWeight: "var(--font-weight-medium)",
+            }}
+          >
+            <LayoutList size={12} /> Table
+          </button>
         </div>
       </div>
 
       <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
-        {view === "table"
-          ? "Approved devices in the discovery whitelist. Remove an entry here, or edit full details in the JSON view."
-          : "Edit the whitelist document directly. Saving replaces the whitelist and refreshes matching inventory statuses."}
+        Approved devices in the discovery whitelist. Remove entries here to refresh matching inventory statuses.
       </p>
 
       {error && (
         <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--destructive)" }}>{guardianDisplayText(error.message)}</p>
       )}
 
-      {view === "json" ? (
-        <textarea
-          value={text}
-          onChange={(e) => {
-            setText(e.target.value);
-            setDirty(true);
-          }}
-          spellCheck={false}
-          rows={16}
-          className="w-full px-3 py-2 rounded-md"
-          style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)", color: "var(--foreground)", fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", lineHeight: 1.6, resize: "vertical" }}
-        />
-      ) : parseError ? (
+      {view === "table" && parseError ? (
         <div className="rounded-lg border p-4" style={{ backgroundColor: "var(--card)", borderColor: "color-mix(in srgb, var(--chart-4) 30%, var(--border))" }}>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--chart-4)" }}>
-            The whitelist JSON is currently invalid — switch to the JSON view to fix it.
+            The whitelist could not be displayed. Reload the current whitelist and try again.
           </p>
         </div>
-      ) : devices.length === 0 ? (
+      ) : view === "table" && devices.length === 0 ? (
         <div className="rounded-lg border p-6 text-center" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
           <ListChecks size={32} style={{ color: "var(--muted-foreground)", margin: "0 auto 12px" }} />
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)" }}>No whitelisted devices yet</p>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginTop: "4px" }}>
-            Approve a device from the Inventory tab, or add one in the JSON view.
+            Approve a device from the Inventory tab to add it here.
           </p>
         </div>
-      ) : (
+      ) : view === "table" ? (
         <div className="flex flex-col gap-2">
           {devices.map((d) => (
             <WhitelistEntryCard
@@ -1440,7 +1424,7 @@ function WhitelistTab({ inventoryDevices, data, loading, error, refetch, onSaved
             />
           ))}
         </div>
-      )}
+      ) : null}
 
       <div className="flex items-center justify-between">
         <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
@@ -1516,13 +1500,266 @@ const fieldStyle = {
   fontSize: "var(--text-sm)",
 } as const;
 
+const SCHEDULE_DAYS: { key: ScheduleDay; label: string; short: string }[] = [
+  { key: "monday", label: "Monday", short: "Mon" },
+  { key: "tuesday", label: "Tuesday", short: "Tue" },
+  { key: "wednesday", label: "Wednesday", short: "Wed" },
+  { key: "thursday", label: "Thursday", short: "Thu" },
+  { key: "friday", label: "Friday", short: "Fri" },
+  { key: "saturday", label: "Saturday", short: "Sat" },
+  { key: "sunday", label: "Sunday", short: "Sun" },
+];
+
+const SCHEDULE_FREQUENCIES: { key: ScanScheduleProfile["frequency"]; label: string }[] = [
+  { key: "once", label: "Once" },
+  { key: "daily", label: "Daily" },
+  { key: "weekly", label: "Weekly" },
+  { key: "monthly", label: "Monthly" },
+  { key: "yearly", label: "Yearly" },
+];
+
+const TIMEZONES: { key: string; label: string }[] = [
+  { key: "America/New_York", label: "Eastern Time" },
+  { key: "America/Chicago", label: "Central Time" },
+  { key: "America/Denver", label: "Mountain Time" },
+  { key: "America/Los_Angeles", label: "Pacific Time" },
+  { key: "UTC", label: "UTC" },
+];
+
+const DEFAULT_SCAN_DAYS: ScheduleDay[] = ["monday", "wednesday", "friday"];
+const EVERY_DAY: ScheduleDay[] = SCHEDULE_DAYS.map((day) => day.key);
+const DEFAULT_SCAN_TIME = "23:00";
+const DEFAULT_SCAN_TIMEZONE = "America/New_York";
+
+function makeScheduleId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `sched-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createDefaultScheduleTask(): ScanScheduleProfile {
+  return {
+    id: makeScheduleId(),
+    frequency: "weekly",
+    intensity: "aggressive",
+    days: [...DEFAULT_SCAN_DAYS],
+    day_of_month: 1,
+    month: 1,
+    time: DEFAULT_SCAN_TIME,
+    timezone: DEFAULT_SCAN_TIMEZONE,
+  };
+}
+
+function hasMeaningfulLegacySchedule(cfg: DiscoverySchedule): boolean {
+  if (cfg.legacy_schedule_mode) return true;
+  const hourly = cfg.schedules?.hourly;
+  const daily = cfg.schedules?.daily;
+  const defaultHourly = DEFAULT_SCHEDULE.schedules.hourly;
+  const defaultDaily = DEFAULT_SCHEDULE.schedules.daily;
+  return Boolean(
+    hourly && hourly.intensity !== defaultHourly.intensity
+      || daily && (
+        daily.intensity !== defaultDaily.intensity
+        || (daily.days?.length ?? 0) > 0
+        || daily.time !== defaultDaily.time
+      ),
+  );
+}
+
+function normalizeScheduleTask(task: Partial<ScanScheduleProfile> = {}): ScanScheduleProfile {
+  const frequency = task.frequency ?? "weekly";
+  const base = createDefaultScheduleTask();
+  const days =
+    frequency === "once"
+      ? []
+      : task.days?.length
+        ? task.days
+        : frequency === "daily"
+          ? [...EVERY_DAY]
+          : base.days;
+  return {
+    id: task.id?.trim() || base.id,
+    frequency,
+    intensity: task.intensity ?? base.intensity,
+    days,
+    day_of_month: frequency === "monthly" || frequency === "yearly" ? (task.day_of_month ?? 1) : null,
+    month: frequency === "yearly" ? (task.month ?? 1) : null,
+    time: task.time || DEFAULT_SCAN_TIME,
+    timezone: task.timezone || DEFAULT_SCAN_TIMEZONE,
+  };
+}
+
 const DEFAULT_SCHEDULE: DiscoverySchedule = {
   enabled: false,
   target_cidr: null,
   timeout_secs: 600,
   exclude: [],
-  schedules: { hourly: { intensity: "standard" }, daily: { intensity: "aggressive" } },
+  scan_schedules: [],
+  schedules: {
+    hourly: { intensity: "standard" },
+    daily: { intensity: "aggressive", days: DEFAULT_SCAN_DAYS, time: DEFAULT_SCAN_TIME },
+  },
 };
+
+function normalizeScheduleForm(cfg: DiscoverySchedule): DiscoverySchedule {
+  const legacyDays = cfg.schedules?.daily?.days?.length ? cfg.schedules.daily.days : DEFAULT_SCAN_DAYS;
+  const legacyDerivedTask: ScanScheduleProfile | null =
+    cfg.scan_schedules === undefined && (cfg.enabled || hasMeaningfulLegacySchedule(cfg))
+      ? normalizeScheduleTask({
+          frequency: "weekly",
+          intensity: cfg.schedules?.daily?.intensity ?? DEFAULT_SCHEDULE.schedules.daily.intensity,
+          days: legacyDays,
+          day_of_month: null,
+          time: cfg.schedules?.daily?.time || DEFAULT_SCAN_TIME,
+          timezone: DEFAULT_SCAN_TIMEZONE,
+        })
+      : null;
+  return {
+    ...cfg,
+    scan_schedules: (cfg.scan_schedules ?? (legacyDerivedTask ? [legacyDerivedTask] : [])).map((task) =>
+      normalizeScheduleTask({
+        ...task,
+        days: task.frequency === "once" ? [] : task.frequency === "daily" ? [...EVERY_DAY] : task.days?.length ? task.days : legacyDays,
+        time: task.time || cfg.schedules?.daily?.time || DEFAULT_SCAN_TIME,
+      }),
+    ),
+    schedules: {
+      hourly: {
+        intensity: cfg.schedules?.hourly?.intensity ?? DEFAULT_SCHEDULE.schedules.hourly.intensity,
+      },
+      daily: {
+        intensity: cfg.schedules?.daily?.intensity ?? DEFAULT_SCHEDULE.schedules.daily.intensity,
+        days: legacyDays,
+        time: cfg.schedules?.daily?.time || DEFAULT_SCAN_TIME,
+      },
+    },
+  };
+}
+
+function formatScheduleTime(time: string): string {
+  const [hourText, minuteText] = time.split(":");
+  const hour24 = Number(hourText);
+  const minute = Number(minuteText);
+  if (!Number.isFinite(hour24) || !Number.isFinite(minute)) return time;
+  const hour12 = hour24 % 12 || 12;
+  const suffix = hour24 >= 12 ? "PM" : "AM";
+  return `${hour12}:${String(minute).padStart(2, "0")} ${suffix}`;
+}
+
+function getTimeZoneLabel(zone: string): string {
+  const mapped = TIMEZONES.find((item) => item.key === zone);
+  return mapped?.label || zone?.replaceAll("_", " ") || "Local Time";
+}
+
+function formatScheduleSummary(schedule: ScanScheduleProfile): string {
+  if (schedule.frequency === "once") {
+    return `Once at ${formatScheduleTime(schedule.time || DEFAULT_SCAN_TIME)} (${getTimeZoneLabel(schedule.timezone || DEFAULT_SCAN_TIMEZONE)})`;
+  }
+  if (schedule.frequency === "monthly") {
+    return `Monthly on day ${schedule.day_of_month ?? 1} at ${formatScheduleTime(schedule.time || DEFAULT_SCAN_TIME)} (${getTimeZoneLabel(schedule.timezone || DEFAULT_SCAN_TIMEZONE)})`;
+  }
+  if (schedule.frequency === "yearly") {
+    const month = Math.max(1, Math.min(12, schedule.month ?? 1));
+    return `Yearly on ${new Date(2000, month - 1, 1).toLocaleString(undefined, { month: "long" })} ${schedule.day_of_month ?? 1} at ${formatScheduleTime(schedule.time || DEFAULT_SCAN_TIME)} (${getTimeZoneLabel(schedule.timezone || DEFAULT_SCAN_TIMEZONE)})`;
+  }
+  if (schedule.frequency === "daily") {
+    return `Every day at ${formatScheduleTime(schedule.time || DEFAULT_SCAN_TIME)} (${getTimeZoneLabel(schedule.timezone || DEFAULT_SCAN_TIMEZONE)})`;
+  }
+  const selected = SCHEDULE_DAYS.filter((day) => (schedule.days ?? []).includes(day.key)).map((day) => day.label);
+  const dayText = selected.length ? selected.join(", ") : "No days selected";
+  return `${dayText} at ${formatScheduleTime(schedule.time || DEFAULT_SCAN_TIME)} (${getTimeZoneLabel(schedule.timezone || DEFAULT_SCAN_TIMEZONE)})`;
+}
+
+function computeNextScheduledScan(schedule: ScanScheduleProfile, now: Date = new Date()): Date | null {
+  const time = schedule.time || DEFAULT_SCAN_TIME;
+  const [hourText, minuteText] = time.split(":");
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+
+  if (schedule.frequency === "once") {
+    const candidate = new Date(now);
+    candidate.setHours(hour, minute, 0, 0);
+    if (candidate <= now) candidate.setDate(candidate.getDate() + 1);
+    return candidate;
+  }
+
+  if (schedule.frequency === "monthly") {
+    const dayOfMonth = schedule.day_of_month ?? 1;
+    for (let offset = 0; offset <= 12; offset++) {
+      const candidate = new Date(now);
+      candidate.setMonth(now.getMonth() + offset, 1);
+      const daysInMonth = new Date(candidate.getFullYear(), candidate.getMonth() + 1, 0).getDate();
+      candidate.setDate(Math.min(dayOfMonth, daysInMonth));
+      candidate.setHours(hour, minute, 0, 0);
+      if (candidate > now) return candidate;
+      if (offset === 0 && candidate <= now) continue;
+    }
+    return null;
+  }
+
+  if (schedule.frequency === "yearly") {
+    const month = Math.max(1, Math.min(12, schedule.month ?? 1));
+    const dayOfMonth = schedule.day_of_month ?? 1;
+    for (let offset = 0; offset <= 2; offset++) {
+      const candidate = new Date(now.getFullYear() + offset, month - 1, 1);
+      const daysInMonth = new Date(candidate.getFullYear(), candidate.getMonth() + 1, 0).getDate();
+      candidate.setDate(Math.min(dayOfMonth, daysInMonth));
+      candidate.setHours(hour, minute, 0, 0);
+      if (candidate > now) return candidate;
+    }
+    return null;
+  }
+
+  const days = schedule.frequency === "daily" ? EVERY_DAY : (schedule.days ?? []);
+  if (!days.length) return null;
+  let best: Date | null = null;
+  for (let offset = 0; offset <= 7; offset++) {
+    const candidate = new Date(now);
+    candidate.setDate(now.getDate() + offset);
+    candidate.setHours(hour, minute, 0, 0);
+    const dayKey = SCHEDULE_DAYS[(candidate.getDay() + 6) % 7].key;
+    if (!days.includes(dayKey) || candidate <= now) continue;
+    if (!best || candidate < best) best = candidate;
+  }
+  return best;
+}
+
+function frequencyLabel(frequency: ScanScheduleProfile["frequency"]): string {
+  return SCHEDULE_FREQUENCIES.find((item) => item.key === frequency)?.label ?? "Scheduled";
+}
+
+type UpcomingScheduledScan = {
+  id: string;
+  label: string;
+  scheduleText: string;
+  nextRunText: string;
+  relativeText: string;
+  intensity: string;
+  nextRunAt: number | null;
+};
+
+function buildUpcomingScheduledScans(cfg: DiscoverySchedule | null, now: Date = new Date()): UpcomingScheduledScan[] {
+  if (!cfg?.enabled) return [];
+  const tasks = cfg.scan_schedules ?? [];
+  return tasks
+    .map((schedule) => {
+      const nextRun = computeNextScheduledScan(schedule, now);
+      return {
+        id: schedule.id,
+        label: `${frequencyLabel(schedule.frequency)} scan`,
+        scheduleText: `${frequencyLabel(schedule.frequency)} · ${formatScheduleSummary(schedule)}`,
+        nextRunText: nextRun ? formatAbsolute(nextRun) : "No upcoming run",
+        relativeText: nextRun ? formatRelative(nextRun) : "",
+        intensity: schedule.intensity,
+        nextRunAt: nextRun ? nextRun.getTime() : null,
+      };
+    })
+    .sort((a, b) => {
+      if (a.nextRunAt == null && b.nextRunAt == null) return a.id.localeCompare(b.id);
+      if (a.nextRunAt == null) return 1;
+      if (b.nextRunAt == null) return -1;
+      return a.nextRunAt - b.nextRunAt;
+    });
+}
 
 function ScheduleTab() {
   const { data, loading, error, refetch } = useDiscoverySchedule();
@@ -1530,29 +1767,38 @@ function ScheduleTab() {
   // /discovery/schedule is slow or unavailable (no infinite spinner). Real
   // config replaces the defaults once it arrives, unless the user has edited.
   const [form, setForm] = useState<DiscoverySchedule>(DEFAULT_SCHEDULE);
+  const [draftTask, setDraftTask] = useState<ScanScheduleProfile>(createDefaultScheduleTask());
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [draftChanged, setDraftChanged] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (data && !dirty) setForm(data);
+    if (data && !dirty) {
+      const normalized = normalizeScheduleForm(data);
+      setForm(normalized);
+      setDraftTask(normalized.scan_schedules[0] ?? createDefaultScheduleTask());
+      setEditingIndex(null);
+      setDraftChanged(false);
+    }
   }, [data, dirty]);
 
-  const update = (patch: Partial<DiscoverySchedule>) => {
-    setForm((f) => ({ ...f, ...patch }));
-    setDirty(true);
-  };
-
-  const handleSave = async () => {
+  const persistSchedule = async (nextForm: DiscoverySchedule) => {
     setSaving(true);
     try {
+      const normalized = normalizeScheduleForm(nextForm);
       const updated = await discoveryService.putSchedule({
-        enabled: form.enabled,
-        target_cidr: form.target_cidr && form.target_cidr.trim() ? form.target_cidr.trim() : null,
-        timeout_secs: Number(form.timeout_secs),
-        exclude: form.exclude,
-        schedules: form.schedules,
+        enabled: nextForm.enabled,
+        target_cidr: nextForm.target_cidr && nextForm.target_cidr.trim() ? nextForm.target_cidr.trim() : null,
+        timeout_secs: Number(nextForm.timeout_secs),
+        exclude: nextForm.exclude,
+        scan_schedules: normalized.scan_schedules,
+        schedules: normalized.schedules,
       });
-      setForm(updated);
+      setForm(normalizeScheduleForm(updated));
+      setDraftTask(normalizeScheduleForm(updated).scan_schedules[0] ?? createDefaultScheduleTask());
+      setEditingIndex(null);
+      setDraftChanged(false);
       setDirty(false);
       toast.success("Schedule updated");
       refetch();
@@ -1563,7 +1809,76 @@ function ScheduleTab() {
     }
   };
 
+  const update = (patch: Partial<DiscoverySchedule>) => {
+    setForm((current) => ({ ...current, ...patch }));
+    setDirty(true);
+  };
+
+  const handleSave = async () => {
+    const currentTasks = form.scan_schedules ?? [];
+    const pendingTask = normalizeScheduleTask(draftTask);
+    const tasksToSave = !draftChanged
+      ? currentTasks
+      : editingIndex === null
+        ? [...currentTasks, pendingTask]
+        : currentTasks.map((task, index) => index === editingIndex ? pendingTask : task);
+    await persistSchedule({ ...form, scan_schedules: tasksToSave });
+  };
+
   const labelStyle = { fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", fontWeight: "var(--font-weight-medium)" } as const;
+  const normalized = normalizeScheduleForm(form);
+  const tasks = normalized.scan_schedules;
+  const schedule = draftTask;
+  const selectedDays = schedule.days ?? [];
+  const toggleDay = (day: ScheduleDay) => {
+    const nextDays = selectedDays.includes(day) ? selectedDays.filter((d) => d !== day) : [...selectedDays, day];
+    setDraftTask((task) => normalizeScheduleTask({
+      ...task,
+      days: SCHEDULE_DAYS.filter((d) => nextDays.includes(d.key)).map((d) => d.key),
+    }));
+    setDraftChanged(true);
+  };
+  const updateSchedule = (patch: Partial<ScanScheduleProfile>) => {
+    setDraftTask((task) => normalizeScheduleTask({ ...task, ...patch }));
+    setDraftChanged(true);
+  };
+  const commitDraftTask = () => {
+    const nextTask = normalizeScheduleTask(draftTask);
+    setForm((current) => {
+      const next = (current.scan_schedules ?? []).slice();
+      if (editingIndex === null) {
+        next.push(nextTask);
+      } else if (editingIndex >= 0 && editingIndex < next.length) {
+        next[editingIndex] = nextTask;
+      }
+      return { ...current, scan_schedules: next };
+    });
+    setDraftTask(createDefaultScheduleTask());
+    setEditingIndex(null);
+    setDraftChanged(false);
+    setDirty(true);
+  };
+  const editTask = (index: number) => {
+    const task = tasks[index];
+    if (!task) return;
+    setDraftTask(task);
+    setEditingIndex(index);
+    setDraftChanged(false);
+  };
+  const removeTask = async (index: number) => {
+    const nextForm = {
+      ...form,
+      scan_schedules: (form.scan_schedules ?? []).filter((_, taskIndex) => taskIndex !== index),
+    };
+    setForm(nextForm);
+    setDirty(true);
+    if (editingIndex === index) {
+      setDraftTask(createDefaultScheduleTask());
+      setEditingIndex(null);
+      setDraftChanged(false);
+    }
+    await persistSchedule(nextForm);
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -1621,22 +1936,227 @@ function ScheduleTab() {
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        {(["hourly", "daily"] as const).map((period) => (
-          <div key={period} className="flex flex-col gap-1">
-            <label style={labelStyle}>{period[0].toUpperCase() + period.slice(1)} intensity</label>
-            <select
-              value={form.schedules[period].intensity}
-              onChange={(e) => update({ schedules: { ...form.schedules, [period]: { intensity: e.target.value } } })}
-              className="w-full px-3 py-2 rounded-md"
-              style={fieldStyle}
+      <div className="flex flex-col gap-3 rounded-lg border p-3" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
+        <div className="flex items-center justify-between gap-2">
+          <label style={labelStyle}>Saved schedule tasks</label>
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
+            {tasks.length} task{tasks.length === 1 ? "" : "s"}
+          </span>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          {tasks.length > 0 ? (
+            tasks.map((task, index) => {
+              const nextRun = computeNextScheduledScan(task);
+              return (
+                <div key={task.id} className="rounded-md border px-3 py-2" style={{ backgroundColor: "var(--background)", borderColor: "var(--border)" }}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)", lineHeight: 1.4 }}>
+                        {frequencyLabel(task.frequency)} scan
+                      </div>
+                      <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.4, marginTop: "2px" }}>
+                        {formatScheduleSummary(task)}
+                      </div>
+                      <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.4, marginTop: "2px" }}>
+                        Next run: {nextRun ? formatAbsolute(nextRun) : "—"}
+                        {nextRun ? ` (${formatRelative(nextRun)})` : ""}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <IntensityBadge intensity={task.intensity} />
+                      <button
+                        type="button"
+                        onClick={() => editTask(index)}
+                        className="px-2 py-1 rounded-md"
+                        style={{ backgroundColor: "var(--muted)", border: "1px solid var(--border)", color: "var(--foreground)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)" }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { void removeTask(index); }}
+                        className="px-2 py-1 rounded-md"
+                        style={{ backgroundColor: "var(--muted)", border: "1px solid var(--border)", color: "var(--destructive)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)" }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div
+              className="rounded-md border px-3 py-2"
+              style={{ backgroundColor: "var(--background)", borderColor: "var(--border)", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}
             >
-              {INTENSITIES.map((i) => (
-                <option key={i} value={i}>{i}</option>
-              ))}
-            </select>
+              No scheduled tasks saved yet
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 rounded-lg border p-3" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
+        <div className="flex items-center justify-between gap-2">
+          <label style={labelStyle}>{editingIndex === null ? "Add schedule task" : "Edit schedule task"}</label>
+          <button
+            type="button"
+            onClick={() => {
+              setDraftTask(createDefaultScheduleTask());
+              setEditingIndex(null);
+              setDraftChanged(false);
+            }}
+            className="px-2 py-1 rounded-md"
+            style={{ backgroundColor: "var(--muted)", border: "1px solid var(--border)", color: "var(--muted-foreground)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)" }}
+          >
+            Reset
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label style={labelStyle}>Intensity</label>
+          <select
+            value={schedule.intensity}
+            onChange={(e) => updateSchedule({ intensity: e.target.value })}
+            className="w-full px-3 py-2 rounded-md"
+            style={fieldStyle}
+          >
+            {INTENSITIES.map((i) => (
+              <option key={i} value={i}>{i}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label style={labelStyle}>Frequency</label>
+          <select
+            value={schedule.frequency}
+            onChange={(e) => {
+              const nextFrequency = e.target.value as ScanScheduleProfile["frequency"];
+              updateSchedule({
+                frequency: nextFrequency,
+                days: nextFrequency === "once" || nextFrequency === "monthly" || nextFrequency === "yearly" ? [] : nextFrequency === "daily" ? [...EVERY_DAY] : schedule.days?.length ? schedule.days : [...DEFAULT_SCAN_DAYS],
+                day_of_month: nextFrequency === "monthly" || nextFrequency === "yearly" ? (schedule.day_of_month ?? 1) : null,
+                month: nextFrequency === "yearly" ? (schedule.month ?? 1) : null,
+              });
+            }}
+            className="w-full px-3 py-2 rounded-md"
+            style={fieldStyle}
+          >
+            {SCHEDULE_FREQUENCIES.map((item) => (
+              <option key={item.key} value={item.key}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label style={labelStyle}>Time to run scan</label>
+          <input
+            type="time"
+            value={schedule.time}
+            onChange={(e) => updateSchedule({ time: e.target.value })}
+            className="w-full px-3 py-2 rounded-md"
+            style={fieldStyle}
+          />
+        </div>
+
+        {schedule.frequency === "monthly" || schedule.frequency === "yearly" ? (
+          <>
+            <div className="flex flex-col gap-1">
+              <label style={labelStyle}>Day of month</label>
+              <input
+                type="number"
+                min={1}
+                max={31}
+                value={schedule.day_of_month ?? 1}
+                onChange={(e) => updateSchedule({ day_of_month: Number(e.target.value) })}
+                className="w-full px-3 py-2 rounded-md"
+                style={fieldStyle}
+              />
+            </div>
+          {schedule.frequency === "yearly" && (
+            <div className="flex flex-col gap-1">
+              <label style={labelStyle}>Month</label>
+              <select value={schedule.month ?? 1} onChange={(e) => updateSchedule({ month: Number(e.target.value) })} className="w-full px-3 py-2 rounded-md" style={fieldStyle}>
+                {Array.from({ length: 12 }, (_, index) => <option key={index + 1} value={index + 1}>{new Date(2000, index, 1).toLocaleString(undefined, { month: "long" })}</option>)}
+              </select>
+            </div>
+          )}
+          </>
+        ) : schedule.frequency === "weekly" ? (
+          <div className="flex flex-col gap-1">
+            <label style={labelStyle}>Days (select days to scan)</label>
+            <div className="grid grid-cols-7 gap-1">
+              {SCHEDULE_DAYS.map((day) => {
+                const selected = selectedDays.includes(day.key);
+                return (
+                  <button
+                    key={day.key}
+                    type="button"
+                    onClick={() => toggleDay(day.key)}
+                    className="flex items-center justify-center rounded-md px-2 py-2"
+                    title={day.label}
+                    style={{
+                      backgroundColor: selected ? "var(--primary)" : "var(--background)",
+                      border: selected ? "1px solid var(--primary)" : "1px solid var(--border)",
+                      color: selected ? "var(--primary-foreground)" : "var(--foreground)",
+                      cursor: "pointer",
+                      fontFamily: "Inter, sans-serif",
+                      fontSize: "var(--text-xs)",
+                      fontWeight: "var(--font-weight-medium)",
+                    }}
+                  >
+                    {day.short}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        ))}
+        ) : null}
+
+        <div className="flex flex-col gap-1">
+          <label style={labelStyle}>Timezone</label>
+          <select
+            value={schedule.timezone}
+            onChange={(e) => updateSchedule({ timezone: e.target.value })}
+            className="w-full px-3 py-2 rounded-md"
+            style={fieldStyle}
+          >
+            {TIMEZONES.map((tz) => (
+              <option key={tz.key} value={tz.key}>
+                {tz.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex items-center justify-end gap-2">
+          {editingIndex !== null && (
+            <button
+              type="button"
+              onClick={() => {
+                setDraftTask(createDefaultScheduleTask());
+                setEditingIndex(null);
+                setDraftChanged(false);
+              }}
+              className="px-3 py-2 rounded-md"
+              style={{ backgroundColor: "var(--muted)", border: "1px solid var(--border)", color: "var(--muted-foreground)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)" }}
+            >
+              Cancel
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={commitDraftTask}
+            className="px-3 py-2 rounded-md"
+            style={{ backgroundColor: "var(--primary)", color: "var(--primary-foreground)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-medium)" }}
+          >
+            {editingIndex === null ? "Add task" : "Update task"}
+          </button>
+        </div>
       </div>
 
       <button
@@ -2004,7 +2524,8 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
   const [approveTarget, setApproveTarget] = useState<ConnectedDevice | null>(null);
   const [detailTarget, setDetailTarget] = useState<ConnectedDevice | null>(null);
 
-  const cfg = schedule.data;
+  const cfg = useMemo(() => (schedule.data ? normalizeScheduleForm(schedule.data) : null), [schedule.data]);
+  const enabled = !!cfg?.enabled;
   const realRuns: ScheduleRun[] | null = useMemo(() => {
     if (!runs.data || !Array.isArray(runs.data) || runs.data.length === 0) return null;
     // /discovery/runs carries only timestamps. Enrich any run that lines up with
@@ -2023,6 +2544,7 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
     });
   }, [runs.data]);
   const inferredRuns = useMemo(() => deriveRunsFromInventory(devices.data ?? []), [devices.data]);
+  const upcomingScans = useMemo(() => buildUpcomingScheduledScans(cfg), [cfg]);
 
   const openRealRun = (run: ScheduleRun) => {
     const runDevices = resolveDevicesForRun(run, devices.data ?? []);
@@ -2054,18 +2576,6 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
     });
   };
 
-  const next = useMemo(() => {
-    const fallback = computeNextRuns();
-    const hourly = cfg?.next_run_hourly ? new Date(cfg.next_run_hourly) : fallback.hourly;
-    const daily = cfg?.next_run_daily ? new Date(cfg.next_run_daily) : fallback.daily;
-    return {
-      hourly: Number.isNaN(hourly.getTime()) ? fallback.hourly : hourly,
-      daily: Number.isNaN(daily.getTime()) ? fallback.daily : daily,
-      hourlyEstimated: !cfg?.next_run_hourly,
-      dailyEstimated: !cfg?.next_run_daily,
-    };
-  }, [cfg?.next_run_hourly, cfg?.next_run_daily]);
-
   if (schedule.loading && !cfg) {
     return (
       <div className="flex items-center justify-center py-10">
@@ -2080,8 +2590,6 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
     color: "var(--muted-foreground)",
     fontWeight: "var(--font-weight-medium)",
   } as const;
-
-  const enabled = !!cfg?.enabled;
 
   return (
     <div className="flex flex-col gap-4">
@@ -2141,19 +2649,44 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 mb-3">
-          {(["hourly", "daily"] as const).map((period) => (
-            <div
-              key={period}
-              className="rounded-md border p-2 flex items-center justify-between"
-              style={{ backgroundColor: "var(--background)", borderColor: "var(--border)" }}
-            >
-              <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", textTransform: "capitalize" }}>
-                {period}
-              </span>
-              <IntensityBadge intensity={cfg?.schedules[period].intensity ?? "—"} />
+        <div className="grid gap-2 mb-3 sm:grid-cols-2">
+          <div
+            className="rounded-md border p-2 flex items-center justify-between"
+            style={{ backgroundColor: "var(--background)", borderColor: "var(--border)" }}
+          >
+            <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
+              Scan Intensity
+            </span>
+            <IntensityBadge intensity={cfg?.schedules.hourly.intensity ?? "—"} />
+          </div>
+          <div
+            className="rounded-md border p-2 flex items-center justify-between"
+            style={{ backgroundColor: "var(--background)", borderColor: "var(--border)" }}
+          >
+            <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
+              Schedule Intensity
+            </span>
+            <IntensityBadge intensity={cfg?.schedules.daily.intensity ?? "—"} />
+          </div>
+          <div
+            className="rounded-md border p-2 sm:col-span-2"
+            style={{ backgroundColor: "var(--background)", borderColor: "var(--border)" }}
+          >
+            <p style={labelStyle}>Scan Schedule</p>
+            <div className="flex flex-col gap-1 mt-1">
+              {cfg?.scan_schedules?.length ? (
+                cfg.scan_schedules.map((task) => (
+                  <p key={task.id} style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--foreground)" }}>
+                    ✓ {frequencyLabel(task.frequency)} · {formatScheduleSummary(task)}
+                  </p>
+                ))
+              ) : (
+                <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
+                  No scheduled scans saved
+                </p>
+              )}
             </div>
-          ))}
+          </div>
         </div>
 
         <button
@@ -2173,40 +2706,36 @@ function RunsTab({ onEditSchedule }: { onEditSchedule: () => void }) {
         </button>
       </div>
 
-      {/* ─── Next expected runs ──────────────────────────────────────────── */}
+      {/* ─── Next scheduled scans ───────────────────────────────────────── */}
       {enabled && (
         <div className="rounded-lg border p-4" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
           <div className="flex items-center gap-2 mb-3">
             <CalendarClock size={16} style={{ color: "var(--primary)" }} />
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
-              Next expected runs
+              Upcoming scheduled scans
             </p>
           </div>
 
           <div className="flex flex-col gap-2">
-            {([
-              { period: "hourly" as const, when: next.hourly, estimated: next.hourlyEstimated },
-              { period: "daily" as const, when: next.daily, estimated: next.dailyEstimated },
-            ]).map(({ period, when, estimated }) => (
-              <div
-                key={period}
-                className="flex items-center justify-between rounded-md border p-2.5"
-                style={{ backgroundColor: "var(--background)", borderColor: "var(--border)" }}
-              >
-                <div className="flex items-center gap-2">
-                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", textTransform: "capitalize", minWidth: "52px" }}>
-                    {period}
-                  </span>
-                  <IntensityBadge intensity={cfg?.schedules[period].intensity ?? "—"} />
-                </div>
-                <div className="flex flex-col items-end">
-                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)" }}>
-                    {formatAbsolute(when)}
-                  </span>
-                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)" }}>
-                    {formatRelative(when)}
-                    {estimated ? " · estimated" : ""}
-                  </span>
+            {upcomingScans.map((scan) => (
+              <div key={scan.id} className="rounded-md border p-3" style={{ backgroundColor: "var(--background)", borderColor: "var(--border)" }}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <Check size={14} style={{ color: "var(--foreground)", flexShrink: 0 }} />
+                      <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--foreground)", lineHeight: 1.4 }}>
+                        {scan.label}
+                      </p>
+                    </div>
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", lineHeight: 1.4, marginTop: "2px", paddingLeft: "22px" }}>
+                      {scan.scheduleText}
+                    </p>
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.4, marginTop: "2px", paddingLeft: "22px" }}>
+                      Next run: {scan.nextRunText}
+                      {scan.relativeText ? ` (${scan.relativeText})` : ""}
+                    </p>
+                  </div>
+                  <IntensityBadge intensity={scan.intensity} />
                 </div>
               </div>
             ))}

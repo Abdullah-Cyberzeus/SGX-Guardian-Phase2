@@ -11,15 +11,11 @@ static CONTACTS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Contact {
     pub did: String,
-    /// Who this saved contact belongs to: `None` for the Guardian device
-    /// itself (admin/owner), `Some(member_did)` for a specific browser
-    /// member. Contacts are strictly private per-owner — never shared
-    /// between the admin and members, or between different members, even
-    /// though they're persisted in one file. Older entries predating this
-    /// field deserialize as `None` (admin-owned), which matches reality
-    /// since only the admin could save contacts before this existed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub owner_did: Option<String>,
+    /// Owner `user_id`. Contacts are strictly private per user account, so a
+    /// new admin account on the same device will not see a previous admin's
+    /// address book.
+    #[serde(default, alias = "owner_did", deserialize_with = "deserialize_user_id")]
+    pub user_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -28,6 +24,13 @@ pub struct Contact {
     pub notes: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+fn deserialize_user_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -82,9 +85,10 @@ async fn save(path: &Path, contacts: &[Contact]) -> Result<(), ApiError> {
     Ok(())
 }
 
-pub async fn list(path: &Path, owner: Option<&str>) -> Result<Vec<Contact>, ApiError> {
+pub async fn list(path: &Path, user_id: Option<&str>) -> Result<Vec<Contact>, ApiError> {
     let mut contacts = load(path).await?;
-    contacts.retain(|contact| contact.owner_did.as_deref() == owner);
+    let user_id = user_id.unwrap_or_default();
+    contacts.retain(|contact| contact.user_id == user_id);
     contacts.sort_by(|a, b| {
         let left = a
             .name
@@ -103,27 +107,29 @@ pub async fn list(path: &Path, owner: Option<&str>) -> Result<Vec<Contact>, ApiE
     Ok(contacts)
 }
 
-pub async fn get(path: &Path, owner: Option<&str>, did: &str) -> Result<Contact, ApiError> {
+pub async fn get(path: &Path, user_id: Option<&str>, did: &str) -> Result<Contact, ApiError> {
     let did = normalize_did(did)?;
+    let user_id = user_id.unwrap_or_default();
     load(path)
         .await?
         .into_iter()
-        .find(|contact| contact.did == did && contact.owner_did.as_deref() == owner)
+        .find(|contact| contact.did == did && contact.user_id == user_id)
         .ok_or_else(|| ApiError::NotFound(format!("Contact not found for DID {}", did)))
 }
 
 pub async fn create(
     path: &Path,
-    owner: Option<&str>,
+    user_id: Option<&str>,
     draft: ContactDraft,
 ) -> Result<Contact, ApiError> {
     let did = normalize_did(&draft.did)?;
     let lock = CONTACTS_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock.lock().await;
     let mut contacts = load(path).await?;
+    let user_id = user_id.unwrap_or_default();
     if contacts
         .iter()
-        .any(|contact| contact.did == did && contact.owner_did.as_deref() == owner)
+        .any(|contact| contact.did == did && contact.user_id == user_id)
     {
         return Err(ApiError::Conflict(format!(
             "Contact already exists for DID {}",
@@ -133,7 +139,7 @@ pub async fn create(
     let now = Utc::now().to_rfc3339();
     let contact = Contact {
         did,
-        owner_did: owner.map(str::to_string),
+        user_id: user_id.to_string(),
         name: clean_optional(draft.name),
         alias: clean_optional(draft.alias),
         notes: clean_optional(draft.notes),
@@ -147,7 +153,7 @@ pub async fn create(
 
 pub async fn update(
     path: &Path,
-    owner: Option<&str>,
+    user_id: Option<&str>,
     did: &str,
     patch: ContactPatch,
 ) -> Result<Contact, ApiError> {
@@ -155,9 +161,10 @@ pub async fn update(
     let lock = CONTACTS_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock.lock().await;
     let mut contacts = load(path).await?;
+    let user_id = user_id.unwrap_or_default();
     let contact = contacts
         .iter_mut()
-        .find(|contact| contact.did == did && contact.owner_did.as_deref() == owner)
+        .find(|contact| contact.did == did && contact.user_id == user_id)
         .ok_or_else(|| ApiError::NotFound(format!("Contact not found for DID {}", did)))?;
     contact.name = clean_optional(patch.name);
     contact.alias = clean_optional(patch.alias);
@@ -168,13 +175,14 @@ pub async fn update(
     Ok(updated)
 }
 
-pub async fn delete(path: &Path, owner: Option<&str>, did: &str) -> Result<bool, ApiError> {
+pub async fn delete(path: &Path, user_id: Option<&str>, did: &str) -> Result<bool, ApiError> {
     let did = normalize_did(did)?;
     let lock = CONTACTS_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock.lock().await;
     let mut contacts = load(path).await?;
     let before = contacts.len();
-    contacts.retain(|contact| !(contact.did == did && contact.owner_did.as_deref() == owner));
+    let user_id = user_id.unwrap_or_default();
+    contacts.retain(|contact| !(contact.did == did && contact.user_id == user_id));
     if contacts.len() == before {
         return Err(ApiError::NotFound(format!(
             "Contact not found for DID {}",
@@ -183,4 +191,46 @@ pub async fn delete(path: &Path, owner: Option<&str>, did: &str) -> Result<bool,
     }
     save(path, &contacts).await?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn contacts_are_partitioned_by_user_id() {
+        let temp = TempDir::new().expect("tempdir");
+        let path = temp.path().join("contacts.json");
+
+        let contacts = vec![
+            Contact {
+                did: "did:guardian:peer-a".into(),
+                user_id: "user-admin-1".into(),
+                name: Some("Alice".into()),
+                alias: None,
+                notes: None,
+                created_at: "2026-09-01T00:00:00Z".into(),
+                updated_at: "2026-09-01T00:00:00Z".into(),
+            },
+            Contact {
+                did: "did:guardian:peer-b".into(),
+                user_id: "user-admin-2".into(),
+                name: Some("Bob".into()),
+                alias: None,
+                notes: None,
+                created_at: "2026-09-01T00:00:00Z".into(),
+                updated_at: "2026-09-01T00:00:00Z".into(),
+            },
+        ];
+        save(&path, &contacts).await.expect("save");
+
+        let first = list(&path, Some("user-admin-1")).await.expect("first");
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].did, "did:guardian:peer-a");
+
+        let second = list(&path, Some("user-admin-2")).await.expect("second");
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].did, "did:guardian:peer-b");
+    }
 }

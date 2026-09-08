@@ -1,4 +1,7 @@
 import api from './api';
+import { peerService } from './peerService';
+import { transportService } from './transportService';
+import { wifiService } from './wifiService';
 
 export interface GuardianInfo {
   nodeId: string;
@@ -56,20 +59,103 @@ interface BackendNodeStatus {
   timestamp: string;
 }
 
+interface BackendPwaHealth {
+  status: 'guardian_connected' | 'reconnecting' | 'guardian_offline' | 'credential_revoked';
+}
+
+interface BackendTransportStatus {
+  active: { name: string; transport: string } | null;
+  lock: string | null;
+}
+
+interface BackendWifiMode {
+  mode: 'off' | 'hotspot_only' | 'client_only' | 'dual';
+  status: { state: string };
+}
+
+function clampSignal(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function deriveSignalStrength(
+  health: BackendPwaHealth | null,
+  transport: BackendTransportStatus | null,
+  wifiMode: BackendWifiMode | null,
+  offlineMode: number,
+) {
+  if (!health || health.status === 'guardian_offline' || health.status === 'credential_revoked') {
+    return 0;
+  }
+  if (health.status === 'reconnecting') {
+    return 35;
+  }
+
+  let score = 100;
+  const activeTransport = transport?.active?.transport?.toLowerCase() || '';
+  const wifiState = wifiMode?.status?.state || '';
+
+  if (!transport?.active) {
+    score -= 20;
+  } else if (activeTransport === 'wifi') {
+    if (['DualActive', 'ClientConnected'].includes(wifiState)) score -= 0;
+    else if (['HotspotActive'].includes(wifiState)) score -= 15;
+    else if (['ApplyingChange', 'HotspotStarting', 'ClientConnecting', 'DualStarting'].includes(wifiState)) {
+      score -= 40;
+    } else {
+      score -= 20;
+    }
+  } else if (activeTransport === 'ethernet') {
+    score -= 5;
+  } else if (activeTransport === 'cellular') {
+    score -= 12;
+  } else if (activeTransport === 'satellite') {
+    score -= 18;
+  } else {
+    score -= 10;
+  }
+
+  if (offlineMode > 0) score -= 20;
+  if (wifiMode?.mode === 'off') score -= 10;
+  if (wifiMode?.mode === 'hotspot_only') score -= 12;
+
+  return clampSignal(score);
+}
+
+function deriveConnectionType(
+  node: BackendNodeStatus,
+  transport: BackendTransportStatus | null,
+  wifiMode: BackendWifiMode | null,
+) {
+  if (transport?.active?.transport) return transport.active.transport;
+  if (wifiMode?.mode === 'dual' || wifiMode?.mode === 'client_only' || wifiMode?.mode === 'hotspot_only') {
+    return 'Wi-Fi';
+  }
+  if (node.offlineMode > 0) return 'Offline';
+  return 'Ethernet';
+}
+
 export const guardianService = {
   // GET /api/node/status - maps to dashboard guardian info
   // Backend has no /guardian/info, so we reuse /node/status
   getInfo: async () => {
-    const res = await api.get<BackendNodeStatus>('/node/status');
+    const [res, health, transport, wifiMode] = await Promise.all([
+      api.get<BackendNodeStatus>('/node/status'),
+      api.get<BackendPwaHealth>('/pwa/health').catch(() => null),
+      transportService.getStatus().catch(() => null),
+      wifiService.getWifiMode().catch(() => null),
+    ]);
+    const peers = await peerService.getAll().catch(() => []);
+    const signal = deriveSignalStrength(health, transport, wifiMode, res.offlineMode);
     return {
       id: res.nodeId,
-      name: res.displayHostname || res.hostname || res.nodeId,
+      nodeId: res.nodeId,
+      name: res.deviceName || res.displayHostname || res.hostname || res.nodeId,
       deviceId: res.deviceName || res.nodeId,
       firmware: 'v1.0.0',
       uptime: 'Running',
-      connectionType: 'Ethernet',
-      signal: 100,
-      peerCount: 0,
+      connectionType: deriveConnectionType(res, transport, wifiMode),
+      signal,
+      peerCount: peers.length,
       status: 'online' as const,
       lastSeen: 'Just now',
       ip: res.ip,

@@ -1,7 +1,7 @@
 use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -19,6 +19,9 @@ const DEFAULT_RELAY_ALERT_THRESHOLD_PCT: u8 = 80;
 #[derive(Serialize)]
 pub struct NodeRoleListItemResponse {
     pub node: String,
+
+    #[serde(rename = "physicalIp", skip_serializing_if = "Option::is_none")]
+    pub physical_ip: Option<String>,
 
     #[serde(rename = "overlayIp")]
     pub overlay_ip: String,
@@ -413,6 +416,7 @@ fn build_role_list_items(
 
             NodeRoleListItemResponse {
                 node: entry.node_name.clone(),
+                physical_ip: endpoint_host(&entry.physical_endpoint),
                 overlay_ip: entry.overlay_ip.clone(),
                 active: entry.is_active,
                 relay_enabled: entry.am_relay,
@@ -423,6 +427,18 @@ fn build_role_list_items(
             }
         })
         .collect())
+}
+
+fn endpoint_host(endpoint: &str) -> Option<String> {
+    let value = endpoint.trim();
+    if value.is_empty() || value == "0.0.0.0:4242" {
+        return None;
+    }
+    value
+        .rsplit_once(':')
+        .map(|(host, _)| host.trim().to_string())
+        .filter(|host| !host.is_empty())
+        .or_else(|| Some(value.to_string()))
 }
 
 fn is_valid_node_name(node: &str) -> bool {

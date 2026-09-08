@@ -40,23 +40,94 @@ import { buildTopologyLinks, useCircleTopology } from "./useCircleTopology";
 import { ALL_CIRCLES_ID, buildCircleMembershipIndex, getNodeCircles } from "./circleMembership";
 import { matchDidDocumentPeer } from "./nodeTelemetry";
 import { PRESENCE_COLORS, TRUST_COLORS, paletteCssVars } from "./palette";
-import { geofenceApi, type CreateZoneRequest, type GeofenceEvent, type GeofenceStatus, type GeofenceZone, type ThreatAlert, type ZoneAutomation } from "../../../api/geofence";
+import { geofenceApi, type CreateZoneRequest, type GeofenceEvent, type GeofenceStatus, type GeofenceZone, type StoredLocation, type ThreatAlert, type ZoneAutomation } from "../../../api/geofence";
 import { alertDetails, configuredActions, eventDetails, locationSourceLabel, sourceLabel, zoneTypeLabel } from "../geofenceDisplay";
 import attestationService, { type PeerAttestationRecord } from "../../services/attestationService";
 import type { DIDDocumentPeerSummary } from "../../services/didService";
 import { useContactNames } from "../../contexts/ContactNameContext";
+import { WORLD_PATHS } from "../topology/lib/world-map";
 import "./circle-topology.css";
 
 const WIDTH = 1440;
 const HEIGHT = 820;
-const TILE_ZOOM = 3;
-const TILE_COUNT = 2 ** TILE_ZOOM;
 const MAP_SIZE = WIDTH;
 const MAP_Y = (HEIGHT - MAP_SIZE) / 2;
 const POLL_MS = 10_000;
 
 type Filter = "all" | "online" | "offline" | "verified" | "lighthouse" | "relay";
 type ViewMode = "mesh" | "map";
+type BrowserLocationAttempt = { options: PositionOptions };
+
+const browserLocationAttempts: BrowserLocationAttempt[] = [
+  { options: { enableHighAccuracy: false, timeout: 2000, maximumAge: 300000 } },
+  { options: { enableHighAccuracy: false, timeout: 12000, maximumAge: 60000 } },
+];
+
+function getBrowserPosition(options: PositionOptions): Promise<GeolocationPosition> {
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, options);
+  });
+}
+
+function getBrowserPositionFromWatch(options: PositionOptions, timeoutMs: number): Promise<GeolocationPosition> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timeoutId = 0;
+    let watchId = 0;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      navigator.geolocation.clearWatch(watchId);
+      callback();
+    };
+    timeoutId = window.setTimeout(() => {
+      finish(() => reject(new Error("Browser location timed out")));
+    }, timeoutMs);
+    watchId = navigator.geolocation.watchPosition(
+      (position) => finish(() => resolve(position)),
+      (error) => {
+        if (error.code === error.PERMISSION_DENIED) {
+          finish(() => reject(error));
+        }
+      },
+      options,
+    );
+  });
+}
+
+async function getBrowserPositionWithFallback(): Promise<GeolocationPosition> {
+  let lastError: unknown = null;
+  for (const attempt of browserLocationAttempts) {
+    try {
+      return await getBrowserPosition(attempt.options);
+    } catch (err) {
+      lastError = err;
+      if (isPermissionDenied(err)) {
+        throw lastError;
+      }
+    }
+  }
+  try {
+    return await getBrowserPositionFromWatch({ enableHighAccuracy: false, maximumAge: 300000 }, 25000);
+  } catch (err) {
+    lastError = err;
+    if (isPermissionDenied(err)) {
+      throw lastError;
+    }
+  }
+  throw lastError ?? new Error("Location unavailable");
+}
+
+function getLocationErrorCode(err: unknown): number | undefined {
+  return typeof err === "object" && err !== null && "code" in err && typeof (err as { code?: unknown }).code === "number"
+    ? (err as { code: number }).code
+    : undefined;
+}
+
+function isPermissionDenied(err: unknown) {
+  return getLocationErrorCode(err) === 1;
+}
 
 const presenceMeta: Record<PresenceStatus, { label: string; color: string }> = {
   online: { label: "Online", color: PRESENCE_COLORS.online },
@@ -89,6 +160,39 @@ interface PositionedZone {
   inside?: boolean;
   source: GeofenceZone;
 }
+
+const REGION_LABELS = [
+  { label: "North Atlantic Ocean", lat: 25, lng: -42 },
+  { label: "Pacific Ocean", lat: 12, lng: -150 },
+  { label: "Indian Ocean", lat: -20, lng: 78 },
+  { label: "Arctic Ocean", lat: 74, lng: 20 },
+  { label: "North America", lat: 47, lng: -103 },
+  { label: "South America", lat: -18, lng: -60 },
+  { label: "Europe", lat: 53, lng: 16 },
+  { label: "Africa", lat: 4, lng: 20 },
+  { label: "Middle East", lat: 27, lng: 45 },
+  { label: "Asia", lat: 45, lng: 88 },
+  { label: "Oceania", lat: -25, lng: 137 },
+];
+
+const COUNTRY_LABELS = [
+  { label: "United States", lat: 39, lng: -98 },
+  { label: "Canada", lat: 58, lng: -106 },
+  { label: "Mexico", lat: 23, lng: -102 },
+  { label: "Brazil", lat: -10, lng: -55 },
+  { label: "United Kingdom", lat: 55, lng: -3 },
+  { label: "France", lat: 46, lng: 2 },
+  { label: "Germany", lat: 51, lng: 10 },
+  { label: "Spain", lat: 40, lng: -4 },
+  { label: "Italy", lat: 42.5, lng: 12.5 },
+  { label: "Nigeria", lat: 9, lng: 8 },
+  { label: "South Africa", lat: -30, lng: 25 },
+  { label: "Saudi Arabia", lat: 24, lng: 45 },
+  { label: "India", lat: 22, lng: 79 },
+  { label: "China", lat: 35, lng: 103 },
+  { label: "Japan", lat: 37, lng: 138 },
+  { label: "Australia", lat: -25, lng: 134 },
+];
 
 const DEFAULT_AUTOMATION: ZoneAutomation = {
   on_entry: [{ action: "notify", severity: "low" }],
@@ -152,49 +256,43 @@ function radiusToPixels(radiusM: number | null | undefined, lat: number) {
 }
 
 function RealMapTiles() {
-  // Tracks reachability of the public CARTO tile CDN specifically — distinct
-  // from Guardian-LAN reachability (`staleWarning`/`fatalError` above). One
-  // failed tile is enough to assume the whole CDN is unreachable and stop
-  // requesting the rest, rather than let every tile fail individually.
-  const [tilesUnavailable, setTilesUnavailable] = useState(false);
-  const tileSize = MAP_SIZE / TILE_COUNT;
+  const scaleX = WIDTH / 1600;
+  const scaleY = MAP_SIZE / 760;
+  const translateY = MAP_Y - 60 * scaleY;
+  const labelPoint = (lat: number, lng: number) => projectLocation(lat, lng);
 
-  if (tilesUnavailable) {
-    return (
-      <g className="clt-real-map clt-map-unavailable" pointerEvents="none">
-        <rect x={0} y={0} width={WIDTH} height={HEIGHT} />
-        <rect className="clt-map-contrast" x={0} y={MAP_Y} width={MAP_SIZE} height={MAP_SIZE} />
-        <text className="clt-map-unavailable-label" x={WIDTH / 2} y={HEIGHT / 2}>
-          Map tiles unavailable — requires Internet access
-        </text>
-      </g>
-    );
-  }
-
-  const tiles: React.ReactNode[] = [];
-  for (let x = 0; x < TILE_COUNT; x += 1) {
-    for (let y = 0; y < TILE_COUNT; y += 1) {
-      tiles.push(
-        <image
-          key={`${x}-${y}`}
-          className="clt-map-tile"
-          href={`https://a.basemaps.cartocdn.com/dark_all/${TILE_ZOOM}/${x}/${y}.png`}
-          x={x * tileSize}
-          y={MAP_Y + y * tileSize}
-          width={tileSize}
-          height={tileSize}
-          preserveAspectRatio="none"
-          onError={() => setTilesUnavailable(true)}
-        />,
-      );
-    }
-  }
   return (
     <g className="clt-real-map" pointerEvents="none">
       <rect x={0} y={0} width={WIDTH} height={HEIGHT} />
-      {tiles}
+      <g className="clt-map-grid">
+        {Array.from({ length: 13 }).map((_, i) => {
+          const x = WIDTH * (i / 12);
+          return <line key={`lng-${i}`} x1={x} y1={MAP_Y} x2={x} y2={MAP_Y + MAP_SIZE} />;
+        })}
+        {Array.from({ length: 7 }).map((_, i) => {
+          const y = MAP_Y + MAP_SIZE * (i / 6);
+          return <line key={`lat-${i}`} x1={0} y1={y} x2={WIDTH} y2={y} />;
+        })}
+      </g>
+      <g className="clt-map-land" transform={`matrix(${scaleX} 0 0 ${scaleY} 0 ${translateY})`}>
+        {WORLD_PATHS.map((path, index) => (
+          <path key={index} d={path} />
+        ))}
+      </g>
       <rect className="clt-map-contrast" x={0} y={MAP_Y} width={MAP_SIZE} height={MAP_SIZE} />
-      <text x={WIDTH - 12} y={HEIGHT - 12}>Map tiles © CARTO · Data © OpenStreetMap contributors</text>
+      <g className="clt-map-labels clt-map-labels--regional">
+        {REGION_LABELS.map((item) => {
+          const point = labelPoint(item.lat, item.lng);
+          return <text key={item.label} x={point.x} y={point.y}>{item.label}</text>;
+        })}
+      </g>
+      <g className="clt-map-labels clt-map-labels--country">
+        {COUNTRY_LABELS.map((item) => {
+          const point = labelPoint(item.lat, item.lng);
+          return <text key={item.label} x={point.x} y={point.y}>{item.label}</text>;
+        })}
+      </g>
+      <text className="clt-map-credit" x={WIDTH - 12} y={HEIGHT - 12}>Guardian map · offline labels</text>
     </g>
   );
 }
@@ -406,11 +504,11 @@ function NodeDetails({ node, nodeCircles, didPeers, onClose }: {
       )}
 
       <dl className="clt-kv">
-        <div><dt>Node ID</dt><dd title={node.did || node.id}>{displayForDid(node.did, node.id)}</dd></div>
+        <div><dt>Node ID</dt><dd title={node.did || node.id}>{node.did || node.id}</dd></div>
         <div><dt>Physical IP</dt><dd>{node.ip || "Not reported"}</dd></div>
         <div><dt>Overlay IP</dt><dd>{node.overlayIp || "Not reported"}</dd></div>
         <div><dt>Last signal</dt><dd>{node.lastSeen}</dd></div>
-        {node.did && <div><dt>DID</dt><dd className="clt-truncate" title={node.did}>{displayForDid(node.did, node.did)}</dd></div>}
+        {node.did && <div><dt>DID</dt><dd className="clt-truncate" title={node.did}>{node.did}</dd></div>}
       </dl>
 
       <div className="clt-attestation-card">
@@ -532,13 +630,18 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
   const selectedCircleLabel = selectedCircleId === ALL_CIRCLES_ID
     ? "All my circles"
     : (circles.find((item) => item.id === selectedCircleId)?.name ?? circle.name);
+  const nodeCircleEntries = useCallback((node: CircleTopologyNode) => {
+    const keys = [node.id, node.did, node.label, node.ip, node.overlayIp].filter(Boolean) as string[];
+    const merged = keys.flatMap((key) => getNodeCircles(membershipIndex, key));
+    return Array.from(new Map(merged.map((entry) => [entry.circleId, entry])).values());
+  }, [membershipIndex]);
 
   const scopedNodes = useMemo(() => {
     const filtered = selectedCircleId === ALL_CIRCLES_ID
       ? snapshot.nodes
-      : snapshot.nodes.filter((node) => getNodeCircles(membershipIndex, node.id).some((entry) => entry.circleId === selectedCircleId));
+      : snapshot.nodes.filter((node) => nodeCircleEntries(node).some((entry) => entry.circleId === selectedCircleId));
     return assignPrimaryLighthouse(filtered);
-  }, [snapshot.nodes, selectedCircleId, membershipIndex]);
+  }, [snapshot.nodes, selectedCircleId, nodeCircleEntries]);
 
   const links = useMemo(() => buildTopologyLinks(scopedNodes), [scopedNodes]);
   const nodes = useMemo(() => layoutNodes(scopedNodes), [scopedNodes]);
@@ -546,8 +649,8 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
   const nodeMap = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const selected = nodes.find((node) => node.id === selectedId) ?? null;
   const selectedNodeCircles = useMemo(
-    () => (selected ? getNodeCircles(membershipIndex, selected.id).map((entry) => entry.circleName) : []),
-    [selected, membershipIndex],
+    () => (selected ? nodeCircleEntries(selected).map((entry) => entry.circleName) : []),
+    [selected, nodeCircleEntries],
   );
   const selectedZone = geofenceZones.find((zone) => zone.zone_id === selectedZoneId) ?? null;
   const editingZoneNode = useMemo(() => {
@@ -591,8 +694,12 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
   }), [scopedNodes]);
   const visibleNodes = useMemo(() => nodes.filter((node) => visibleIds.has(node.id)), [nodes, visibleIds]);
   const meshLinks = links.filter((link) => link.kind === "mesh").length;
-  const relayLinks = links.filter((link) => link.kind === "relay").length;
+  // A relay route is backed by an enabled relay node. Counting generated mesh
+  // edges under-reports when the relay is also the lighthouse/anchor, because
+  // the layout intentionally omits an anchor-to-itself edge.
+  const relayLinks = summary.relays;
   const attestationLinks = links.filter((link) => link.kind === "attestation").length;
+  const locationBusy = geofenceBusy === "Getting location...";
 
   const refreshGeofence = useCallback(async () => {
     setGeofenceError(null);
@@ -604,14 +711,20 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
         geofenceApi.events().catch((error) => { throw new Error(`Geofence events request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
         geofenceApi.alerts().catch((error) => { throw new Error(`Geofence alerts request failed: ${error instanceof Error ? error.message : "Unknown error"}`); }),
       ]);
-      setGeofenceStatus({ ...status, location: status.location ?? location.location });
+      const mergedStatus: GeofenceStatus = {
+        ...status,
+        location: status.location ?? location.location ?? geofenceStatus?.location ?? null,
+      };
+      setGeofenceStatus(mergedStatus);
       setGeofenceZones(zoneResult.zones);
       setGeofenceEvents(eventResult.events);
       setGeofenceAlerts(alertResult.alerts);
+      return mergedStatus;
     } catch (err) {
       setGeofenceError(err instanceof Error ? err.message : "Geofence refresh failed: Unknown error");
+      return null;
     }
-  }, []);
+  }, [geofenceStatus?.location]);
 
   const refreshSimulationResults = useCallback(async () => {
     const [status, eventResult, alertResult] = await Promise.all([
@@ -626,8 +739,20 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
 
   const refreshAll = useCallback(() => { void refresh(); void refreshGeofence(); }, [refresh, refreshGeofence]);
 
+  const applyBrowserLocation = useCallback((location: StoredLocation) => {
+    setGeofenceStatus((current) => ({
+      source: current?.source ?? "reported",
+      selection_mode: current?.selection_mode ?? "forced",
+      source_reason: current?.source_reason ?? "Browser location reported from this device",
+      zones: current?.zones ?? [],
+      ...current,
+      location,
+    }));
+    setViewMode("map");
+  }, []);
+
   const reportLocation = useCallback(() => {
-    if (locationRequestInFlightRef.current || geofenceBusy) return;
+    if (locationRequestInFlightRef.current) return;
     setGeofenceToast(null);
     if (!navigator.geolocation) {
       setGeofenceError("Location unavailable");
@@ -636,14 +761,27 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
     locationRequestInFlightRef.current = true;
     setGeofenceBusy("Getting location...");
     setGeofenceError(null);
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
+    void (async () => {
+      try {
+        const position = await getBrowserPositionWithFallback();
+        const browserLocation: StoredLocation = {
+          source: "reported",
+          fix: {
+            kind: "coordinate",
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+            accuracy_m: position.coords.accuracy,
+          },
+          updated_at: new Date().toISOString(),
+        };
+        applyBrowserLocation(browserLocation);
         try {
-          await geofenceApi.reportLocation({
+          const result = await geofenceApi.reportLocation({
             lat: position.coords.latitude,
             lng: position.coords.longitude,
             accuracy_m: position.coords.accuracy,
           });
+          applyBrowserLocation(result.location);
           await refreshGeofence();
           setGeofenceToast({ message: "Location updated successfully", tone: "success" });
         } catch (err) {
@@ -652,21 +790,28 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
           locationRequestInFlightRef.current = false;
           setGeofenceBusy(null);
         }
-      },
-      (err) => {
+      } catch (err) {
+        const code = getLocationErrorCode(err);
         locationRequestInFlightRef.current = false;
         setGeofenceBusy(null);
-        setGeofenceError(err.code === err.PERMISSION_DENIED
+        const refreshedStatus = await refreshGeofence();
+        const fallbackLocation = refreshedStatus?.location ?? geofenceStatus?.location;
+        if (fallbackLocation) {
+          setViewMode("map");
+          setGeofenceToast({ message: "Showing last stored location. Browser did not return a fresh location fix.", tone: "error" });
+          setGeofenceError(null);
+          return;
+        }
+        setGeofenceError(code === 1
           ? "Permission denied"
-          : err.code === err.POSITION_UNAVAILABLE
-            ? "Location unavailable"
-            : err.code === err.TIMEOUT
-              ? "Request timed out"
-              : "Location unavailable");
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
-    );
-  }, [geofenceBusy, refreshGeofence]);
+          : code === 2
+            ? "Browser location unavailable. Make sure location services are enabled for this device."
+            : code === 3
+              ? "Browser location timed out. Make sure location services are enabled for this device."
+              : "Browser location unavailable. Make sure location services are enabled for this device.");
+      }
+    })();
+  }, [applyBrowserLocation, geofenceStatus?.location, refreshGeofence]);
 
   const saveZone = async (body: CreateZoneRequest) => {
     setGeofenceBusy("Creating zone");
@@ -755,7 +900,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
         select(viewportRef.current).attr("transform", event.transform.toString());
         const value = `${Math.round(event.transform.k * 100)}%`;
         const nextMode = event.transform.k < 1.08 ? "dots" : "icons";
-        const markerScale = Math.max(0.16, Math.min(1.25, 1 / event.transform.k));
+        const markerScale = Math.max(0.28, Math.min(1.9, 1 / event.transform.k));
         select(viewportRef.current).selectAll<SVGGElement, unknown>(".clt-node-scale").attr("transform", `scale(${markerScale})`);
         setZoomMode((current) => current === nextMode ? current : nextMode);
         if (zoomLabelRef.current) zoomLabelRef.current.textContent = value;
@@ -826,7 +971,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
   const liveState: "live" | "stale" | "error" = fatalError ? "error" : staleWarning ? "stale" : "live";
 
   return (
-    <section className={`clt-shell ${fullscreen ? "clt-shell--fullscreen" : ""} clt-shell--${zoomMode}`} style={paletteCssVars() as React.CSSProperties}>
+    <section className={`clt-shell ${fullscreen ? "clt-shell--fullscreen" : ""} clt-shell--${zoomMode} clt-shell--${viewMode}`} style={paletteCssVars() as React.CSSProperties}>
       <header className="clt-header">
         <div className="clt-title">
           <div className="clt-title__icon"><Network size={19} /></div>
@@ -912,14 +1057,6 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
             <span>Nodes appear after discovery or membership enrollment.</span>
           </div>
         )}
-        {viewMode === "map" && !deviceFix && scopedNodes.length > 0 && (
-          <div className="clt-empty">
-            <MapPin size={30} />
-            <strong>No device location yet</strong>
-            <span>Use "Update browser location" in the Geofence card to report this device's position.</span>
-          </div>
-        )}
-
         <svg ref={svgRef} className="clt-svg" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label={`${viewMode === "mesh" ? "Mesh" : "Map"} topology for ${selectedCircleLabel}`}>
           <defs>
             <radialGradient id="clt-node-online"><stop offset="0" stopColor="#153b3b" /><stop offset="1" stopColor="#07151c" /></radialGradient>
@@ -954,7 +1091,6 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
             )}
 
             {viewMode === "mesh" && (
-              <>
                 <g className="clt-links">
                   {links.map((link: CircleTopologyLink, linkIndex) => {
                     const source = nodeMap.get(link.source);
@@ -990,6 +1126,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
                     );
                   })}
                 </g>
+            )}
 
                 <g className="clt-nodes">
                   {nodes.map((node) => {
@@ -1001,7 +1138,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
                     const radius = node.primaryLighthouse ? 30 : node.roles.includes("lighthouse") ? 26 : node.roles.includes("relay") ? 23 : 17;
                     const kind = nodeKind(node);
                     const dotRadius = node.primaryLighthouse ? 8 : node.roles.includes("lighthouse") ? 7 : node.roles.includes("relay") ? 6 : 5;
-                    const nodeCircleEntries = getNodeCircles(membershipIndex, node.id);
+                    const nodeCircleEntriesForNode = nodeCircleEntries(node);
                     const nodeZones = geofenceZones.filter((zone) => zoneMatchesNode(zone, node));
                     return (
                       <g
@@ -1050,11 +1187,11 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
                           {node.primaryLighthouse && <g className="clt-primary-mark" transform={`translate(${-radius - 5} ${-radius - 9})`}><circle r="12" /><path d="M-4 1-1 4 5-4" /></g>}
                           {node.roles.includes("lighthouse") && <g className="clt-role-mark" transform={`translate(${-radius - 4} ${radius - 2})`}><circle r="12" /><TowerControl x={-7} y={-7} width={14} height={14} /></g>}
                           {node.roles.includes("relay") && <g className="clt-role-mark clt-role-mark--relay" transform={`translate(${radius + 3} ${radius - 2})`}><circle r="12" /><Router x={-7} y={-7} width={14} height={14} /></g>}
-                          {nodeCircleEntries.length > 1 && (
+                          {nodeCircleEntriesForNode.length > 1 && (
                             <g className="clt-role-mark clt-role-mark--multi" transform={`translate(${radius + 4} ${-radius - 9})`}>
                               <circle r="12" />
                               <Layers x={-7} y={-7} width={14} height={14} />
-                              <title>{`Member of ${nodeCircleEntries.length} circles: ${nodeCircleEntries.map((entry) => entry.circleName).join(", ")}`}</title>
+                              <title>{`Member of ${nodeCircleEntriesForNode.length} circles: ${nodeCircleEntriesForNode.map((entry) => entry.circleName).join(", ")}`}</title>
                             </g>
                           )}
                           <text className="clt-node__label" y={radius + 27}>{nodeDisplayName}</text>
@@ -1065,8 +1202,6 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
                     );
                   })}
                 </g>
-              </>
-            )}
           </g>
         </svg>
 
@@ -1196,7 +1331,7 @@ export function CircleLiveTopology({ circle, circles }: { circle: CircleTopology
           </div>
           <div className="clt-geofence-actions">
             <button onClick={() => void refreshGeofence()} disabled={!!geofenceBusy} title="Refresh geofence" aria-label="Refresh geofence"><RefreshCw size={12} /></button>
-            <button onClick={reportLocation} disabled={!!geofenceBusy} title="Update browser location" aria-label="Update browser location"><MapPin size={12} /></button>
+            <button onClick={reportLocation} disabled={locationBusy} title="Update browser location" aria-label="Update browser location"><MapPin size={12} /></button>
             <button onClick={() => setEditingZone(null)} disabled={!!geofenceBusy || !selected} title={selected ? `Create zone on ${displayForDid(selected.did, selected.label)}` : "Select a topology node first"} aria-label="Create zone on selected node"><Plus size={12} /></button>
             <button onClick={() => setEditingZone(selectedZone)} disabled={!!geofenceBusy || !selectedZone} title="Edit selected zone" aria-label="Edit selected zone"><Pencil size={12} /></button>
             <button onClick={() => selectedZone && void runZoneAction(selectedZone, "toggle")} disabled={!!geofenceBusy || !selectedZone} title={selectedZone?.enabled ? "Disable zone" : "Enable zone"} aria-label={selectedZone?.enabled ? "Disable zone" : "Enable zone"}><ShieldCheck size={12} /></button>

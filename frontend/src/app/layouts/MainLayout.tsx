@@ -18,6 +18,7 @@ const routeFallback = (
 export function MainLayout() {
   const { session } = useAuth();
   const memberSession = isMemberRole(session?.user.role);
+  const pendingMemberSession = memberSession && (session?.circleIds.length || 0) === 0;
   const { reachable, status, lastSeen, pendingCount, syncRunning, retryNow } = useGuardianConnectivity();
   const showConnectivityBanner = !reachable || status === "credential_revoked";
   const banner = showConnectivityBanner ? (
@@ -32,6 +33,18 @@ export function MainLayout() {
 
   return (
     <>
+      {pendingMemberSession && (
+        <div className="flex justify-center" style={{ minHeight: "100dvh", backgroundColor: "#000" }}>
+          <main
+            className="w-full overflow-y-auto overflow-x-hidden"
+            style={{ maxWidth: "440px", minHeight: "100dvh", backgroundColor: "var(--background)", WebkitOverflowScrolling: "touch" }}
+          >
+            <Suspense fallback={routeFallback}><Outlet /></Suspense>
+          </main>
+        </div>
+      )}
+      {!pendingMemberSession && (
+      <>
       {/* ── Mobile layout (< 768px) ── centered card with bottom nav */}
       <div
         className="md:hidden flex justify-center"
@@ -90,6 +103,8 @@ export function MainLayout() {
           <Suspense fallback={routeFallback}><Outlet /></Suspense>
         </main>
       </div>
+      </>
+      )}
     </>
   );
 }

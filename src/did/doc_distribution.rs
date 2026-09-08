@@ -4,17 +4,24 @@ use crate::did::doc_persistence::{
 use crate::did::doc_sign::verify_with_replay_protection;
 use crate::did::document::DidDocument;
 use crate::did::errors::DidError;
-use crate::nebula::registry_sync::{RegistryRequest, RegistryResponse, REGISTRY_SYNC_PORT};
+use crate::nebula::registry_sync::{REGISTRY_SYNC_PORT, RegistryRequest, RegistryResponse};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 const REQ_TIMEOUT_SECS: u64 = 10;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DidDocIngestResult {
+    pub did: String,
+    pub version: u32,
+    pub peer_count: usize,
+}
+
 pub async fn publish_to_ca(
     ca_host: &str,
     node_name: &str,
     doc: &DidDocument,
-) -> Result<(), DidError> {
+) -> Result<RegistryResponse, DidError> {
     let json = serde_json::to_string(doc)?;
     let req = RegistryRequest {
         action: "publish_did_doc".into(),
@@ -31,7 +38,7 @@ pub async fn publish_to_ca(
             resp.error.unwrap_or_default()
         )));
     }
-    Ok(())
+    Ok(resp)
 }
 
 pub async fn pull_and_apply_aggregate(ca_host: &str) -> Result<Vec<String>, DidError> {
@@ -70,7 +77,7 @@ pub async fn pull_and_apply_aggregate(ca_host: &str) -> Result<Vec<String>, DidE
     Ok(updated_dids)
 }
 
-pub async fn ca_ingest_published(payload: &str) -> Result<(), DidError> {
+pub async fn ca_ingest_published(payload: &str) -> Result<DidDocIngestResult, DidError> {
     let doc: DidDocument = serde_json::from_str(payload)?;
     let existing = crate::did::doc_persistence::load_peer(&doc.did()?)?;
 
@@ -108,8 +115,13 @@ pub async fn ca_ingest_published(payload: &str) -> Result<(), DidError> {
     verify_with_replay_protection(&doc, floor)?;
     save_peer(&doc)?;
     let aggregate = list_peer_docs()?;
+    let peer_count = aggregate.len();
     save_ca_aggregate(&aggregate)?;
-    Ok(())
+    Ok(DidDocIngestResult {
+        did: doc.id.clone(),
+        version: doc.sgx_version_id,
+        peer_count,
+    })
 }
 
 pub async fn ca_export_aggregate() -> Result<String, DidError> {
@@ -178,7 +190,7 @@ mod tests {
     use super::*;
     use crate::did::doc_persistence::{self, PEERS_DOC_DIR_ENV, SELF_DOC_PATH_ENV};
     use crate::did::document::DocBuildInput;
-    use crate::did::{doc_sign, Did};
+    use crate::did::{Did, doc_sign};
     use crate::key_manager::KeyManager;
     use tempfile::TempDir;
 

@@ -2,8 +2,8 @@ use crate::api::auth::middleware::AuthenticatedSession;
 use crate::api::{error::ApiError, state::AppState};
 use crate::contacts::store::{self, Contact, ContactDraft, ContactPatch};
 use axum::{
-    extract::{Path, State},
     Extension, Json,
+    extract::{Path, State},
 };
 use serde::Serialize;
 use std::collections::HashSet;
@@ -18,12 +18,14 @@ fn member_circle_scope(session: &Option<Extension<AuthenticatedSession>>) -> Opt
     })
 }
 
-/// Who a saved contact belongs to: `None` for the Guardian device itself
-/// (admin/owner), `Some(member_did)` for a specific browser member. Contacts
-/// are strictly private per-owner — the admin and every member each keep
-/// their own separate address book, even though it's one shared store file.
+/// Who a saved contact belongs to: the authenticated user's `user_id`.
+/// Contacts are strictly private per account — the admin and every member
+/// each keep their own separate address book, even though it's one shared
+/// store file.
 fn contact_owner(session: &Option<Extension<AuthenticatedSession>>) -> Option<String> {
-    crate::api::handlers::browser_member::did_from_session(session)
+    session
+        .as_ref()
+        .map(|Extension(session)| session.claims.sub.clone())
 }
 
 #[derive(Serialize)]

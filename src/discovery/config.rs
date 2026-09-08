@@ -2,6 +2,7 @@ use crate::discovery::error::{DiscoveryError, DiscoveryResult};
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use std::path::Path;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -31,9 +32,36 @@ pub enum ScheduledScanKind {
     Daily,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleFrequency {
+    Once,
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly,
+    Custom,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ScheduleDay {
+    Monday,
+    Tuesday,
+    Wednesday,
+    Thursday,
+    Friday,
+    Saturday,
+    Sunday,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScheduleProfile {
     pub intensity: ScanIntensity,
+    #[serde(default)]
+    pub days: Vec<ScheduleDay>,
+    #[serde(default = "default_schedule_time")]
+    pub time: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -42,6 +70,25 @@ pub struct ScheduledScans {
     pub hourly: ScheduleProfile,
     #[serde(default = "default_daily_profile")]
     pub daily: ScheduleProfile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScanScheduleProfile {
+    #[serde(default = "default_schedule_id")]
+    pub id: String,
+    #[serde(default = "default_schedule_frequency")]
+    pub frequency: ScheduleFrequency,
+    pub intensity: ScanIntensity,
+    #[serde(default)]
+    pub days: Vec<ScheduleDay>,
+    #[serde(default)]
+    pub day_of_month: Option<u8>,
+    #[serde(default)]
+    pub month: Option<u8>,
+    #[serde(default = "default_schedule_time")]
+    pub time: String,
+    #[serde(default = "default_schedule_timezone")]
+    pub timezone: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +127,9 @@ pub struct NmapConfig {
     #[serde(default)]
     pub schedules: ScheduledScans,
 
+    #[serde(default, rename = "scan_schedules")]
+    pub scan_schedules: Vec<ScanScheduleProfile>,
+
     #[serde(skip)]
     legacy_schedule: Option<ScanSchedule>,
 
@@ -97,8 +147,12 @@ struct RawNmapConfig {
     #[serde(default)]
     exclude: Vec<String>,
     schedules: Option<ScheduledScans>,
+    #[serde(default, rename = "scan_schedules")]
+    scan_schedules: Option<Vec<ScanScheduleProfile>>,
+    #[serde(default, rename = "scan_schedule")]
+    scan_schedule: Option<ScanScheduleProfile>,
     intensity: Option<ScanIntensity>,
-    schedule: Option<ScanSchedule>,
+    legacy_schedule: Option<ScanSchedule>,
 }
 
 fn default_intensity() -> ScanIntensity {
@@ -109,16 +163,44 @@ fn default_schedule() -> ScanSchedule {
     ScanSchedule::Hourly
 }
 
+fn default_schedule_frequency() -> ScheduleFrequency {
+    ScheduleFrequency::Weekly
+}
+
 fn default_hourly_profile() -> ScheduleProfile {
     ScheduleProfile {
         intensity: ScanIntensity::Standard,
+        days: Vec::new(),
+        time: default_schedule_time(),
     }
 }
 
 fn default_daily_profile() -> ScheduleProfile {
     ScheduleProfile {
         intensity: ScanIntensity::Aggressive,
+        days: default_schedule_days(),
+        time: default_schedule_time(),
     }
+}
+
+fn default_schedule_days() -> Vec<ScheduleDay> {
+    vec![
+        ScheduleDay::Monday,
+        ScheduleDay::Wednesday,
+        ScheduleDay::Friday,
+    ]
+}
+
+fn default_schedule_time() -> String {
+    "23:00".to_string()
+}
+
+fn default_schedule_timezone() -> String {
+    "America/New_York".to_string()
+}
+
+fn default_schedule_id() -> String {
+    format!("sched-{}", Uuid::new_v4().simple())
 }
 
 fn default_timeout_secs() -> u64 {
@@ -134,6 +216,21 @@ impl Default for ScheduledScans {
     }
 }
 
+impl Default for ScanScheduleProfile {
+    fn default() -> Self {
+        Self {
+            id: default_schedule_id(),
+            frequency: default_schedule_frequency(),
+            intensity: default_intensity(),
+            days: default_schedule_days(),
+            day_of_month: Some(1),
+            month: None,
+            time: default_schedule_time(),
+            timezone: default_schedule_timezone(),
+        }
+    }
+}
+
 impl Default for NmapConfig {
     fn default() -> Self {
         Self {
@@ -142,6 +239,7 @@ impl Default for NmapConfig {
             timeout_secs: default_timeout_secs(),
             exclude: Vec::new(),
             schedules: ScheduledScans::default(),
+            scan_schedules: Vec::new(),
             legacy_schedule: None,
             legacy_intensity: None,
         }
@@ -155,8 +253,44 @@ impl<'de> Deserialize<'de> for NmapConfig {
     {
         let raw = RawNmapConfig::deserialize(deserializer)?;
         let schedules_present = raw.schedules.is_some();
+        let scan_schedules_present = raw.scan_schedules.is_some();
+        let mut scan_schedules = raw.scan_schedules.unwrap_or_default();
+        if !scan_schedules_present {
+            if let Some(schedule) = raw.scan_schedule {
+                scan_schedules.push(schedule);
+            } else {
+                scan_schedules.push(ScanScheduleProfile {
+                    id: default_schedule_id(),
+                    frequency: ScheduleFrequency::Weekly,
+                    intensity: raw
+                        .schedules
+                        .as_ref()
+                        .map(|s| s.daily.intensity)
+                        .unwrap_or_else(default_intensity),
+                    days: raw
+                        .schedules
+                        .as_ref()
+                        .map(|s| {
+                            if s.daily.days.is_empty() {
+                                default_schedule_days()
+                            } else {
+                                s.daily.days.clone()
+                            }
+                        })
+                        .unwrap_or_else(default_schedule_days),
+                    day_of_month: None,
+                    month: None,
+                    time: raw
+                        .schedules
+                        .as_ref()
+                        .map(|s| s.daily.time.clone())
+                        .unwrap_or_else(default_schedule_time),
+                    timezone: default_schedule_timezone(),
+                });
+            }
+        }
         let legacy_intensity = raw.intensity;
-        let legacy_schedule = raw.schedule;
+        let legacy_schedule = raw.legacy_schedule;
 
         let mut cfg = Self {
             enabled: raw.enabled,
@@ -164,6 +298,7 @@ impl<'de> Deserialize<'de> for NmapConfig {
             timeout_secs: raw.timeout_secs,
             exclude: raw.exclude,
             schedules: raw.schedules.unwrap_or_default(),
+            scan_schedules,
             legacy_schedule: None,
             legacy_intensity: None,
         };
@@ -181,6 +316,32 @@ impl<'de> Deserialize<'de> for NmapConfig {
             }
         }
 
+        if cfg.schedules.daily.days.is_empty() {
+            cfg.schedules.daily.days = default_schedule_days();
+        }
+        if cfg.schedules.daily.time.trim().is_empty() {
+            cfg.schedules.daily.time = default_schedule_time();
+        }
+
+        // Preserve an explicitly saved empty list. It means the administrator
+        // removed all tasks; recreating a legacy weekly task here made the UI
+        // appear to ignore deletes and user-selected schedules.
+        if cfg.scan_schedules.is_empty() && !scan_schedules_present {
+            cfg.scan_schedules.push(ScanScheduleProfile {
+                id: default_schedule_id(),
+                frequency: ScheduleFrequency::Weekly,
+                intensity: cfg.schedules.daily.intensity,
+                days: if cfg.schedules.daily.days.is_empty() {
+                    default_schedule_days()
+                } else {
+                    cfg.schedules.daily.days.clone()
+                },
+                day_of_month: None,
+                month: None,
+                time: cfg.schedules.daily.time.clone(),
+                timezone: default_schedule_timezone(),
+            });
+        }
         Ok(cfg)
     }
 }
@@ -211,11 +372,54 @@ impl NmapConfig {
             validate_ip_or_cidr(value, "exclude")?;
         }
 
+        validate_scan_time(&self.schedules.daily.time)?;
+        if self.schedules.daily.days.is_empty() {
+            return Err(DiscoveryError::BadConfig(
+                "schedules.daily.days must include at least one day".into(),
+            ));
+        }
+
+        for schedule in &self.scan_schedules {
+            validate_scan_time(&schedule.time)?;
+            if schedule.timezone.trim().is_empty() {
+                return Err(DiscoveryError::BadConfig(
+                    "scan_schedules.timezone must not be empty".into(),
+                ));
+            }
+            if !schedule
+                .timezone
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '_' | '+' | '-'))
+            {
+                return Err(DiscoveryError::BadConfig(
+                    "scan_schedules.timezone contains unsupported characters".into(),
+                ));
+            }
+            if let Some(day) = schedule.day_of_month {
+                if !(1..=31).contains(&day) {
+                    return Err(DiscoveryError::BadConfig(
+                        "scan_schedules.day_of_month must be 1..=31".into(),
+                    ));
+                }
+            }
+            if let Some(month) = schedule.month {
+                if !(1..=12).contains(&month) {
+                    return Err(DiscoveryError::BadConfig(
+                        "scan_schedules.month must be 1..=12".into(),
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 
     pub fn legacy_schedule_mode(&self) -> Option<ScanSchedule> {
         self.legacy_schedule
+    }
+
+    pub fn active_schedules(&self) -> &[ScanScheduleProfile] {
+        &self.scan_schedules
     }
 
     pub fn ad_hoc_intensity(&self) -> ScanIntensity {
@@ -224,6 +428,9 @@ impl NmapConfig {
     }
 
     pub fn scheduled_intensity(&self, kind: ScheduledScanKind) -> Option<ScanIntensity> {
+        if !self.scan_schedules.is_empty() {
+            return None;
+        }
         if let Some(legacy_schedule) = self.legacy_schedule {
             let legacy_intensity = self.legacy_intensity.unwrap_or_else(default_intensity);
             return match (legacy_schedule, kind) {
@@ -233,10 +440,7 @@ impl NmapConfig {
             };
         }
 
-        Some(match kind {
-            ScheduledScanKind::Hourly => self.schedules.hourly.intensity,
-            ScheduledScanKind::Daily => self.schedules.daily.intensity,
-        })
+        None
     }
 
     pub fn resolved_target_cidr(&self) -> String {
@@ -515,6 +719,26 @@ fn validate_ip_or_cidr(value: &str, field_name: &str) -> DiscoveryResult<()> {
     })
 }
 
+fn validate_scan_time(value: &str) -> DiscoveryResult<()> {
+    let Some((hour, minute)) = value.split_once(':') else {
+        return Err(DiscoveryError::BadConfig(
+            "schedules.daily.time must use HH:MM".into(),
+        ));
+    };
+    let hour = hour.parse::<u8>().map_err(|_| {
+        DiscoveryError::BadConfig("schedules.daily.time hour must be 00..=23".into())
+    })?;
+    let minute = minute.parse::<u8>().map_err(|_| {
+        DiscoveryError::BadConfig("schedules.daily.time minute must be 00..=59".into())
+    })?;
+    if hour > 23 || minute > 59 {
+        return Err(DiscoveryError::BadConfig(
+            "schedules.daily.time must be between 00:00 and 23:59".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn parse_ipv4_cidr(value: &str) -> Result<(Ipv4Addr, u8), String> {
     let (ip_str, prefix_str) = value
         .rsplit_once('/')
@@ -578,7 +802,7 @@ fn prefix_to_mask(prefix: u8) -> u32 {
 mod tests {
     use super::{
         auto_detect_local_cidr_or_default, NmapConfig, PortMergeStrategy, ScanIntensity,
-        ScanSchedule, ScheduledScanKind,
+        ScanSchedule, ScheduleFrequency, ScheduledScanKind,
     };
 
     #[test]
@@ -587,6 +811,30 @@ mod tests {
         assert_eq!(cfg.schedules.hourly.intensity, ScanIntensity::Standard);
         assert_eq!(cfg.schedules.daily.intensity, ScanIntensity::Aggressive);
         assert_eq!(cfg.ad_hoc_intensity(), ScanIntensity::Standard);
+    }
+
+    #[test]
+    fn empty_scan_schedule_backfills_default_task_and_enables_config() {
+        let yaml = r#"
+enabled: false
+target_cidr: null
+timeout_secs: 600
+exclude: []
+scan_schedules: []
+schedules:
+  hourly:
+    intensity: standard
+  daily:
+    intensity: aggressive
+    days: [monday, wednesday, friday]
+    time: "23:00"
+"#;
+
+        let cfg: NmapConfig = serde_yaml::from_str(yaml).expect("config should parse");
+        assert!(cfg.enabled);
+        assert_eq!(cfg.scan_schedules.len(), 1);
+        assert_eq!(cfg.scan_schedules[0].frequency, ScheduleFrequency::Weekly);
+        assert_eq!(cfg.scan_schedules[0].intensity, ScanIntensity::Aggressive);
     }
 
     #[test]

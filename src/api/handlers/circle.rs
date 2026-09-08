@@ -12,15 +12,15 @@ use crate::circle::{Circle, CircleError};
 use crate::did::Did;
 use crate::vc::credential::{CredentialRole, VerifiableCredential};
 use crate::vc::issue::{
-    self, default_permissions_for_role, IssueMembershipOutcome, IssueRequest, VcAdminAction,
+    self, IssueMembershipOutcome, IssueRequest, VcAdminAction, default_permissions_for_role,
 };
 use axum::Extension;
 use axum::{
-    extract::{Path, State},
-    http::{header, HeaderMap, StatusCode},
     Json,
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode, header},
 };
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

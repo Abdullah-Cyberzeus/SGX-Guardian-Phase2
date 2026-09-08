@@ -1,19 +1,14 @@
 use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
-use axum::{extract::State, Json};
+use crate::policy_authority::{PA_PRIV_PATH, PA_PUB_PATH, PaKey};
+use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
-const DEFAULT_GUARDIAN_PRIV_KEY_PATH: &str = "/etc/sgx-guardian/guardian_private.key";
-const DEFAULT_GUARDIAN_PUB_KEY_PATH: &str = "/etc/sgx-guardian/guardian_public.key";
-const DEFAULT_KEYGEN_WORKDIR: &str = "/etc/sgx-guardian/";
-const GENERATED_PRIV_KEY_NAME: &str = "guardian_private.key";
-const GENERATED_PUB_KEY_NAME: &str = "guardian_public.key";
-const GUARDIAN_PROVIDER: &str = "software";
+const GUARDIAN_PROVIDER: &str = "PaKey";
 const GUARDIAN_ALGORITHM: &str = "ECDSA-P256";
 
 #[derive(Clone)]
@@ -72,12 +67,6 @@ pub struct GuardianKeyGenerateResponse {
     pub fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub backups: Vec<KeyBackup>,
-}
-
-struct CliResult {
-    success: bool,
-    stdout: String,
-    stderr: String,
 }
 
 /// GET /api/v1/guardian/key/status
@@ -172,18 +161,18 @@ pub async fn generate(
         );
     }
 
-    let workdir = guardian_keygen_workdir();
-    let cli = run_guardian_keygen(&workdir).await?;
+    let mut success = true;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
 
-    let mut success = cli.success;
-    let stdout = cli.stdout;
-    let mut stderr = cli.stderr;
-
-    if success {
-        if let Err(e) = install_generated_keys(&workdir, &paths) {
-            success = false;
-            append_line(&mut stderr, &format!("install failed: {}", e));
-        }
+    if let Err(e) = PaKey::load_or_generate_at(&paths.private_key_path, &paths.public_key_path) {
+        success = false;
+        append_line(&mut stderr, &format!("PaKey generation failed: {}", e));
+    } else if let Err(e) = apply_required_permissions(&paths) {
+        success = false;
+        append_line(&mut stderr, &format!("permission update failed: {}", e));
+    } else {
+        stdout = "Policy Authority keypair ready".to_string();
     }
 
     if !success && !backups.is_empty() {
@@ -215,7 +204,7 @@ pub async fn generate(
             AuditSeverity::Info,
             AuditAction::Succeeded,
             &format!(
-                "Guardian software key generation succeeded (forced={})",
+                "Policy Authority key generation succeeded (forced={})",
                 forced
             ),
         );
@@ -225,10 +214,7 @@ pub async fn generate(
             AuditCategory::Policy,
             AuditSeverity::Critical,
             AuditAction::Failed,
-            &format!(
-                "Guardian software key generation failed (forced={})",
-                forced
-            ),
+            &format!("Policy Authority key generation failed (forced={})", forced),
         );
     }
 
@@ -239,20 +225,14 @@ pub async fn generate(
 }
 
 fn guardian_key_paths() -> GuardianKeyPaths {
-    let private_key_path = std::env::var("SGX_GUARDIAN_PRIV_KEY_PATH")
-        .unwrap_or_else(|_| DEFAULT_GUARDIAN_PRIV_KEY_PATH.to_string());
-    let public_key_path = std::env::var("SGX_GUARDIAN_PUB_KEY_PATH")
-        .unwrap_or_else(|_| DEFAULT_GUARDIAN_PUB_KEY_PATH.to_string());
+    let private_key_path =
+        std::env::var("SGX_GUARDIAN_PRIV_KEY_PATH").unwrap_or_else(|_| PA_PRIV_PATH.to_string());
+    let public_key_path =
+        std::env::var("SGX_GUARDIAN_PUB_KEY_PATH").unwrap_or_else(|_| PA_PUB_PATH.to_string());
     GuardianKeyPaths {
         private_key_path,
         public_key_path,
     }
-}
-
-fn guardian_keygen_workdir() -> PathBuf {
-    std::env::var("SGX_GUARDIAN_KEYGEN_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_KEYGEN_WORKDIR))
 }
 
 fn append_line(buf: &mut String, line: &str) {
@@ -260,135 +240,6 @@ fn append_line(buf: &mut String, line: &str) {
         buf.push('\n');
     }
     buf.push_str(line);
-}
-
-fn is_executable_file(path: &Path) -> bool {
-    path.is_file()
-}
-
-fn find_in_path(bin: &str) -> Option<PathBuf> {
-    let path_var = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(bin);
-        if is_executable_file(&candidate) {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-fn resolve_pa_cli_path() -> Option<PathBuf> {
-    if let Ok(override_path) = std::env::var("SGX_PA_CLI_PATH") {
-        let p = PathBuf::from(override_path);
-        if is_executable_file(&p) {
-            return Some(p);
-        }
-    }
-
-    if let Some(p) = find_in_path("sgx-pa-cli") {
-        return Some(p);
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let sibling = dir.join("sgx-pa-cli");
-            if is_executable_file(&sibling) {
-                return Some(sibling);
-            }
-        }
-    }
-
-    [
-        "/usr/local/bin/sgx-pa-cli",
-        "/usr/bin/sgx-pa-cli",
-        "/bin/sgx-pa-cli",
-    ]
-    .iter()
-    .map(PathBuf::from)
-    .find(|p| is_executable_file(p))
-}
-
-async fn run_guardian_keygen(workdir: &Path) -> Result<CliResult, ApiError> {
-    let output = if let Some(cli_path) = resolve_pa_cli_path() {
-        tokio::process::Command::new(&cli_path)
-            .current_dir(workdir)
-            .arg("keygen")
-            .output()
-            .await
-            .map_err(|e| {
-                ApiError::Internal(format!(
-                    "failed to spawn sgx-pa-cli ({}) in {}: {}",
-                    cli_path.display(),
-                    workdir.display(),
-                    e
-                ))
-            })?
-    } else {
-        tokio::process::Command::new("cargo")
-            .current_dir(workdir)
-            .args(["run", "--", "keygen"])
-            .output()
-            .await
-            .map_err(|e| {
-                ApiError::Internal(format!(
-                    "failed to run fallback cargo keygen in {}: {}",
-                    workdir.display(),
-                    e
-                ))
-            })?
-    };
-
-    Ok(CliResult {
-        success: output.status.success(),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-    })
-}
-
-fn install_generated_keys(workdir: &Path, paths: &GuardianKeyPaths) -> std::io::Result<()> {
-    let generated_private = workdir.join(GENERATED_PRIV_KEY_NAME);
-    let generated_public = workdir.join(GENERATED_PUB_KEY_NAME);
-
-    if !generated_private.exists() || !generated_public.exists() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!(
-                "keygen output missing in {} (need {} and {})",
-                workdir.display(),
-                GENERATED_PRIV_KEY_NAME,
-                GENERATED_PUB_KEY_NAME
-            ),
-        ));
-    }
-
-    let private_bytes = std::fs::read(generated_private)?;
-    let public_bytes = std::fs::read(generated_public)?;
-
-    atomic_write_bytes(&paths.private_key_path, &private_bytes)?;
-    atomic_write_bytes(&paths.public_key_path, &public_bytes)?;
-    apply_required_permissions(paths)?;
-    Ok(())
-}
-
-fn atomic_write_bytes(path: &str, bytes: &[u8]) -> std::io::Result<()> {
-    ensure_parent_dir(path)?;
-    let tmp = format!("{}.tmp", path);
-    {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-    }
-    std::fs::rename(tmp, path)?;
-    Ok(())
-}
-
-fn ensure_parent_dir(path: &str) -> std::io::Result<()> {
-    if let Some(parent) = Path::new(path).parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
-    }
-    Ok(())
 }
 
 fn apply_required_permissions(paths: &GuardianKeyPaths) -> std::io::Result<()> {

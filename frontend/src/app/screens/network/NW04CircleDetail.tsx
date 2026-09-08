@@ -1,9 +1,9 @@
 import { useEffect, useState, useMemo } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
-import { useCircles, usePeers } from "../../hooks/useApiData";
+import { useCircles, useGuardianInfo, usePeers } from "../../hooks/useApiData";
 import {
-  Send, Phone, Video, UserPlus, Copy, Check, X, ChevronRight,
+  Send, Phone, Video, UserPlus, Copy, Check, X, ChevronLeft, ChevronRight,
   Link, QrCode, Search, MessageSquare, Users, PhoneCall, Mail, MessageCircle,
   Trash2, AlertTriangle, FolderOpen, Settings, Loader2, ArrowLeft, Download
 } from "lucide-react";
@@ -42,6 +42,7 @@ export function NW04CircleDetail() {
 
   const { data: circlesData, loading: circlesLoading, error: circlesError, refetch: refetchCircles } = useCircles();
   const { data: peersData, loading: peersLoading, error: peersError } = usePeers();
+  const { data: guardianInfo } = useGuardianInfo();
   const circles: any[] = Array.isArray(circlesData) ? circlesData : [];
   const trustedPeers = Array.isArray(peersData) ? peersData : [];
 
@@ -74,6 +75,8 @@ export function NW04CircleDetail() {
   const [directMessages, setDirectMessages] = useState<any[]>([]);
   const [directLoading, setDirectLoading] = useState(false);
   const [sendingDirect, setSendingDirect] = useState(false);
+  const membersPageSize = 8;
+  const [membersPage, setMembersPage] = useState(1);
 
   const baseMembers = localMembers || circle?.members || [];
   const members = useMemo(() => {
@@ -92,13 +95,28 @@ export function NW04CircleDetail() {
       }));
     return [...baseMembers, ...pending];
   }, [baseMembers, pendingInvites]);
+  const membersTotalPages = Math.max(1, Math.ceil(members.length / membersPageSize));
+  const membersCurrentPage = Math.min(membersPage, membersTotalPages);
+  const visibleMembers = useMemo(
+    () => members.slice((membersCurrentPage - 1) * membersPageSize, membersCurrentPage * membersPageSize),
+    [members, membersCurrentPage],
+  );
   const callHistory = useCallHistory();
   const selectedMember = members.find((m: any) => String(m.did || m.id) === memberDetailOpen);
   const memberToRemove = members.find((m: any) => String(m.did || m.id) === removeDialogOpen);
   const sameDid = (left?: string, right?: string) => String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
+  const localGuardianName = guardianInfo?.deviceId || guardianInfo?.name || guardianInfo?.hostname;
+  const memberDisplayName = (member: any) => {
+    if (sameDid(member?.did, session?.guardianDid) && localGuardianName) return localGuardianName;
+    return String(displayForDid(member?.did, member?.name || member?.nodeHint || member?.did || "Guardian member"));
+  };
 
   useEffect(() => {
     setLocalMembers(null);
+  }, [circleId]);
+
+  useEffect(() => {
+    setMembersPage(1);
   }, [circleId]);
 
   const setTab = (tab: Tab) => {
@@ -238,6 +256,10 @@ export function NW04CircleDetail() {
     const deduped = Array.from(new Map(candidates.map((item) => [item.did, item])).values());
     return deduped.filter((item) => !query || item.did.toLowerCase().includes(query) || item.label.toLowerCase().includes(query) || item.sub.toLowerCase().includes(query));
   }, [trustedPeers, didSearch]);
+  const availableInviteRecipients = useMemo(() => {
+    const existing = new Set(members.map((member: any) => String(member.did || "").trim().toLowerCase()).filter(Boolean));
+    return didResults.filter((item) => !existing.has(item.did.toLowerCase()));
+  }, [didResults, members]);
 
   const normalizeGuardianDid = (did: string) => did.trim().startsWith("did:guardian:") ? did.trim() : `did:guardian:${did.trim()}`;
 
@@ -380,7 +402,7 @@ export function NW04CircleDetail() {
     chatService.history(directMember.did)
       .then(({ messages: history }) => {
         if (cancelled) return;
-        const directMemberName = displayForDid(directMember.did, directMember.name || directMember.nodeHint || directMember.did);
+        const directMemberName = memberDisplayName(directMember);
         setDirectMessages(history.map((item) => ({
           id: item.message_id,
           sender: item.sender_did === directMember.did ? directMemberName : "Me",
@@ -545,14 +567,12 @@ export function NW04CircleDetail() {
     );
   }
 
-  const onlineMemberCount = members.filter((member: any) => peerForMember(member)?.online).length;
-
   return (
     <>
       <div className="flex flex-col h-full">
         <PageHeader
           title={circle.name}
-          subtitle={`${onlineMemberCount} of ${members.length} online`}
+          subtitle={`${members.length} members`}
           onBack={() => navigate("/network", { replace: true })}
           right={
             <div className="flex items-center gap-1">
@@ -756,7 +776,7 @@ export function NW04CircleDetail() {
                     <p className="mt-1 text-xs text-muted-foreground">This list comes directly from the Circle members API.</p>
                   </div>
                 )}
-                {members.map((member, i) => {
+                {visibleMembers.map((member, i) => {
                   const trustedPeer = peerForMember(member);
                   const busy = !!startingCall;
                   const isBrowserMember = String(member?.memberType || member?.member_type || "").toLowerCase() === "browser";
@@ -776,14 +796,14 @@ export function NW04CircleDetail() {
                         : trustedPeer.callUnavailableReason || (!trustedPeer.callAvailable ? "Peer is not available for calls" : "");
                   const invitePending = Boolean((member as any).pending) || String((member as any).status || (member as any).membershipStatus || "").toLowerCase() === "pending";
                   const callsDisabled = invitePending || busy || isCurrentMember || !target || target === currentDevice || (!browserCallAvailable && !trustedPeer?.callAvailable);
-                  const memberName = String(displayForDid(member.did, member.name || member.nodeHint || member.did || "Guardian member"));
+                  const memberName = memberDisplayName(member);
                   const memberSecondary = member.email || (isBrowserMember ? "Browser PWA member" : displayForDid(member.did, member.did));
                   const memberKey = String(member.did || member.id || `${memberName}-${i}`);
                   return (
                   <div
                     key={memberKey}
                     className="w-full flex items-center gap-3 px-4 py-3.5 text-left transition-opacity active:opacity-70"
-                    style={{ backgroundColor: "transparent", borderBottom: i < members.length - 1 ? "1px solid var(--border)" : undefined }}
+                    style={{ backgroundColor: "transparent", borderBottom: i < visibleMembers.length - 1 ? "1px solid var(--border)" : undefined }}
                   >
                     <div
                       className="rounded-full flex items-center justify-center flex-shrink-0"
@@ -820,6 +840,36 @@ export function NW04CircleDetail() {
                     </div>
                   </div>
                 );})}
+                {membersTotalPages > 1 && (
+                  <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3" style={{ backgroundColor: "var(--card)" }}>
+                    <p className="text-xs text-muted-foreground">
+                      Showing {(membersCurrentPage - 1) * membersPageSize + 1}-{Math.min(members.length, membersCurrentPage * membersPageSize)} of {members.length}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setMembersPage((current) => Math.max(1, current - 1))}
+                        disabled={membersCurrentPage === 1}
+                        className="grid h-8 w-8 place-items-center rounded-full border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                        aria-label="Previous member page"
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      <span className="min-w-16 text-center text-xs text-muted-foreground">
+                        {membersCurrentPage} / {membersTotalPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setMembersPage((current) => Math.min(membersTotalPages, current + 1))}
+                        disabled={membersCurrentPage === membersTotalPages}
+                        className="grid h-8 w-8 place-items-center rounded-full border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                        aria-label="Next member page"
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
               </div>
             </div>
@@ -937,6 +987,27 @@ export function NW04CircleDetail() {
               )}
               {sheetTab === "search" && (
                 <div className="flex flex-col gap-4">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Available members</label>
+                    <select
+                      className="w-full rounded-md border border-border bg-input-background px-3 py-2.5 text-sm outline-none"
+                      value={selectedDid}
+                      onChange={(event) => {
+                        const did = event.target.value;
+                        setSelectedDid(did);
+                        setActiveInvite(inviteCache[did] || null);
+                        setInviteError(null);
+                      }}
+                    >
+                      <option value="">Select a known Guardian member</option>
+                      {availableInviteRecipients.map((result) => (
+                        <option key={result.did} value={result.did}>{result.label} - {result.did}</option>
+                      ))}
+                    </select>
+                    {availableInviteRecipients.length === 0 && (
+                      <p className="mt-2 text-xs text-muted-foreground">No known Guardian members are available to invite. Search or paste a DID below.</p>
+                    )}
+                  </div>
                   {selectedDid && (
                     <div className="rounded-lg border border-border p-3" style={{ backgroundColor: "var(--background)" }}>
                       <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginBottom: "4px" }}>Selected Guardian</p>
@@ -966,7 +1037,7 @@ export function NW04CircleDetail() {
                     </button>
                   </div>
                   {didResults.length === 0 ? (
-                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", textAlign: "center", marginTop: "24px" }}>Search results will appear here</p>
+                    <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)", textAlign: "center", marginTop: "24px" }}>Available members will appear here</p>
                   ) : (
                     <div className="flex flex-col rounded-lg border border-border overflow-hidden">
                       {didResults.slice(0, 8).map((result) => {
@@ -1008,7 +1079,7 @@ export function NW04CircleDetail() {
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center cursor-pointer" style={{ backgroundColor: "rgba(0,0,0,0.6)" }} onClick={() => setMemberDetailOpen(null)}>
           <div className="w-full rounded-t-xl md:rounded-xl border-t md:border border-border" style={{ backgroundColor: "var(--card)", maxWidth: "440px" }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-border">
-              <h3 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{displayForDid(selectedMember.did, selectedMember.name || selectedMember.nodeHint || selectedMember.did || "Guardian member")}</h3>
+              <h3 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>{memberDisplayName(selectedMember)}</h3>
               <button onClick={() => setMemberDetailOpen(null)} style={{ background: "none", border: "none", cursor: "pointer" }}>
                 <X size={20} style={{ color: "var(--muted-foreground)" }} />
               </button>
@@ -1026,7 +1097,6 @@ export function NW04CircleDetail() {
               {[
                 { label: "Connection Type", value: "Wi-Fi" },
                 { label: "Role", value: selectedMember.role.toLowerCase() === "owner" ? "Admin" : selectedMember.role },
-                { label: "Guardian Health", value: "Score: 88" },
               ].map(({ label, value }) => (
                 <div key={label} className="flex items-center justify-between">
                   <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>{label}</span>

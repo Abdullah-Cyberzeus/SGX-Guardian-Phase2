@@ -1,5 +1,5 @@
 use crate::api::{error::ApiError, state::AppState};
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -32,7 +32,7 @@ pub struct PeersResponse {
 
 /// Read-only peer state used by other authenticated API handlers. The DID and
 /// node ID are both required to prevent one Guardian's state being reported
-/// for another Guardian.
+/// for another Guardian.c
 #[derive(Debug, Clone)]
 pub struct GuardianPeerState {
     pub online: Option<bool>,
@@ -138,6 +138,21 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>,
     };
     let per_node_raw: Vec<serde_json::Value> =
         serde_json::from_str(&per_node_text).unwrap_or_default();
+    let mut known_peer_ids = raw
+        .iter()
+        .filter_map(|peer| peer.get("peer_id").and_then(|value| value.as_str()))
+        .map(|peer_id| peer_id.to_lowercase())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    for peer in &per_node_raw {
+        let Some(peer_id) = peer.get("peer_id").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        if known_peer_ids.insert(peer_id.to_lowercase()) {
+            raw.push(peer.clone());
+        }
+    }
+
     for peer in &mut raw {
         if peer.get("did").and_then(|value| value.as_str()).is_some() {
             continue;
@@ -145,10 +160,15 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>,
         let peer_id = peer.get("peer_id").and_then(|value| value.as_str());
         let Some(peer_id) = peer_id else { continue };
         let did = per_node_raw.iter().find_map(|candidate| {
+            // Case-insensitive: `peer_id` is a human-editable device label
+            // (renamed from Guardian device settings) and the merged/
+            // per-node registries can end up with it cased differently
+            // between files, which previously made this backfill silently
+            // no-op and left `did` unresolved for an otherwise-known peer.
             let same_peer = candidate
                 .get("peer_id")
                 .and_then(|value| value.as_str())
-                .is_some_and(|value| value == peer_id);
+                .is_some_and(|value| value.eq_ignore_ascii_case(peer_id));
             same_peer
                 .then(|| candidate.get("did").and_then(|value| value.as_str()))
                 .flatten()
@@ -166,11 +186,7 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>,
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string();
-            let has_attested_identity = v
-                .get("virtual_id")
-                .and_then(|x| x.as_str())
-                .is_some_and(|value| !value.trim().is_empty());
-            (peer_id != s.node_id && has_attested_identity).then_some((v, peer_id))
+            (peer_id != s.node_id).then_some((v, peer_id))
         })
         .collect();
     let peers: Vec<Peer> =

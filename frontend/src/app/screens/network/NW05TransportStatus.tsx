@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
 import {
@@ -15,6 +15,8 @@ import {
 import { useTransportList, useTransportStatus } from "../../hooks/useApiData";
 import { transportService } from "../../services/transportService";
 import type { TransportInterface } from "../../services/transportService";
+import { networkInterfaceDisplay } from "../../utils/networkInterfaceDisplay";
+import type { InterfaceGroup } from "../../utils/networkInterfaceDisplay";
 import { toast } from "sonner";
 
 function transportIcon(transport: string) {
@@ -38,6 +40,7 @@ function InterfaceCard({
   onLock: (name: string) => void;
   locking: boolean;
 }) {
+  const meta = networkInterfaceDisplay(iface.name);
   return (
     <div
       className="rounded-lg border p-4 flex flex-col gap-3"
@@ -65,7 +68,7 @@ function InterfaceCard({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
           <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
-            {iface.name}
+            {meta.displayName}
           </p>
           {isActive && (
             <span style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", fontWeight: "var(--font-weight-medium)", color: "var(--primary)", backgroundColor: "color-mix(in srgb, var(--primary) 15%, transparent)", padding: "2px 6px", borderRadius: "4px" }}>
@@ -74,7 +77,10 @@ function InterfaceCard({
           )}
         </div>
         <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
-          {iface.transport} · Priority {iface.priority}
+          {meta.description}
+        </p>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)", marginTop: "2px" }}>
+          {meta.category} · {iface.name}
         </p>
         {iface.ip && (
           <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", marginTop: "2px" }}>
@@ -129,6 +135,19 @@ export function NW05TransportStatus() {
   const { data: statusData, loading: statusLoading, refetch: refetchStatus } = useTransportStatus();
   const [pendingLockIface, setPendingLockIface] = useState<string | null>(null);
   const [unlocking, setUnlocking] = useState(false);
+  const groupedInterfaces = useMemo(() => {
+    const groups: Record<InterfaceGroup, TransportInterface[]> = {
+      "WIRELESS CONNECTIONS": [],
+      "GUARDIAN NETWORK": [],
+      INFRASTRUCTURE: [],
+    };
+
+    const interfaces = listData?.interfaces ?? [];
+    for (const iface of [...interfaces].sort((a, b) => a.priority - b.priority)) {
+      groups[networkInterfaceDisplay(iface.name).group].push(iface);
+    }
+    return groups;
+  }, [listData?.interfaces]);
 
   const node = listData?.node ?? statusData?.node ?? "";
 
@@ -191,6 +210,7 @@ export function NW05TransportStatus() {
 
   const interfaces = listData?.interfaces ?? [];
   const activeInterface = statusData?.active ?? listData?.active;
+  const activeMeta = activeInterface ? networkInterfaceDisplay(activeInterface.name) : null;
   const lock = statusData?.lock ?? listData?.lock;
 
   return (
@@ -217,7 +237,7 @@ export function NW05TransportStatus() {
               Active Transport
             </p>
             <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "var(--text-xs)", color: activeInterface ? "var(--primary)" : "var(--muted-foreground)" }}>
-              {activeInterface ? `${activeInterface.name} (${activeInterface.transport})` : "None"}
+              {activeInterface && activeMeta ? `${activeMeta.displayName} (${activeMeta.category})` : "None"}
             </p>
           </div>
           {lock && (
@@ -268,33 +288,37 @@ export function NW05TransportStatus() {
         </div>
 
         {/* Interface List */}
-        <div>
-          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "12px" }}>
-            INTERFACES
-          </p>
-          <div className="flex flex-col gap-3">
-            {interfaces.length === 0 ? (
-              <div className="rounded-lg border p-6 text-center" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
-                <Network size={32} style={{ color: "var(--muted-foreground)", margin: "0 auto 12px" }} />
-                <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>
-                  No interfaces found
-                </p>
-              </div>
-            ) : (
-              interfaces
-                .sort((a, b) => a.priority - b.priority)
-                .map(iface => (
-                  <InterfaceCard
-                    key={iface.name}
-                    iface={iface}
-                    isActive={activeInterface?.name === iface.name}
-                    isLocked={lock === iface.name}
-                    onLock={handleLock}
-                    locking={pendingLockIface === iface.name}
-                  />
-                ))
-            )}
-          </div>
+        <div className="flex flex-col gap-4">
+          {interfaces.length === 0 ? (
+            <div className="rounded-lg border p-6 text-center" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
+              <Network size={32} style={{ color: "var(--muted-foreground)", margin: "0 auto 12px" }} />
+              <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>
+                No interfaces found
+              </p>
+            </div>
+          ) : (
+            (Object.entries(groupedInterfaces) as [InterfaceGroup, TransportInterface[]][])
+              .filter(([, groupInterfaces]) => groupInterfaces.length > 0)
+              .map(([group, groupInterfaces]) => (
+                <section key={group}>
+                  <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "12px" }}>
+                    {group}
+                  </p>
+                  <div className="flex flex-col gap-3">
+                    {groupInterfaces.map(iface => (
+                      <InterfaceCard
+                        key={iface.name}
+                        iface={iface}
+                        isActive={activeInterface?.name === iface.name}
+                        isLocked={lock === iface.name}
+                        onLock={handleLock}
+                        locking={pendingLockIface === iface.name}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))
+          )}
         </div>
 
         {/* Node Info */}

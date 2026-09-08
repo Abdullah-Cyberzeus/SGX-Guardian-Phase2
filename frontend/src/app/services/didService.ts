@@ -101,6 +101,7 @@ export interface DIDDocumentPublishResponse {
   version: number;
   ca_host: string;
   node_name: string;
+  registry_peer_count?: number;
   message: string;
 }
 
@@ -139,8 +140,11 @@ export const didService = {
     api.post<DIDDocumentVerifyResponse>('/did/document/verify', path ? { path } : {}),
 
   // POST /api/v1/did/document/publish
-  publishDocument: (ca_host: string, node_name: string) =>
-    api.post<DIDDocumentPublishResponse>('/did/document/publish', { ca_host, node_name }),
+  publishDocument: (ca_host?: string, node_name?: string) =>
+    api.post<DIDDocumentPublishResponse>('/did/document/publish', {
+      ...(ca_host?.trim() ? { ca_host: ca_host.trim() } : {}),
+      ...(node_name?.trim() ? { node_name: node_name.trim() } : {}),
+    }),
 
   // GET /api/v1/did/document/peers
   getDocumentPeers: () => api.get<DIDDocumentPeersResponse>('/did/document/peers'),

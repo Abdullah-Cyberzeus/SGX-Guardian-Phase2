@@ -7,8 +7,9 @@ import { wifiService, type WifiModeResponse } from "../../services/wifiService";
 
 interface GuardianData {
   id: string;
+  nodeId: string;
   name: string;
-  deviceId: string;
+  deviceName: string;
   firmware: string;
   uptime: string;
   connectionType: string;
@@ -249,11 +250,20 @@ export function HM02GuardianDetail() {
       const updated = await guardianService.updateDisplayInfo({ [field]: value });
       setGuardian((current) => current ? {
         ...current,
-        deviceId: updated.deviceName || updated.nodeId,
+        nodeId: updated.nodeId,
+        deviceName: updated.deviceName || updated.nodeId,
         hostname: updated.displayHostname || updated.hostname,
-        name: field === 'displayHostname' ? (updated.displayHostname || updated.hostname) : current.name,
+        name: updated.deviceName || updated.displayHostname || updated.hostname || updated.nodeId,
       } : current);
-      toast.success(`${field === 'deviceName' ? 'Device ID' : 'Hostname'} updated`);
+      window.dispatchEvent(new CustomEvent('sgx:guardian-display-updated', {
+        detail: {
+          deviceName: updated.deviceName || updated.nodeId,
+          displayHostname: updated.displayHostname || updated.hostname,
+          hostname: updated.hostname,
+          nodeId: updated.nodeId,
+        },
+      }));
+      toast.success(`${field === 'deviceName' ? 'Device name' : 'Hostname'} updated`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update device info');
       throw error;
@@ -268,12 +278,13 @@ export function HM02GuardianDetail() {
         const data = await guardianService.getInfo();
         setGuardian({
           id: (data as any).id || 'unknown',
+          nodeId: (data as any).nodeId || (data as any).id || 'unknown',
           name: (data as any).name || 'SGX Guardian',
-          deviceId: (data as any).deviceId || 'unknown',
+          deviceName: (data as any).deviceId || (data as any).name || 'unknown',
           firmware: (data as any).firmware || 'v1.0.0',
           uptime: (data as any).uptime || 'Running',
           connectionType: (data as any).connectionType || 'Ethernet',
-          signal: (data as any).signal ?? 100,
+          signal: (data as any).signal ?? 0,
           status: (data as any).status || 'online',
           lastSeen: (data as any).lastSeen || 'Just now',
           ip: (data as any).ip || '—',
@@ -308,7 +319,7 @@ export function HM02GuardianDetail() {
     // h-full fills the <main> container; flex-col so the header is pinned
     // and the content area scrolls (desktop/tablet <main> is overflow:hidden)
     <div className="flex flex-col h-full">
-      <PageHeader title={guardian.name} subtitle="Device Details" />
+      <PageHeader title={guardian.deviceName} subtitle="Device Details" />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-4 md:p-6 pb-8">
         {/* Data source indicator */}
@@ -337,7 +348,8 @@ export function HM02GuardianDetail() {
 
         {/* Device Info */}
         <Section title="Device Info">
-          <EditableIdentityRow label="Device ID" value={guardian.deviceId} onSave={(value) => updateDisplayInfo('deviceName', value)} />
+          <EditableIdentityRow label="Device Name" value={guardian.deviceName} onSave={(value) => updateDisplayInfo('deviceName', value)} />
+          <Row label="Device ID" value={guardian.nodeId} />
           <Row label="Model" value={guardian.model} icon={Cpu} />
           <Row label="Firmware" value={guardian.firmware} />
           <LastRow label="Uptime" value={guardian.uptime} icon={Clock} />

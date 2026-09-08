@@ -399,6 +399,29 @@ fn safe_filename(id: &str) -> String {
     format!("{}.jsonl", id)
 }
 
+/// Every DID currently keying a stored P2P conversation log, recovered
+/// verbatim from the `.jsonl` filenames under `p2p/` (the DID is used
+/// as-is as the filename, see `safe_filename`). Used as a last-resort
+/// lookup when a caller's DID for a peer doesn't match any conversation
+/// file directly — rather than requiring the caller to already know the
+/// exact key, every existing key can be checked against the peer's known
+/// identity instead.
+pub async fn list_p2p_conversation_ids() -> Vec<String> {
+    let dir = PathBuf::from(&*BASE_DIR).join("p2p");
+    let mut entries = match tokio::fs::read_dir(&dir).await {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+    let mut ids = Vec::new();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name();
+        if let Some(id) = name.to_str().and_then(|n| n.strip_suffix(".jsonl")) {
+            ids.push(id.to_string());
+        }
+    }
+    ids
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

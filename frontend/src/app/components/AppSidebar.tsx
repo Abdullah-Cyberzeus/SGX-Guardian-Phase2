@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { Home, Bell, BellRing, Cpu, Cloud, Settings, MessageSquare, Phone, UsersRound } from "lucide-react";
+import { Home, Bell, BellRing, Cpu, Cloud, Settings, MessageSquare, Phone, UsersRound, Link2 } from "lucide-react";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 import { useChatUnread } from "../contexts/ChatUnreadContext";
 import { useCircleInviteInbox, useAlerts, useGuardianInfo } from "../hooks/useApiData";
@@ -88,7 +88,13 @@ export function AppSidebar({ variant }: AppSidebarProps) {
     { label: "Files", icon: Cloud, path: "/storage", custom: false, badge: 0 },
     { label: "Settings", icon: Settings, path: "/member-settings", custom: false, badge: 0 },
   ];
-  const navItems = memberSession ? memberNavItems : adminNavItems;
+  const pendingMemberNavItems = [
+    { label: "Join Circle", icon: Link2, path: "/join-circle", custom: false, badge: 0 },
+    { label: "Settings", icon: Settings, path: "/member-settings", custom: false, badge: 0 },
+  ];
+  const navItems = memberSession
+    ? (session?.circleIds.length || 0) === 0 ? pendingMemberNavItems : memberNavItems
+    : adminNavItems;
 
   return (
     <aside

@@ -21,7 +21,7 @@ const steps = [
   {
     title: "4. Monitor Alerts",
     content:
-      "The Alerts tab shows real-time security events from your network. Tap any alert to see the AI analysis, affected device details, and recommended remediation steps.",
+      "The Alerts tab shows real-time security events from your network. Tap any alert to see the analysis, affected device details, and recommended remediation steps.",
   },
   {
     title: "5. Manage Your Devices",

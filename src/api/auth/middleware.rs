@@ -5,14 +5,14 @@ use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use axum::{
     extract::State,
-    http::{header, HeaderMap, Method, Request},
+    http::{HeaderMap, Method, Request, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
+use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicI8, Ordering};
-use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct AuthenticatedSession {
@@ -257,6 +257,7 @@ fn is_public_route(method: &Method, path: &str) -> bool {
             | (&Method::POST, "/api/v1/auth/oidc/cylenium/callback")
             | (&Method::GET, "/api/v1/pwa/onboarding")
             | (&Method::POST, "/api/v1/pwa/onboarding/invite-preview")
+            | (&Method::POST, "/api/v1/pwa/onboarding/signup")
             | (&Method::POST, "/api/v1/pwa/onboarding/join")
             | (&Method::POST, "/api/v1/circles/redeem")
             // Service-authenticated in handlers::circle::receive_invite.
@@ -408,7 +409,7 @@ mod tests {
     };
     use crate::api::state::AppState;
     use crate::test_support::async_env_lock;
-    use axum::{routing::get, Json, Router};
+    use axum::{Json, Router, routing::get};
     use reqwest::StatusCode;
     use serde_json::json;
     use tempfile::TempDir;

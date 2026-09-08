@@ -348,6 +348,13 @@
   contain: layout paint;
   transform: translateZ(0);
 }
+.clt-shell--map .clt-stage {
+  margin: 14px;
+  border: 1px solid rgba(32, 199, 217, .34);
+  border-radius: 8px;
+  background: #071113;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .42);
+}
 .clt-grid {
   position: absolute;
   inset: 0;
@@ -369,28 +376,52 @@
 }
 .clt-svg:active { cursor: grabbing; }
 
-.clt-real-map rect { fill: rgba(3, 26, 30, .42); }
+.clt-real-map rect { fill: #071f25; }
 .clt-real-map .clt-map-contrast {
-  fill: rgba(32, 199, 217, .13);
-  stroke: rgba(32, 199, 217, .46);
+  fill: rgba(32, 199, 217, .08);
+  stroke: rgba(32, 199, 217, .42);
   stroke-width: 1;
 }
-.clt-map-tile {
-  opacity: .68;
-  filter: sepia(1) hue-rotate(135deg) saturate(2.4) contrast(1.42) brightness(1.18);
-  mix-blend-mode: screen;
+.clt-map-grid line {
+  stroke: rgba(32, 199, 217, .12);
+  stroke-width: .65;
 }
-.clt-real-map text {
+.clt-map-land path {
+  fill: rgba(32, 199, 217, .16);
+  stroke: rgba(94, 234, 212, .48);
+  stroke-width: .65;
+  vector-effect: non-scaling-stroke;
+}
+.clt-map-labels text {
   fill: #D8F8FB;
+  font: 750 13px Inter, ui-sans-serif, system-ui, sans-serif;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: rgba(3, 10, 12, .96);
+  stroke-width: 4px;
+  vector-effect: non-scaling-stroke;
+}
+.clt-map-labels--regional text {
+  fill: rgba(91, 229, 241, .9);
+  font-size: 18px;
+  font-weight: 800;
+}
+.clt-map-labels--country {
+  opacity: 0;
+}
+.clt-shell--icons .clt-map-labels--regional {
+  opacity: 0;
+}
+.clt-shell--icons .clt-map-labels--country {
+  opacity: 1;
+}
+.clt-map-credit {
+  fill: rgba(216, 248, 251, .68);
   font: 700 8px ui-monospace, SFMono-Regular, Menlo, monospace;
   text-anchor: end;
   paint-order: stroke;
-  stroke: rgba(0, 0, 0, .92);
+  stroke: rgba(3, 10, 12, .96);
   stroke-width: 4px;
-}
-.clt-real-map text.clt-map-unavailable-label {
-  text-anchor: middle;
-  font-size: 13px;
 }
 .clt-geo-zone { pointer-events: none; opacity: .92; }
 .clt-geo-zone.is-disabled { opacity: .3; }
@@ -590,12 +621,12 @@
 .clt-node__map-dot {
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 0 5px currentColor);
+  filter: drop-shadow(0 0 6px currentColor);
   transition: opacity .16s ease, transform .16s ease;
 }
 .clt-node__map-label {
   fill: #E7FBFD;
-  font: 800 9px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 800 10px Inter, ui-sans-serif, system-ui, sans-serif;
   paint-order: stroke;
   stroke: rgba(0, 0, 0, .96);
   stroke-width: 5px;

@@ -33,6 +33,7 @@ export function JoinCircleScreen() {
   const [approvalState, setApprovalState] = useState<string>(() => pending?.enrollment.state || "pending");
   const [busy, setBusy] = useState<"preview" | "join" | null>(null);
   const parsed = useMemo(() => parseInviteMaterial(inviteMaterial), [inviteMaterial]);
+  const hasCircleAccess = (session?.circleIds.length || 0) > 0;
 
   useEffect(() => {
     if (!pending || approvalState !== "pending") return;
@@ -113,7 +114,7 @@ export function JoinCircleScreen() {
   if (pending) {
     const rejected = approvalState === "rejected" || approvalState === "expired";
     return <div className="flex h-full flex-col">
-      <PageHeader title="Join Circle" onBack={() => navigate("/chats?tab=groups")} />
+      {hasCircleAccess && <PageHeader title="Join Circle" onBack={() => navigate("/chats?tab=groups")} />}
       <main className="grid flex-1 place-items-center overflow-y-auto p-5">
         <section className={`w-full max-w-md rounded-xl border bg-card p-6 text-center ${rejected ? "border-destructive/40" : "border-primary/30"}`}>
           {rejected ? <AlertTriangle size={46} className="mx-auto text-destructive" /> : approvalState === "approved" ? <CheckCircle2 size={46} className="mx-auto text-primary" /> : <Clock3 size={46} className="mx-auto text-primary" />}
@@ -128,11 +129,11 @@ export function JoinCircleScreen() {
   }
 
   return <div className="flex h-full flex-col">
-    <PageHeader title="Join Circle" subtitle="Add another secure group" onBack={() => navigate("/chats?tab=groups")} />
-    <main className="flex-1 overflow-y-auto p-4 md:p-6">
+    {hasCircleAccess && <PageHeader title="Join Circle" subtitle="Add another secure group" onBack={() => navigate("/chats?tab=groups")} />}
+    <main className={`${hasCircleAccess ? "flex-1 overflow-y-auto p-4 md:p-6" : "grid min-h-[100dvh] place-items-center overflow-y-auto p-4"}`}>
       <div className="mx-auto max-w-xl space-y-4">
         <section className="rounded-xl border border-border bg-card p-5">
-          <div className="flex items-start gap-3"><Link2 size={20} className="mt-0.5 text-primary" /><div><h2 className="font-semibold">Paste your member invitation</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">Use the one-time link created by that Circle's administrator. Your existing account and chats will be preserved.</p></div></div>
+          <div className="flex items-start gap-3"><Link2 size={20} className="mt-0.5 text-primary" /><div><h2 className="font-semibold">{hasCircleAccess ? "Paste your member invitation" : "You are not part of any Circle yet"}</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">{hasCircleAccess ? "Use the one-time link created by that Circle's administrator. Your existing account and chats will be preserved." : "Paste an invitation link from a Circle administrator to request access or get an invite from the guardian."}</p></div></div>
           <textarea
             value={inviteMaterial}
             onChange={(event) => { setInviteMaterial(event.target.value); setPreview(null); }}

@@ -31,7 +31,7 @@ interface UseApiDataResult<T> {
   loading: boolean;
   error: Error | null;
   source: 'api' | 'error';
-  refetch: () => Promise<void>;
+  refetch: () => Promise<T | null>;
 }
 
 /**
@@ -39,7 +39,7 @@ interface UseApiDataResult<T> {
  */
 export function useApiData<T>(
   apiCall: () => Promise<T>,
-  options?: { autoFetch?: boolean; pollingInterval?: number }
+  options?: { autoFetch?: boolean; pollingInterval?: number; refreshEvents?: string[] }
 ): UseApiDataResult<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
@@ -47,7 +47,7 @@ export function useApiData<T>(
   const [source, setSource] = useState<'api' | 'error'>('api');
   const hasFetchedRef = useRef(false);
 
-  const fetchData = useCallback(async (silent = false) => {
+  const fetchData = useCallback(async (silent = false): Promise<T | null> => {
     if (!silent) {
       setLoading(true);
       setError(null);
@@ -58,6 +58,7 @@ export function useApiData<T>(
       setData(result);
       setSource('api');
       if (silent) setError(null);
+      return result;
     } catch (err) {
       // On silent polls, keep last good data visible so the user doesn't
       // see a flash of error state when a single poll blips.
@@ -65,6 +66,7 @@ export function useApiData<T>(
         setError(err instanceof Error ? err : new Error('Unknown error'));
         setSource('error');
       }
+      return null;
     } finally {
       if (!silent) setLoading(false);
       hasFetchedRef.current = true;
@@ -93,6 +95,15 @@ export function useApiData<T>(
       return () => clearInterval(id);
     }
   }, []);
+
+  useEffect(() => {
+    if (!options?.refreshEvents?.length) return;
+    const refresh = () => void fetchData(true);
+    options.refreshEvents.forEach((eventName) => window.addEventListener(eventName, refresh));
+    return () => {
+      options.refreshEvents?.forEach((eventName) => window.removeEventListener(eventName, refresh));
+    };
+  }, [fetchData, options?.refreshEvents]);
 
   return { data, loading, error, source, refetch };
 }
@@ -199,7 +210,17 @@ export async function fetchCommunicationPeers(isMember: boolean, guardianDid?: s
   );
   for (const contact of contacts) {
     if (!contact.did || contact.did.toLowerCase() === guardianDidLower) continue;
-    byDid.set(contact.did.toLowerCase(), contact);
+    const key = contact.did.toLowerCase();
+    const existing = byDid.get(key);
+    byDid.set(key, existing ? {
+      ...existing,
+      ...contact,
+      peerId: existing.peerId || contact.peerId,
+      ip: existing.ip || contact.ip,
+      port: existing.port || contact.port,
+      callAvailable: contact.callAvailable && existing.callAvailable,
+      callUnavailableReason: contact.callUnavailableReason || existing.callUnavailableReason,
+    } : contact);
   }
   return [...byDid.values()];
 }
@@ -280,7 +301,10 @@ export function useDusageQuota() {
  * Hook for guardian info (dashboard)
  */
 export function useGuardianInfo() {
-  return useApiData(() => guardianService.getInfo(), { pollingInterval: 15000 });
+  return useApiData(() => guardianService.getInfo(), {
+    pollingInterval: 15000,
+    refreshEvents: ["sgx:guardian-display-updated"],
+  });
 }
 
 /**

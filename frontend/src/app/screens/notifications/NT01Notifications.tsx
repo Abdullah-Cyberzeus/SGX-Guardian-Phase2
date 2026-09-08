@@ -1,5 +1,5 @@
-import { Bell, CheckCheck, Loader2, RefreshCw, Settings } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Bell, CheckCheck, ChevronLeft, ChevronRight, Loader2, RefreshCw, Settings } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import type { NotificationItem } from "../../../api/notifications";
@@ -14,10 +14,24 @@ export function NT01Notifications() {
   const { items, unreadCount, connected, refresh, markRead, markAllRead } = useNotifications();
   const [filter, setFilter] = useState<Filter>("all");
   const [refreshing, setRefreshing] = useState(false);
+  const pageSize = 10;
+  const [page, setPage] = useState(1);
   const visibleItems = useMemo(
     () => items.filter((item) => filter === "all" || (filter === "read" ? item.read : !item.read)),
     [filter, items],
   );
+  const totalPages = Math.max(1, Math.ceil(visibleItems.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = visibleItems.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const pageEnd = Math.min(visibleItems.length, currentPage * pageSize);
+  const pagedItems = useMemo(
+    () => visibleItems.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [currentPage, visibleItems],
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [filter, items.length]);
 
   const openNotification = async (item: NotificationItem) => {
     if (!item.read) await markRead(item.id);
@@ -76,7 +90,7 @@ export function NT01Notifications() {
                 <p className="font-semibold" style={{ color: "var(--foreground)" }}>{filter === "all" ? "No notifications yet" : `No ${filter} notifications`}</p>
                 <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>New notifications will appear here automatically.</p>
               </div>
-            ) : visibleItems.map((item, index) => {
+            ) : pagedItems.map((item, index) => {
               const Icon = notificationIcon(item.kind);
               const color = severityColor(item.severity);
               const route = notificationRoute(item.kind, item.refId);
@@ -95,6 +109,36 @@ export function NT01Notifications() {
                 </button>
               );
             })}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 md:px-5" style={{ background: "var(--card)" }}>
+                <p className="text-xs text-muted-foreground">
+                  Showing {pageStart}-{pageEnd} of {visibleItems.length}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPage((current) => Math.max(1, current - 1))}
+                    disabled={currentPage === 1}
+                    className="grid h-8 w-8 place-items-center rounded-full border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label="Previous notifications page"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <span className="min-w-16 text-center text-xs text-muted-foreground">
+                    {currentPage} / {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                    disabled={currentPage === totalPages}
+                    className="grid h-8 w-8 place-items-center rounded-full border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label="Next notifications page"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

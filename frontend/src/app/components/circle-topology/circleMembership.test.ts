@@ -49,4 +49,26 @@ describe("circle topology membership", () => {
     ]);
     expect(getNodeCircles(index, "absent")).toEqual([]);
   });
+
+  it("matches registry node IDs through backend node hints and address aliases", () => {
+    const circles: CircleTopologyCircle[] = [{
+      id: "circle-a",
+      name: "Circle A",
+      members: [{
+        id: "did:guardian:member-a",
+        name: "Member A",
+        nodeHint: "registry-node-a",
+        physicalIp: "10.10.0.8",
+        overlayIp: "100.64.0.8",
+      }],
+    }];
+    const index = buildCircleMembershipIndex(circles);
+
+    expect(getNodeCircles(index, "registry-node-a")).toEqual([
+      { circleId: "circle-a", circleName: "Circle A" },
+    ]);
+    expect(getNodeCircles(index, "100.64.0.8")).toEqual([
+      { circleId: "circle-a", circleName: "Circle A" },
+    ]);
+  });
 });

@@ -1,11 +1,11 @@
-use super::dkp::{run_cli, ActionResponse};
+use super::dkp::{ActionResponse, run_cli};
 use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use crate::policy;
 use axum::{
-    extract::{Multipart, State},
     Json,
+    extract::{Multipart, State},
 };
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -395,8 +395,8 @@ fn resolve_active_policy_preview_path() -> String {
 mod tests {
     use super::*;
     use std::sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     };
 
     const ACTIVE_POLICY_YAML: &str = r#"policy_id: "alpha"

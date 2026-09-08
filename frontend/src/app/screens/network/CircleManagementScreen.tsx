@@ -4,7 +4,9 @@ import { Archive, ArchiveRestore, Check, ChevronLeft, Clipboard, Copy, Download,
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { useContactNames } from "../../contexts/ContactNameContext";
-import circleService, { Circle, CircleInvite, CircleMember, CircleRole, MemberEnrollment, MemberEnrollmentInvite } from "../../services/circleService";
+import { useAuth } from "../../contexts/AuthContext";
+import { useGuardianInfo } from "../../hooks/useApiData";
+import circleService, { AvailablePwaMember, Circle, CircleInvite, CircleMember, CircleRole, MemberEnrollment, MemberEnrollmentInvite } from "../../services/circleService";
 import didService, { DIDDocumentPeerSummary } from "../../services/didService";
 
 type Tab = "details" | "members" | "invites";
@@ -46,7 +48,9 @@ function ConfirmDialog({ title, message, confirmLabel, onConfirm, onClose, busy,
 export function CircleManagementScreen() {
   const { circleId = "" } = useParams();
   const navigate = useNavigate();
+  const { session } = useAuth();
   const { displayForDid } = useContactNames();
+  const { data: guardianInfo } = useGuardianInfo();
   const [tab, setTab] = useState<Tab>("details");
   const [circle, setCircle] = useState<Circle | null>(null);
   const [members, setMembers] = useState<CircleMember[]>([]);
@@ -70,13 +74,15 @@ export function CircleManagementScreen() {
   const [memberBaseUrl, setMemberBaseUrl] = useState(() => window.location.origin);
   const [memberInvite, setMemberInvite] = useState<MemberEnrollmentInvite | null>(null);
   const [memberEnrollments, setMemberEnrollments] = useState<MemberEnrollment[]>([]);
+  const [availablePwaMembers, setAvailablePwaMembers] = useState<AvailablePwaMember[]>([]);
+  const [selectedPwaMemberUserId, setSelectedPwaMemberUserId] = useState("");
   const [confirm, setConfirm] = useState<{ kind: "archive" } | { kind: "unarchive" } | { kind: "delete" } | { kind: "member"; did: string } | { kind: "invite"; id: string } | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [detailResult, memberResult, inviteResult, enrollmentResult] = await Promise.allSettled([
-        circleService.getById(circleId), circleService.getMembers(circleId), circleService.getInvites(circleId), circleService.getMemberEnrollments(circleId),
+      const [detailResult, memberResult, inviteResult, enrollmentResult, availablePwaResult] = await Promise.allSettled([
+        circleService.getById(circleId), circleService.getMembers(circleId), circleService.getInvites(circleId), circleService.getMemberEnrollments(circleId), circleService.getAvailablePwaMembers(circleId),
       ]);
       if (detailResult.status === "rejected") throw detailResult.reason;
       const detail = detailResult.value;
@@ -88,8 +94,12 @@ export function CircleManagementScreen() {
       setMembers(memberList);
       setInvites(inviteList);
       setMemberEnrollments(enrollmentResult.status === "fulfilled" ? enrollmentResult.value : []);
+      const availableMembers = availablePwaResult.status === "fulfilled" ? availablePwaResult.value : [];
+      setAvailablePwaMembers(availableMembers);
+      setSelectedPwaMemberUserId((current) => availableMembers.some((member) => member.userId === current) ? current : "");
       if (memberResult.status === "rejected") toast.error("Circle loaded, but members could not be retrieved");
       if (inviteResult.status === "rejected") toast.error("Circle loaded, but invites could not be retrieved");
+      if (availablePwaResult.status === "rejected") setAvailablePwaMembers([]);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to load Circle controls");
     } finally {
@@ -104,9 +114,20 @@ export function CircleManagementScreen() {
   }, [circleId]);
 
   useEffect(() => {
-    if (tab !== "invites" || inviteMode !== "member") return;
+    if (tab !== "members" && !(tab === "invites" && inviteMode === "member")) return;
     const timer = window.setInterval(() => {
-      void circleService.getMemberEnrollments(circleId).then(setMemberEnrollments).catch(() => undefined);
+      void Promise.allSettled([
+        circleService.getMembers(circleId),
+        circleService.getMemberEnrollments(circleId),
+        circleService.getAvailablePwaMembers(circleId),
+      ]).then(([memberResult, enrollmentResult, availablePwaResult]) => {
+        if (memberResult.status === "fulfilled") setMembers(memberResult.value);
+        if (enrollmentResult.status === "fulfilled") setMemberEnrollments(enrollmentResult.value);
+        if (availablePwaResult.status === "fulfilled") {
+          setAvailablePwaMembers(availablePwaResult.value);
+          setSelectedPwaMemberUserId((current) => availablePwaResult.value.some((member) => member.userId === current) ? current : "");
+        }
+      });
     }, 5_000);
     return () => window.clearInterval(timer);
   }, [tab, inviteMode, circleId]);
@@ -214,13 +235,31 @@ export function CircleManagementScreen() {
   const createMemberInvite = async () => {
     setBusy(true);
     try {
-      const result = await circleService.createMemberEnrollmentInvite(circleId, memberInviteHours * 60, memberBaseUrl.trim());
+      const result = await circleService.createMemberEnrollmentInvite(circleId, memberInviteHours * 60, memberBaseUrl.trim(), selectedPwaMemberUserId || undefined);
       setMemberInvite(result);
       setInviteQrOpen(false);
-      toast.success("Secure member enrollment link generated");
+      toast.success(selectedPwaMemberUserId ? "Member link generated" : "Secure member enrollment link generated");
       await reload();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Member invitation failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendSelectedMemberInvite = async () => {
+    if (!memberInvite?.enrollment.approvalId) {
+      toast.error("Generate a member link first");
+      return;
+    }
+    setBusy(true);
+    try {
+      const sent = await circleService.sendMemberEnrollmentInvite(circleId, memberInvite.enrollment.approvalId);
+      setMemberInvite({ ...memberInvite, enrollment: sent });
+      toast.success("Member link sent");
+      await reload();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Member link could not be sent");
     } finally {
       setBusy(false);
     }
@@ -367,10 +406,13 @@ export function CircleManagementScreen() {
     return `${peer.did} ${peer.node_name}`.toLowerCase().includes(needle);
   });
   const selectedPeer = didPeers.find((peer) => sameDid(peer.did, targetDid));
+  const localGuardianName = guardianInfo?.deviceId || guardianInfo?.name || guardianInfo?.hostname;
 
   const memberRow = (member: CircleMember, revoked = false) => {
     const primaryOwner = sameDid(member.did, circle?.ownerDid);
-    const memberDisplayName = displayForDid(member.did, member.name || member.email || member.did);
+    const memberDisplayName = sameDid(member.did, session?.guardianDid) && localGuardianName
+      ? localGuardianName
+      : displayForDid(member.did, member.name || member.email || member.did);
     const memberSecondary = displayForDid(member.did, member.did);
     return (
     <div key={member.did || member.id} className="flex flex-col gap-3 border-b border-border p-4 last:border-0 sm:flex-row sm:items-center">
@@ -429,19 +471,41 @@ export function CircleManagementScreen() {
 
             {inviteMode === "member" && <section className="rounded-xl border border-border bg-card p-5">
               <div className="flex items-center gap-2"><UserPlus size={18} className="text-primary" /><h2 className="font-semibold">Invite a PWA member</h2></div>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">Creates an opaque, one-use LAN link. The member receives a reserved DID but remains pending until you approve the request.</p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">Select a signed-up member, generate a one-use link, then send it to that member for approval.</p>
+              <label className="mb-1.5 mt-4 block text-xs font-medium text-muted-foreground">Signed-up PWA members</label>
+              <div className="grid gap-3 sm:grid-cols-[1fr_170px_auto]">
+                <select className={fieldClass} value={selectedPwaMemberUserId} onChange={(event) => setSelectedPwaMemberUserId(event.target.value)}>
+                  <option value="">Select an available member</option>
+                  {availablePwaMembers.map((member) => (
+                    <option key={member.userId} value={member.userId}>{member.name || member.email} - {member.email}</option>
+                  ))}
+                </select>
+                <select className={fieldClass} value={memberInviteHours} onChange={(event) => setMemberInviteHours(Number(event.target.value))}>
+                  <option value={1}>Expires in 1 hour</option>
+                  <option value={24}>Expires in 24 hours</option>
+                  <option value={168}>Expires in 7 days</option>
+                </select>
+                <button className={`${primaryButton} shrink-0`} onClick={() => void createMemberInvite()} disabled={busy || !selectedPwaMemberUserId || !memberBaseUrl.trim()}>
+                  {busy ? <Loader2 size={15} className="animate-spin" /> : <Link2 size={15} />}Generate member link
+                </button>
+              </div>
+              {selectedPwaMemberUserId && availablePwaMembers.find((member) => member.userId === selectedPwaMemberUserId) && (
+                <p className="mt-2 break-all font-mono text-[10px] text-muted-foreground">
+                  DID: {availablePwaMembers.find((member) => member.userId === selectedPwaMemberUserId)?.memberDid}
+                </p>
+              )}
+              {availablePwaMembers.length === 0 && (
+                <p className="mt-2 text-xs text-muted-foreground">No signed-up PWA members are available for this Circle yet.</p>
+              )}
+              <div className="my-5 h-px bg-border" />
               <label className="mb-1.5 mt-4 block text-xs font-medium text-muted-foreground">Member-accessible Guardian URL</label>
               <input className={fieldClass} value={memberBaseUrl} onChange={(event) => setMemberBaseUrl(event.target.value)} placeholder="https://192.168.50.115:8443" />
               <p className="mt-1 text-xs text-muted-foreground">On hardware, use this Guardian's LAN address. For Docker, use the Docker host's LAN IP and the node's published port (for example, nodeB uses port 28443).</p>
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-                <select className={fieldClass} value={memberInviteHours} onChange={(event) => setMemberInviteHours(Number(event.target.value))}><option value={1}>Expires in 1 hour</option><option value={24}>Expires in 24 hours</option><option value={168}>Expires in 7 days</option></select>
-                <button className={`${primaryButton} shrink-0`} onClick={() => void createMemberInvite()} disabled={busy || !memberBaseUrl.trim()}>{busy ? <Loader2 size={15} className="animate-spin" /> : <Link2 size={15} />}Generate member link</button>
-              </div>
               {memberInvite && <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-4">
                 <p className="text-sm font-semibold">LAN enrollment link</p>
                 <p className="mt-2 break-all font-mono text-xs">{memberInvite.link}</p>
                 <p className="mt-2 break-all text-xs text-muted-foreground">Reserved DID: <span className="font-mono">{memberInvite.enrollment.memberDid}</span></p>
-                <div className="mt-3 flex flex-wrap gap-2"><button className={primaryButton} onClick={() => void navigator.clipboard.writeText(memberInvite.link).then(() => toast.success("Member link copied"))}><Copy size={14} />Copy link</button><button className={secondaryButton} onClick={() => setInviteQrOpen((open) => !open)}><QrCode size={14} />QR code</button></div>
+                <div className="mt-3 flex flex-wrap gap-2">{memberInvite.enrollment.state === "draft" && <button className={primaryButton} onClick={() => void sendSelectedMemberInvite()} disabled={busy}><Send size={14} />Send link</button>}<button className={secondaryButton} onClick={() => void navigator.clipboard.writeText(memberInvite.link).then(() => toast.success("Member link copied"))}><Copy size={14} />Copy link</button><button className={secondaryButton} onClick={() => setInviteQrOpen((open) => !open)}><QrCode size={14} />QR code</button></div>
                 {inviteQrOpen && <div className="mt-4 inline-flex rounded-md border border-border bg-background p-4"><QRCodeSVG value={memberInvite.link} size={220} bgColor="transparent" fgColor="var(--foreground)" level="M" /></div>}
               </div>}
             </section>}

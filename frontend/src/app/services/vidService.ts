@@ -33,6 +33,7 @@ export interface VidShowResponse {
 
 export interface VidPeer {
   did: string;
+  nodeName?: string | null;
   virtualId: string;
   observedAt: string;
   lastRotationReason?: string;

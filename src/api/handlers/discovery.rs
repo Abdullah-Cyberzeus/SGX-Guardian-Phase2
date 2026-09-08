@@ -1,16 +1,15 @@
 use crate::api::{error::ApiError, state::AppState};
 use crate::discovery::whitelist::{
-    enrich_entries, infer_label_for_mac, Whitelist, WhitelistEntry, WhitelistEntryView,
+    Whitelist, WhitelistEntry, WhitelistEntryView, enrich_entries, infer_label_for_mac,
 };
 use crate::discovery::{
-    nmap_parser,
+    ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScanScheduleProfile,
+    ScheduleDay, ScheduledScans, nmap_parser,
     run_history::{self, ScanRunRecord},
-    ConnectedDevice, DeviceStatus, NmapConfig, ScanIntensity, ScanSchedule, ScheduleProfile,
-    ScheduledScans,
 };
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -277,6 +276,7 @@ pub struct ScheduleDoc {
     pub timeout_secs: u64,
     pub exclude: Vec<String>,
     pub schedules: ScheduledScans,
+    pub scan_schedules: Vec<ScanScheduleProfile>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub legacy_schedule_mode: Option<ScanSchedule>,
 }
@@ -289,6 +289,8 @@ pub struct ScheduleUpdateRequest {
     pub timeout_secs: Option<u64>,
     pub exclude: Option<Vec<String>>,
     pub schedules: Option<SchedulePatch>,
+    pub scan_schedules: Option<Vec<ScanScheduleProfile>>,
+    pub schedule: Option<ScanSchedulePatch>,
     pub hourly_intensity: Option<ScanIntensity>,
     pub daily_intensity: Option<ScanIntensity>,
 }
@@ -301,7 +303,22 @@ pub struct SchedulePatch {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ScheduleProfilePatch {
+    pub frequency: Option<crate::discovery::config::ScheduleFrequency>,
     pub intensity: Option<ScanIntensity>,
+    pub days: Option<Vec<ScheduleDay>>,
+    pub day_of_month: Option<Option<u8>>,
+    pub time: Option<String>,
+    pub timezone: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ScanSchedulePatch {
+    pub frequency: Option<crate::discovery::config::ScheduleFrequency>,
+    pub intensity: Option<ScanIntensity>,
+    pub days: Option<Vec<ScheduleDay>>,
+    pub day_of_month: Option<Option<u8>>,
+    pub time: Option<String>,
+    pub timezone: Option<String>,
 }
 
 pub async fn get_whitelist(
@@ -573,6 +590,7 @@ fn schedule_doc_from_config(cfg: &NmapConfig) -> ScheduleDoc {
         timeout_secs: cfg.timeout_secs,
         exclude: cfg.exclude.clone(),
         schedules: cfg.schedules.clone(),
+        scan_schedules: cfg.scan_schedules.clone(),
         legacy_schedule_mode: cfg.legacy_schedule_mode(),
     }
 }
@@ -634,21 +652,65 @@ fn apply_schedule_patch(
         cfg.exclude = normalize_excludes(exclude)?;
     }
 
-    if let Some(schedules) = patch.schedules {
-        if let Some(hourly) = schedules.hourly.and_then(|profile| profile.intensity) {
-            cfg.schedules.hourly = ScheduleProfile { intensity: hourly };
+    if let Some(mut scan_schedules) = patch.scan_schedules {
+        for schedule in &mut scan_schedules {
+            if schedule.id.trim().is_empty() {
+                schedule.id = crate::discovery::config::ScanScheduleProfile::default().id;
+            }
         }
-        if let Some(daily) = schedules.daily.and_then(|profile| profile.intensity) {
-            cfg.schedules.daily = ScheduleProfile { intensity: daily };
+        cfg.scan_schedules = scan_schedules;
+    }
+
+    if let Some(schedules) = patch.schedules {
+        if let Some(hourly) = schedules.hourly {
+            if let Some(intensity) = hourly.intensity {
+                cfg.schedules.hourly.intensity = intensity;
+            }
+        }
+        if let Some(daily) = schedules.daily {
+            if let Some(intensity) = daily.intensity {
+                cfg.schedules.daily.intensity = intensity;
+            }
+            if let Some(days) = daily.days {
+                cfg.schedules.daily.days = days;
+            }
+            if let Some(time) = daily.time {
+                cfg.schedules.daily.time = time.trim().to_string();
+            }
+        }
+    }
+
+    if let Some(schedule) = patch.schedule {
+        if cfg.scan_schedules.is_empty() {
+            cfg.scan_schedules.push(ScanScheduleProfile::default());
+        }
+        let current = cfg.scan_schedules.first_mut().expect("schedule inserted");
+        if let Some(frequency) = schedule.frequency {
+            current.frequency = frequency;
+        }
+        if let Some(intensity) = schedule.intensity {
+            current.intensity = intensity;
+        }
+        if let Some(days) = schedule.days {
+            current.days = days;
+        }
+        if let Some(day_of_month) = schedule.day_of_month {
+            current.day_of_month = day_of_month;
+        }
+        if let Some(time) = schedule.time {
+            current.time = time.trim().to_string();
+        }
+        if let Some(timezone) = schedule.timezone {
+            current.timezone = timezone.trim().to_string();
         }
     }
 
     if let Some(hourly) = patch.hourly_intensity {
-        cfg.schedules.hourly = ScheduleProfile { intensity: hourly };
+        cfg.schedules.hourly.intensity = hourly;
     }
 
     if let Some(daily) = patch.daily_intensity {
-        cfg.schedules.daily = ScheduleProfile { intensity: daily };
+        cfg.schedules.daily.intensity = daily;
     }
 
     Ok(())
@@ -781,7 +843,16 @@ async fn scan_with_args(
 ) -> Result<Json<ScanResponse>, ApiError> {
     let args = build_scan_args(args, target);
     let refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
-    let resp = super::dkp::run_cli(&refs).await?;
+    let config_dir = state.discovery_config_dir.as_str();
+    let state_dir = state.discovery_state_dir.as_str();
+    let resp = super::dkp::run_cli_with_env(
+        &refs,
+        &[
+            ("SGX_GUARDIAN_DISCOVERY_CONFIG_DIR", config_dir),
+            ("SGX_GUARDIAN_DISCOVERY_STATE_DIR", state_dir),
+        ],
+    )
+    .await?;
     if resp.success {
         publish_rule_events_for_latest_run(state);
     }
@@ -1112,10 +1183,12 @@ mod tests {
     use crate::did::Resolver;
     use crate::discovery::run_history::{self, ScanRunRecord, ScanRunSource};
     use crate::discovery::whitelist::WhitelistEntry;
-    use crate::discovery::{ConnectedDevice, DeviceStatus, NmapConfig, OpenPort, ScanIntensity};
+    use crate::discovery::{
+        ConnectedDevice, DeviceStatus, NmapConfig, OpenPort, ScanIntensity, ScheduleDay,
+    };
     use crate::virtual_id_cache::VirtualIdCache;
-    use axum::extract::{Query, State};
     use axum::Json;
+    use axum::extract::{Query, State};
     use chrono::{TimeZone, Utc};
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -1204,12 +1277,24 @@ mod tests {
             target_cidr: Some(None),
             timeout_secs: Some(120),
             exclude: Some(vec![]),
+            scan_schedules: None,
+            schedule: None,
             schedules: Some(SchedulePatch {
                 hourly: Some(ScheduleProfilePatch {
+                    frequency: None,
                     intensity: Some(ScanIntensity::Stealth),
+                    days: None,
+                    day_of_month: None,
+                    time: None,
+                    timezone: None,
                 }),
                 daily: Some(ScheduleProfilePatch {
+                    frequency: None,
                     intensity: Some(ScanIntensity::Aggressive),
+                    days: Some(vec![ScheduleDay::Monday, ScheduleDay::Wednesday]),
+                    day_of_month: None,
+                    time: Some("23:00".into()),
+                    timezone: None,
                 }),
             }),
             hourly_intensity: None,
@@ -1224,6 +1309,11 @@ mod tests {
         assert!(cfg.exclude.is_empty());
         assert_eq!(cfg.schedules.hourly.intensity, ScanIntensity::Stealth);
         assert_eq!(cfg.schedules.daily.intensity, ScanIntensity::Aggressive);
+        assert_eq!(
+            cfg.schedules.daily.days,
+            vec![ScheduleDay::Monday, ScheduleDay::Wednesday]
+        );
+        assert_eq!(cfg.schedules.daily.time, "23:00");
     }
 
     #[test]
@@ -1464,11 +1554,13 @@ mod tests {
 
         assert_eq!(runs.len(), 1);
         assert!(runs[0].devices.is_none());
-        assert!(runs[0]
-            .devices_error
-            .as_deref()
-            .expect("devices_error should be present")
-            .contains("raw xml not available"));
+        assert!(
+            runs[0]
+                .devices_error
+                .as_deref()
+                .expect("devices_error should be present")
+                .contains("raw xml not available")
+        );
     }
 
     fn scanned_device(status: DeviceStatus) -> ConnectedDevice {
@@ -1852,6 +1944,8 @@ mod tests {
                 timeout_secs: Some(300),
                 exclude: Some(vec!["10.10.0.1".to_string()]),
                 schedules: None,
+                scan_schedules: None,
+                schedule: None,
                 hourly_intensity: None,
                 daily_intensity: None,
             }),

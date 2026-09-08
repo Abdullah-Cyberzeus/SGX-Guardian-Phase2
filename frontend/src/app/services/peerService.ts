@@ -18,6 +18,8 @@ export interface Peer {
   deviceName: string;
   did?: string;
   ip: string;
+  physicalIp?: string;
+  overlayIp?: string;
   port: number;
   status: 'verified' | 'pending' | 'failed';
   role: string;
@@ -50,6 +52,10 @@ interface PeersResponse {
     deviceName?: string;
     did?: string;
     ip: string;
+    physicalIp?: string;
+    physical_ip?: string;
+    overlayIp?: string;
+    overlay_ip?: string;
     status: string;
     role?: string;
     memberType?: string;
@@ -82,6 +88,8 @@ function normalizePeers(peers: PeersResponse['peers']): Peer[] {
     deviceName: p.deviceName || p.peerId,
     did: p.did,
     ip: p.ip || '',
+    physicalIp: p.physicalIp || p.physical_ip,
+    overlayIp: p.overlayIp || p.overlay_ip,
     port: 0,
     status: (p.status === 'verified' || p.status === 'trusted' || p.status === 'success'
       ? 'verified'

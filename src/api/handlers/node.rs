@@ -1,7 +1,7 @@
 use crate::api::{error::ApiError, state::AppState};
 use axum::{
-    extract::{Query, State},
     Json,
+    extract::{Query, State},
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -204,6 +204,8 @@ pub struct BootStatus {
     pub device_closed: bool,
     #[serde(rename = "habEventsFound")]
     pub hab_events_found: bool,
+    #[serde(rename = "habDescription")]
+    pub hab_description: String,
     #[serde(rename = "deviceModel")]
     pub device_model: String,
     #[serde(rename = "kernelVersion")]
@@ -283,6 +285,7 @@ pub async fn boot_status(State(s): State<Arc<AppState>>) -> Result<Json<BootStat
         hab_enabled: b("hab_enabled"),
         device_closed: b("device_closed"),
         hab_events_found: b("hab_events_found"),
+        hab_description: s_("hab_description"),
         device_model: s_("device_model"),
         kernel_version: s_("kernel_version"),
         boot_chain_intact: b("boot_chain_intact"),

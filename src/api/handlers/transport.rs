@@ -2,8 +2,8 @@ use crate::api::{error::ApiError, state::AppState};
 use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use axum::{
-    extract::{Query, State},
     Json,
+    extract::{Query, State},
 };
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use serde::{Deserialize, Serialize};
@@ -286,12 +286,12 @@ fn detect_interfaces(sys_net_dir: &str) -> Vec<TransportInterface> {
         };
 
         let operstate_path = format!("{}/{}/operstate", sys_net_dir, name);
-        let is_up = fs::read_to_string(operstate_path)
-            .map(|s| s.trim() == "up")
-            .unwrap_or(false);
+        let operstate = fs::read_to_string(operstate_path)
+            .map(|s| s.trim().to_ascii_lowercase())
+            .unwrap_or_default();
 
         let ip = ip_by_interface.get(&name).cloned();
-        let available = is_up && ip.is_some();
+        let available = interface_is_available(transport, &operstate, ip.is_some());
 
         out.push(TransportInterface {
             name,
@@ -309,6 +309,25 @@ fn detect_interfaces(sys_net_dir: &str) -> Vec<TransportInterface> {
 
     out.sort_by_key(|iface| (iface.priority, iface.name.clone()));
     out
+}
+
+/// Derive user-visible availability from the signals that are reliable for each
+/// transport. WWAN/PPP drivers frequently leave `operstate` as `down` or
+/// `unknown` while a modem-managed data session is live. A configured IPv4
+/// address is therefore the authoritative availability signal for cellular and
+/// satellite transports. Link-managed Ethernet/Wi-Fi/Bluetooth interfaces still
+/// require both an up operational state and an address.
+fn interface_is_available(transport: TransportType, operstate: &str, has_ip: bool) -> bool {
+    if !has_ip {
+        return false;
+    }
+
+    match transport {
+        TransportType::Cellular | TransportType::Satellite => true,
+        TransportType::Ethernet | TransportType::WiFi | TransportType::Bluetooth => {
+            operstate.eq_ignore_ascii_case("up")
+        }
+    }
 }
 
 fn determine_active(
@@ -552,6 +571,35 @@ mod tests {
 
         let active = determine_active(&interfaces, Some("eth0"));
         assert_eq!(active.as_ref().map(|a| a.name.as_str()), Some("eth0"));
+    }
+
+    #[test]
+    fn cellular_with_ipv4_is_available_when_driver_operstate_is_down() {
+        assert!(interface_is_available(
+            TransportType::Cellular,
+            "down",
+            true
+        ));
+        assert!(interface_is_available(
+            TransportType::Cellular,
+            "unknown",
+            true
+        ));
+    }
+
+    #[test]
+    fn cellular_without_ipv4_is_not_available() {
+        assert!(!interface_is_available(
+            TransportType::Cellular,
+            "up",
+            false
+        ));
+    }
+
+    #[test]
+    fn link_managed_interface_still_requires_up_operstate() {
+        assert!(!interface_is_available(TransportType::WiFi, "down", true));
+        assert!(interface_is_available(TransportType::WiFi, "up", true));
     }
 
     #[test]

@@ -24,6 +24,9 @@ export interface CircleMember {
   online?: boolean;
   presenceStatus?: 'online' | 'offline' | 'hidden' | 'stale' | 'unknown' | string;
   joinedAt?: string;
+  physicalIp?: string;
+  overlayIp?: string;
+  lastSeen?: string;
 }
 
 export interface Circle {
@@ -78,6 +81,15 @@ export interface MemberEnrollmentInvite {
   link: string;
   expiresAt: string;
   enrollment: MemberEnrollment;
+}
+
+export interface AvailablePwaMember {
+  userId: string;
+  name: string;
+  email: string;
+  memberDid: string;
+  circleIds: string[];
+  registrationExpiresAt?: number;
 }
 
 export interface JoinPreview {
@@ -140,6 +152,9 @@ function normalizeCircle(value: any): Circle {
 function normalizeMember(value: any): CircleMember {
   const did = String(value?.did || '');
   const nodeHint = value?.nodeHint || value?.node_hint;
+  const physicalIp = value?.physicalIp || value?.physical_ip || value?.ip || value?.endpointIp || value?.endpoint_ip;
+  const overlayIp = value?.overlayIp || value?.overlay_ip || value?.nebulaIp || value?.nebula_ip || value?.overlay;
+  const lastSeen = value?.lastSeen || value?.last_seen || value?.lastSignal || value?.last_signal || value?.updatedAt || value?.updated_at;
   const lifecycle = String(value?.lifecycleState || value?.lifecycle_state || value?.state || value?.status || 'unknown').toLowerCase();
   const rawId = did.split(':').pop() || '';
   const fallbackName = rawId ? `Guardian ${rawId.slice(0, 6)}…${rawId.slice(-4)}` : 'Guardian member';
@@ -156,6 +171,9 @@ function normalizeMember(value: any): CircleMember {
     presenceStatus: value?.presenceStatus || value?.presence_status,
     status: lifecycle,
     joinedAt: value?.joinDate || value?.join_date || value?.joinedAt,
+    physicalIp: physicalIp ? String(physicalIp) : undefined,
+    overlayIp: overlayIp ? String(overlayIp) : undefined,
+    lastSeen: lastSeen ? String(lastSeen) : undefined,
   };
 }
 
@@ -329,10 +347,11 @@ export const circleService = {
     return normalizeInvite({ ...payload?.invite, ...payload });
   },
 
-  createMemberEnrollmentInvite: (id: string, expiresInMinutes = 60, baseUrl = window.location.origin) =>
+  createMemberEnrollmentInvite: (id: string, expiresInMinutes = 60, baseUrl = window.location.origin, targetUserId?: string) =>
     api.post<MemberEnrollmentInvite>(`/circles/${encode(id)}/member-invites`, {
       baseUrl,
       expiresInMinutes,
+      targetUserId,
     }),
 
   async getMemberEnrollments(id: string): Promise<MemberEnrollment[]> {
@@ -342,11 +361,21 @@ export const circleService = {
     );
   },
 
+  async getAvailablePwaMembers(id: string): Promise<AvailablePwaMember[]> {
+    return listFrom<AvailablePwaMember>(
+      await api.get<unknown>(`/circles/${encode(id)}/pwa-members/available`),
+      'members',
+    );
+  },
+
   approveMemberEnrollment: (id: string, approvalId: string) =>
     api.post<MemberEnrollment>(`/circles/${encode(id)}/member-enrollments/${encode(approvalId)}/approve`),
 
   rejectMemberEnrollment: (id: string, approvalId: string) =>
     api.post<MemberEnrollment>(`/circles/${encode(id)}/member-enrollments/${encode(approvalId)}/reject`),
+
+  sendMemberEnrollmentInvite: (id: string, approvalId: string) =>
+    api.post<MemberEnrollment>(`/circles/${encode(id)}/member-enrollments/${encode(approvalId)}/send`),
 
   async deliverInvite(id: string, inviteId: string): Promise<CircleInvite> {
     const payload = await api.post<any>(`/circles/${encode(id)}/invites/${encode(inviteId)}/deliver`);

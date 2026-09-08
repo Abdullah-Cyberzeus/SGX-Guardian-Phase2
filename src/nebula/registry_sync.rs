@@ -48,6 +48,12 @@ pub struct RegistryResponse {
     pub error: Option<String>,
     pub registry_summary: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub did_doc_did: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub did_doc_version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub did_doc_peer_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub did_doc_json: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub did_doc_aggregate_json: Option<String>,
@@ -414,8 +420,11 @@ async fn handle_registry_connection(
                     },
                     Some(payload) => {
                         match crate::did::doc_distribution::ca_ingest_published(payload).await {
-                            Ok(()) => RegistryResponse {
+                            Ok(result) => RegistryResponse {
                                 success: true,
+                                did_doc_did: Some(result.did),
+                                did_doc_version: Some(result.version),
+                                did_doc_peer_count: Some(result.peer_count),
                                 ..Default::default()
                             },
                             Err(e) => RegistryResponse {

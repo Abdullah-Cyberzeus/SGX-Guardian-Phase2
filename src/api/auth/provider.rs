@@ -1,6 +1,6 @@
 use crate::api::auth::{
     password,
-    store::{normalize_email, User},
+    store::{User, normalize_email},
 };
 use crate::api::{error::ApiError, state::AppState};
 use async_trait::async_trait;

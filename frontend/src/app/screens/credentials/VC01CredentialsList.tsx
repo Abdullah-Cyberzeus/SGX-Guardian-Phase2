@@ -1106,7 +1106,7 @@ export function VC01CredentialsList() {
                 <div className="flex items-center gap-1.5">
                   <Hash size={12} style={{ color: "var(--muted-foreground)" }} />
                   <span style={{ fontSize: "var(--text-xs)", color: "var(--muted-foreground)", fontFamily: "Inter, sans-serif" }}>
-                    Total: <strong style={{ color: "var(--foreground)" }}>{vcShowData?.count ?? items.length}</strong>
+                    Total: <strong style={{ color: "var(--foreground)" }}>{items.length}</strong>
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">

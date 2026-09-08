@@ -4,11 +4,11 @@ use crate::audit::logger::log_audit;
 use crate::did::{Did, DidRecord};
 use crate::vc::credential::{CredentialRole, VerifiableCredential};
 use crate::vc::issue::{self, IssueMembershipOutcome, IssueRequest, RenewRequest};
-use crate::vc::{distribution, persistence, status_list, verify, VcError};
+use crate::vc::{VcError, distribution, persistence, status_list, verify};
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
-    Json,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -757,8 +757,8 @@ async fn best_effort_revoked_status(state: &Arc<AppState>, vc: &VerifiableCreden
     strict_revoked_status(state, vc).await.unwrap_or(false)
 }
 
-fn load_runtime_signing_context(
-) -> Result<(DidRecord, std::sync::Arc<crate::key_manager::KeyManager>), ApiError> {
+fn load_runtime_signing_context()
+-> Result<(DidRecord, std::sync::Arc<crate::key_manager::KeyManager>), ApiError> {
     let issuer = load_issuer_record()?;
     let node_id = issue::resolve_runtime_node_id().ok_or_else(|| {
         ApiError::Internal("cannot resolve runtime node_id for VC signing".into())

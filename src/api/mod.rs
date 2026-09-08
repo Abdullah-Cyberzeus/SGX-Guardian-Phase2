@@ -7,7 +7,7 @@ use axum::{
     http::{header, HeaderName, HeaderValue, Request},
     middleware::Next,
     response::Response,
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -79,8 +79,20 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             post(handlers::pwa::join_member),
         )
         .route(
+            "/api/v1/pwa/onboarding/signup",
+            post(handlers::pwa::signup_member),
+        )
+        .route(
             "/api/v1/pwa/circles/join",
             post(handlers::pwa::join_additional_circle),
+        )
+        .route(
+            "/api/v1/pwa/circles/invites",
+            get(handlers::pwa::targeted_pwa_member_invites),
+        )
+        .route(
+            "/api/v1/pwa/circles/invites/{approval_id}/decision",
+            post(handlers::pwa::decide_targeted_pwa_member_invite),
         )
         .route(
             "/api/v1/pwa/onboarding/approval/{approval_id}",
@@ -223,6 +235,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             "/api/v1/pcr/baseline/create",
             post(handlers::pcr::baseline_create),
         )
+        .route("/api/v1/pcr/baseline", get(handlers::pcr::baseline_read))
         // alias expected by frontend service
         .route(
             "/api/v1/pcr/baseline/update",
@@ -232,6 +245,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             "/api/v1/pcr/baseline/verify",
             post(handlers::pcr::baseline_verify),
         )
+        .route("/api/v1/pcr/history", get(handlers::pcr::history_read))
         // alias expected by frontend service
         .route("/api/v1/pcr/verify", post(handlers::pcr::baseline_verify))
         .route("/api/v1/policy/sign", post(handlers::policy::sign))
@@ -298,6 +312,18 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             get(handlers::threat::threat_intel),
         )
         .route("/api/v1/threat/alerts", get(handlers::threat::list_alerts))
+        .route(
+            "/api/v1/threat/alerts/{alert_id}/archive",
+            post(handlers::threat::archive_alert),
+        )
+        .route(
+            "/api/v1/threat/alerts/{alert_id}/restore",
+            post(handlers::threat::restore_alert),
+        )
+        .route(
+            "/api/v1/threat/alerts/{alert_id}",
+            delete(handlers::threat::delete_alert),
+        )
         .route(
             "/api/v1/threat/modbus",
             get(handlers::threat::modbus_alerts),
@@ -566,7 +592,7 @@ async fn security_headers(req: Request<axum::body::Body>, next: Next) -> Respons
     headers.insert(
         HeaderName::from_static("permissions-policy"),
         HeaderValue::from_static(
-            "camera=(self), microphone=(self), display-capture=(self), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), interest-cohort=()",
+            "camera=(self), microphone=(self), display-capture=(self), geolocation=(self), payment=(), usb=(), serial=(), bluetooth=(), interest-cohort=()",
         ),
     );
     headers.insert(
@@ -2583,6 +2609,9 @@ mod tests {
 
             let mut response = serde_json::to_string(&RegistryResponse {
                 success: true,
+                did_doc_did: Some(doc.id.clone()),
+                did_doc_version: Some(doc.sgx_version_id),
+                did_doc_peer_count: Some(2),
                 ..RegistryResponse::default()
             })
             .expect("publish response");
@@ -3910,7 +3939,9 @@ mod tests {
         let publish: Value = client
             .post(format!("{}/api/v1/did/document/publish", base_url))
             .json(&serde_json::json!({
-                "ca_host": "127.0.0.1",
+                // Simulate a stale cached UI. The API must use its current
+                // server-side CA discovery result instead of this old value.
+                "ca_host": "172.31.250.10",
                 "node_name": "nodeB"
             }))
             .send()
@@ -3924,6 +3955,7 @@ mod tests {
         assert_eq!(publish["version"], 5);
         assert_eq!(publish["ca_host"], "127.0.0.1");
         assert_eq!(publish["node_name"], "nodeB");
+        assert_eq!(publish["registry_peer_count"], 2);
 
         let peers: Value = client
             .get(format!("{}/api/v1/did/document/peers", base_url))
@@ -3955,6 +3987,55 @@ mod tests {
 
         handle.abort();
         publish_handle.await.expect("mock ca task");
+    }
+
+    #[allow(clippy::await_holding_lock)] // serializes process-wide DID/env overrides
+    #[tokio::test]
+    async fn did_document_publish_uses_configured_ca_when_host_omitted() {
+        let _lock = crate::test_support::async_env_lock().await;
+        let td = TempDir::new().expect("tempdir");
+        let self_doc_path = td.path().join("identity").join("did_doc.json");
+        let peers_dir = td.path().join("identity").join("peers");
+        let aggregate_path = td.path().join("identity").join("circle_did_docs.json");
+        let _env = EnvGuard::new(&self_doc_path, &peers_dir, &aggregate_path);
+        let _ca_host = ScopedEnvVar::set("SGX_CA_HOST", "127.0.0.1");
+
+        let self_did = Did::from_id_bytes(&[17u8; 32]).to_string();
+        let self_doc = signed_doc(&self_did, "nodeB", 2, 2, "active", vec![], false);
+        doc_persistence::save_self(&self_doc).expect("save self doc");
+        doc_persistence::write_self_floor_version(self_doc.sgx_version_id)
+            .expect("write self floor version");
+
+        let publish_handle = spawn_mock_ca_publish_server("nodeB").await;
+        let (base_url, client, handle) = spawn_authed_api().await;
+
+        let publish: Value = client
+            .post(format!("{}/api/v1/did/document/publish", base_url))
+            .json(&serde_json::json!({
+                "node_name": "nodeB"
+            }))
+            .send()
+            .await
+            .expect("publish request")
+            .json()
+            .await
+            .expect("publish json");
+
+        handle.abort();
+        publish_handle.await.expect("mock ca task");
+
+        assert_eq!(publish["success"], true);
+        assert_eq!(publish["did"], self_did);
+        assert_eq!(publish["version"], 2);
+        assert_eq!(publish["ca_host"], "127.0.0.1");
+        assert_eq!(publish["node_name"], "nodeB");
+        assert_eq!(publish["registry_peer_count"], 2);
+        assert!(
+            publish["message"]
+                .as_str()
+                .expect("publish message")
+                .contains("persisted in CA registry")
+        );
     }
 
     #[allow(clippy::await_holding_lock)] // see vc_issue_reuse_status_and_safe_file_reads_work

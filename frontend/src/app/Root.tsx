@@ -18,8 +18,9 @@ import { GroupCallingScreen } from "../features/calls/GroupCallingScreen";
 import { IncomingGroupCallDialog } from "../features/calls/IncomingGroupCallDialog";
 import { CertificateRequestProvider } from "../features/certificates/CertificateRequestContext";
 import { IncomingCertificateRequestDialog } from "../features/certificates/IncomingCertificateRequestDialog";
+import { IncomingCircleInviteDialog } from "./components/circle/IncomingCircleInviteDialog";
 import { useAuth } from "./contexts/AuthContext";
-import { isAdminRole } from "./utils/authorization";
+import { isAdminRole, isMemberRole } from "./utils/authorization";
 import { GuardianConnectivityProvider } from "../pwa/connectivity/GuardianConnectivityContext";
 
 function CallSurfaces({ children }: { children: ReactNode }) {
@@ -106,6 +107,7 @@ function AuthenticatedRuntime() {
               <VaultProvider>
                 <RoleRuntime>
                   <NotificationToastStack />
+                  {isMemberRole(session.user.role) && <IncomingCircleInviteDialog />}
                   <Outlet />
                 </RoleRuntime>
               </VaultProvider>
