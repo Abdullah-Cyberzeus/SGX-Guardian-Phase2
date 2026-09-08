@@ -656,9 +656,12 @@ pub async fn remove_member(
             .remove_member_circle(&user.user_id, &registration_id, &id)
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?;
-        if let Err(err) =
-            refresh_and_broadcast_member_snapshot_with_extra_targets(&state, &id, &[did.clone()])
-                .await
+        if let Err(err) = refresh_and_broadcast_member_snapshot_with_extra_targets(
+            &state,
+            &id,
+            std::slice::from_ref(&did),
+        )
+        .await
         {
             tracing::warn!(
                 "Circle member snapshot broadcast failed after remove browser member circle={} subject={} error={}",
@@ -682,8 +685,12 @@ pub async fn remove_member(
     }
     let revoked_vc_ids = members::remove_member(&state.node_id, &id, &did, "circle member removed")
         .map_err(map_circle_error)?;
-    if let Err(err) =
-        refresh_and_broadcast_member_snapshot_with_extra_targets(&state, &id, &[did.clone()]).await
+    if let Err(err) = refresh_and_broadcast_member_snapshot_with_extra_targets(
+        &state,
+        &id,
+        std::slice::from_ref(&did),
+    )
+    .await
     {
         tracing::warn!(
             "Circle member snapshot broadcast failed after remove circle={} subject={} error={}",

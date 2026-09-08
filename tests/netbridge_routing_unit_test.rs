@@ -47,7 +47,7 @@ mod routing_under_test {
         #[test]
         fn new_and_default_construct_managers() {
             let _new = RoutingManager::new();
-            let _default = RoutingManager::default();
+            let _default = RoutingManager;
         }
 
         #[test]

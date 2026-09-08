@@ -836,7 +836,7 @@ pub async fn list_available_pwa_members(
             }
         })
         .collect::<Vec<_>>();
-    members.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    members.sort_by_key(|member| member.name.to_lowercase());
     Ok(Json(AvailablePwaMembersResponse { members }))
 }
 
@@ -1446,7 +1446,7 @@ pub fn guardian_fingerprint(public_key: &[u8]) -> String {
         bits += 8;
         while bits >= 5 && emitted < 16 {
             bits -= 5;
-            if emitted > 0 && emitted % 4 == 0 {
+            if emitted > 0 && emitted.is_multiple_of(4) {
                 value.push('-');
             }
             value.push(ALPHABET[((buffer >> bits) & 31) as usize] as char);

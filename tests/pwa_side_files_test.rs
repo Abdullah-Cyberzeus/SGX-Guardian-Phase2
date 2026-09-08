@@ -579,6 +579,7 @@ fn member_session(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn ingest_member_file(
     temp: &TempDir,
     namespace: VaultNamespace,

@@ -6,7 +6,7 @@
 //!
 //! Uses the shared `wave_b_support::Env` fixture, which bootstraps a real
 //! Circle-owner identity via `SGX_GUARDIAN_DID_PATH`/`SGX_GUARDIAN_DEVICE_KEY_DIR`
-//! + `SGX_FORCE_SOFTWARE_KEYS` — exactly the env vars `load_issuer_record()`/
+//! and `SGX_FORCE_SOFTWARE_KEYS` — exactly the env vars `load_issuer_record()`/
 //! `load_runtime_signing_context()` read — so `issue`/`renew`/`revoke`/`verify`
 //! can be exercised as real, successful end-to-end flows, not just error paths.
 

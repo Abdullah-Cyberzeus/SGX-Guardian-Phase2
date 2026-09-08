@@ -26,6 +26,7 @@ fn caps(entity_id: &str, state: &str, attributes: Value) -> DeviceCapabilities {
     capabilities::derive(&device(entity_id, state, attributes), "°C")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn param(
     name: &str,
     label: &str,
@@ -700,7 +701,7 @@ fn capability_models_serialize_deserialize_and_lookup_missing_commands() {
     let decoded: DeviceCapabilities = serde_json::from_str(&encoded).unwrap();
     assert_eq!(decoded.device_id, derived.device_id);
     assert_eq!(decoded.command_names(), derived.command_names());
-    assert_eq!(decoded.light.unwrap().supports_brightness, false);
+    assert!(!decoded.light.unwrap().supports_brightness);
 
     for kind in [
         ParamKind::Number,

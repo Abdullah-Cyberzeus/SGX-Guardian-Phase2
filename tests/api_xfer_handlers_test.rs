@@ -276,6 +276,7 @@ async fn send_source_disabled_rejects_vault_before_lookup() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn cancel_missing_transfer_returns_false() {
     let _env_lock = lock_env();
     let dir = tempfile::tempdir().unwrap();
@@ -284,6 +285,7 @@ async fn cancel_missing_transfer_returns_false() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn cancel_empty_transfer_id_returns_false() {
     let _env_lock = lock_env();
     let dir = tempfile::tempdir().unwrap();
@@ -394,6 +396,7 @@ fn send_source_clone_preserves_variant() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn cancel_missing_transfer_is_idempotent() {
     let _env_lock = lock_env();
     let dir = tempfile::tempdir().unwrap();

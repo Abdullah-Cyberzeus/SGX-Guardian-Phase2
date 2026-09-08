@@ -24,14 +24,8 @@ impl KasaCredentials {
 
     pub fn validate(&self) -> Result<(), String> {
         if self.mode == "cloud" {
-            let has_user = self
-                .username
-                .as_ref()
-                .map_or(false, |u| !u.trim().is_empty());
-            let has_pass = self
-                .password
-                .as_ref()
-                .map_or(false, |p| !p.trim().is_empty());
+            let has_user = self.username.as_ref().is_some_and(|u| !u.trim().is_empty());
+            let has_pass = self.password.as_ref().is_some_and(|p| !p.trim().is_empty());
             if !has_user || !has_pass {
                 return Err("Username and password are required for cloud mode".to_string());
             }

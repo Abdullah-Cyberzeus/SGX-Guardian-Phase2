@@ -22,7 +22,7 @@ fn invalid_rules_display_includes_reason() {
 #[test]
 fn result_alias_accepts_ok_value() {
     let value: AdvisoryResult<u8> = Ok(7);
-    assert_eq!(value.unwrap(), 7);
+    assert!(matches!(value, Ok(7)));
 }
 
 #[test]

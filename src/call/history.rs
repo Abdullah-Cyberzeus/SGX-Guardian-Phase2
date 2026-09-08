@@ -93,9 +93,8 @@ impl CallHistoryStore {
                 let mut ids: Vec<String> = session
                     .participants
                     .iter()
-                    .filter_map(|(id, participant)| {
-                        participant.joined_at.is_some().then(|| id.clone())
-                    })
+                    .filter(|(_, participant)| participant.joined_at.is_some())
+                    .map(|(id, _)| id.clone())
                     .collect();
                 ids.sort();
                 ids
@@ -124,7 +123,7 @@ impl CallHistoryStore {
         } else {
             records.push(record);
         }
-        records.sort_by(|left, right| right.ended_at.cmp(&left.ended_at));
+        records.sort_by_key(|record| std::cmp::Reverse(record.ended_at));
         records.truncate(500);
         let temporary = self.path.with_extension("json.tmp");
         std::fs::write(&temporary, serde_json::to_vec_pretty(&records)?)?;

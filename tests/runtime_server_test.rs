@@ -49,8 +49,10 @@ async fn request(
 }
 
 fn cfg(mode: RuntimeMode) -> GuardianConfig {
-    let mut cfg = GuardianConfig::default();
-    cfg.mode = mode;
+    let mut cfg = GuardianConfig {
+        mode,
+        ..GuardianConfig::default()
+    };
     cfg.hotspot.password = "StrongPass!1".into();
     cfg
 }

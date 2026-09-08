@@ -133,11 +133,9 @@ impl NotificationManager {
         let mut updated = 0;
         if let Ok(mut list) = self.notifications.write() {
             for n in list.iter_mut() {
-                if ids.contains(&n.id) {
-                    if !n.read {
-                        n.read = true;
-                        updated += 1;
-                    }
+                if ids.contains(&n.id) && !n.read {
+                    n.read = true;
+                    updated += 1;
                 }
             }
         }

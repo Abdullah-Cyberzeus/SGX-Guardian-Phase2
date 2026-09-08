@@ -487,6 +487,7 @@ fn normalize_p256_pubkey(pubkey_der_or_raw: &[u8]) -> &[u8] {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{find_pcr_snapshot, has_ssscli, normalize_p256_pubkey, read_signing_pubkey_b64};
     use super::{run_generate, run_verify, GenerateQuoteArgs, VerifyQuoteArgs};

@@ -2702,7 +2702,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(300 + scatter)).await;
                 window = window.wrapping_add(1);
-                if window % 4 == 0 {
+                if window.is_multiple_of(4) {
                     // Full refresh window (10 min, sliced) — hold the
                     // metrics write lock so readers see one stable
                     // snapshot across the whole CA transition.

@@ -712,7 +712,7 @@ impl SessionManager {
             .values()
             .map(CallSession::status_snapshot)
             .collect();
-        statuses.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        statuses.sort_by_key(|status| std::cmp::Reverse(status.updated_at));
         statuses
     }
 

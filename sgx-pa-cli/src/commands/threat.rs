@@ -224,6 +224,7 @@ fn save_block_records(path: &Path, blocks: &[BlockRecord]) -> Result<()> {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use sgx_guardian_client::threat::blocker::BlockRecord;

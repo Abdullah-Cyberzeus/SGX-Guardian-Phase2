@@ -12,7 +12,7 @@ fn step(order: u8) -> RemediationStep {
         order,
         action: format!("action-{order}"),
         rationale: format!("reason-{order}"),
-        automatable: order % 2 == 0,
+        automatable: order.is_multiple_of(2),
     }
 }
 

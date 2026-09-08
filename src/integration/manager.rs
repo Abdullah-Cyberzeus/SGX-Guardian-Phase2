@@ -226,10 +226,8 @@ impl IntegrationManager {
                         && (dev.ha_entity_id.contains("nest")
                             || dev.friendly_name.to_lowercase().contains("nest")));
 
-                if is_match {
-                    if dm.get_registry().remove_device(&dev.id).await.is_ok() {
-                        devices_removed += 1;
-                    }
+                if is_match && dm.get_registry().remove_device(&dev.id).await.is_ok() {
+                    devices_removed += 1;
                 }
             }
         }

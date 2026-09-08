@@ -19,9 +19,11 @@ use axum::http::HeaderMap;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-static CACHE: OnceLock<Mutex<HashMap<(String, String), Vec<u8>>>> = OnceLock::new();
+type CacheEntries = HashMap<(String, String), Vec<u8>>;
 
-fn cache() -> &'static Mutex<HashMap<(String, String), Vec<u8>>> {
+static CACHE: OnceLock<Mutex<CacheEntries>> = OnceLock::new();
+
+fn cache() -> &'static Mutex<CacheEntries> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 

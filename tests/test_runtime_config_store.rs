@@ -347,8 +347,10 @@ fn unicode_like_ascii_fields_round_trip() {
 #[test]
 fn saved_file_contains_mode_field() {
     with_temp_runtime_files(|config, _| {
-        let mut cfg = GuardianConfig::default();
-        cfg.mode = sgx_guardian_client::runtime::models::RuntimeMode::DualWifi;
+        let cfg = GuardianConfig {
+            mode: sgx_guardian_client::runtime::models::RuntimeMode::DualWifi,
+            ..GuardianConfig::default()
+        };
         ConfigStore::save(&cfg).unwrap();
         assert!(std::fs::read_to_string(config)
             .unwrap()

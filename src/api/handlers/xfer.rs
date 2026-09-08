@@ -121,19 +121,17 @@ pub async fn send(
     if !allowed_circle_ids.is_empty() {
         allowed.insert(state.device_did.clone());
     }
-    if is_member {
-        if !allowed.contains(peer_did) {
-            if let Some(Extension(session)) = session.as_ref() {
-                crate::api::auth::authorization::audit_member_resource_denied(
-                    &state.node_id,
-                    &session.claims.sub,
-                    "Circle transfer target",
-                );
-            }
-            return Err(ApiError::Forbidden(
-                "transfer target does not share an authorized Circle with this member".into(),
-            ));
+    if is_member && !allowed.contains(peer_did) {
+        if let Some(Extension(session)) = session.as_ref() {
+            crate::api::auth::authorization::audit_member_resource_denied(
+                &state.node_id,
+                &session.claims.sub,
+                "Circle transfer target",
+            );
         }
+        return Err(ApiError::Forbidden(
+            "transfer target does not share an authorized Circle with this member".into(),
+        ));
     }
 
     let local_browser_recipient =

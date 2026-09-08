@@ -281,18 +281,18 @@ impl AutomationEngine {
                 continue;
             }
 
-            if self.evaluate_trigger(&rule.trigger, entity_id, new_state) {
-                if self.evaluate_conditions(&rule.conditions).await {
-                    println!(
-                        "⚡ Rule fired: {} ({}) for entity: {} (state={})",
-                        rule.name, rule.id, entity_id, new_state
-                    );
-                    info!(
-                        "⚡ Rule fired: {} ({}) for entity: {} (state={})",
-                        rule.name, rule.id, entity_id, new_state
-                    );
-                    firing_rules.push(rule.clone());
-                }
+            if self.evaluate_trigger(&rule.trigger, entity_id, new_state)
+                && self.evaluate_conditions(&rule.conditions).await
+            {
+                println!(
+                    "⚡ Rule fired: {} ({}) for entity: {} (state={})",
+                    rule.name, rule.id, entity_id, new_state
+                );
+                info!(
+                    "⚡ Rule fired: {} ({}) for entity: {} (state={})",
+                    rule.name, rule.id, entity_id, new_state
+                );
+                firing_rules.push(rule.clone());
             }
         }
 

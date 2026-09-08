@@ -34,7 +34,7 @@ impl EventBus {
     pub fn publish(&self, event: HaEvent) {
         // broadcast sends to all active receivers. If there are no receivers, it returns an error
         // which we can safely ignore (meaning nobody is listening yet).
-        if let Err(_) = self.sender.send(event) {
+        if self.sender.send(event).is_err() {
             // No listeners, safe to ignore
         }
     }

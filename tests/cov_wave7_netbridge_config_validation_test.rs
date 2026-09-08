@@ -25,7 +25,7 @@ fn generate_wpa(settings: WifiClientSettings) -> Result<String, NetbridgeError> 
     let template = dir.path().join("wpa.template");
     let output = dir.path().join("nested/wpa.conf");
     fs::write(&template, "ctrl_interface=/run/wpa\ncountry={COUNTRY}\n").unwrap();
-    WpaConfigGenerator::default().generate(template, output, &settings)
+    WpaConfigGenerator.generate(template, output, &settings)
 }
 
 #[test]
@@ -210,7 +210,7 @@ fn validation_error_display_covers_every_variant() {
         assert!(error.source().is_none());
     }
     let _ = Validator::new();
-    let _ = Validator::default();
+    let _ = Validator;
 }
 
 #[test]
@@ -221,7 +221,7 @@ fn hostapd_replacement_covers_secure_open_and_all_placeholders() {
         "wpa_passphrase={WPA_PASSPHRASE}\nwpa_key_mgmt={WPA_KEY_MGMT}\n",
         "wpa_pairwise={WPA_PAIRWISE}\nrsn_pairwise={RSN_PAIRWISE}\n",
     );
-    let generator = ConfigGenerator::default();
+    let generator = ConfigGenerator;
     let secure = generator
         .replace_variables(
             template,
@@ -338,7 +338,7 @@ fn hostapd_and_dnsmasq_generators_create_parents_and_report_io_errors() {
         "{INTERFACE}|{GATEWAY_IP}|{DHCP_RANGE_START}|{DHCP_RANGE_END}|{LOCAL_DOMAIN}",
     )
     .unwrap();
-    let dns = DnsmasqConfigGenerator::default();
+    let dns = DnsmasqConfigGenerator;
     assert!(dns
         .read_template(&dns_template)
         .unwrap()

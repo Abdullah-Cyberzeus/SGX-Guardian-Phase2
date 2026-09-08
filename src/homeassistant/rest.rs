@@ -84,11 +84,9 @@ impl HaRestClient {
                     if !retryable {
                         break;
                     }
-                    if attempt < max_attempts {
-                        if policy == RetryPolicy::Idempotent {
-                            sleep(Duration::from_secs(backoff)).await;
-                            backoff *= 2;
-                        }
+                    if attempt < max_attempts && policy == RetryPolicy::Idempotent {
+                        sleep(Duration::from_secs(backoff)).await;
+                        backoff *= 2;
                     }
                 }
             }

@@ -208,7 +208,7 @@ pub async fn pull_latest_for_joined_circles(
     node_id: &str,
     resolver: &Resolver,
 ) -> Result<usize, CircleError> {
-    let local_did = crate::did::DidRecord::load(&crate::did::DEFAULT_DID_PATH)
+    let local_did = crate::did::DidRecord::load(crate::did::DEFAULT_DID_PATH)
         .map(|record| record.did)
         .unwrap_or_default();
     let registry = crate::circle::store::load_or_seed(node_id)?;

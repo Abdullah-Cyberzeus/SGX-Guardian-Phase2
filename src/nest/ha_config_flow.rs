@@ -211,7 +211,7 @@ impl NestHaConfigFlowClient {
         let access_token = creds.access_token.as_deref()?;
         let refresh_token = creds.refresh_token.as_deref().unwrap_or("");
 
-        let auth_impl_id = format!("nest_{}", client_id.replace('-', "_").replace('.', "_"));
+        let auth_impl_id = format!("nest_{}", client_id.replace(['-', '.'], "_"));
 
         // 1. Update application_credentials
         let app_creds_path = format!("{}/application_credentials", storage_path);

@@ -35,6 +35,7 @@ impl SecureFileStore {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&lock_path)?;
 
         lock_file.lock_exclusive()?;
@@ -81,6 +82,7 @@ impl SecureFileStore {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&lock_path)?;
 
         lock_file.lock_shared()?;

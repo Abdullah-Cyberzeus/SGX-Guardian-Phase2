@@ -300,12 +300,9 @@ fn reject_cross_site_unsafe_request(method: &Method, headers: &HeaderMap) -> Opt
         ));
     }
 
-    let Some(origin) = headers
+    let origin = headers
         .get(header::ORIGIN)
-        .and_then(|value| value.to_str().ok())
-    else {
-        return None;
-    };
+        .and_then(|value| value.to_str().ok())?;
     let Some(host) = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())

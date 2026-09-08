@@ -751,11 +751,7 @@ async fn mutual_attest_fails_after_exhausting_connect_retries() {
     .await
     .expect("mutual_attest must give up after its retry budget, not hang");
 
-    assert_eq!(
-        result.unwrap(),
-        false,
-        "unreachable peer must yield Ok(false)"
-    );
+    assert!(!result.unwrap(), "unreachable peer must yield Ok(false)");
 }
 
 #[tokio::test]
@@ -837,11 +833,7 @@ async fn mutual_attest_ok_false_when_peer_accepts_then_closes() {
     std::env::remove_var("SGX_GUARDIAN_VID_STATE_DIR");
     std::env::remove_var("SGX_REQUIRE_VC");
 
-    assert_eq!(
-        result.unwrap(),
-        false,
-        "no reply from peer must yield Ok(false)"
-    );
+    assert!(!result.unwrap(), "no reply from peer must yield Ok(false)");
 }
 
 // ════════════════════════════════════════════════════════════════════

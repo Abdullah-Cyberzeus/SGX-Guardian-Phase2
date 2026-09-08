@@ -98,12 +98,12 @@ fn read_pcr_baseline(
     if !resolved.starts_with(&base) {
         return Err(ApiError::NotFound("no PCR baseline found".into()));
     }
-    Ok(PcrBaseline::load(
+    PcrBaseline::load(
         resolved
             .to_str()
             .ok_or_else(|| ApiError::Internal("invalid PCR baseline path".into()))?,
     )
-    .map_err(ApiError::Internal)?)
+    .map_err(ApiError::Internal)
 }
 
 pub async fn baseline_read(

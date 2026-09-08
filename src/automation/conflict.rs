@@ -22,9 +22,7 @@ impl ConflictResolver {
             for action in &rule.actions {
                 match action {
                     RuleAction::Command { entity_id, .. } => {
-                        let list = entity_actions
-                            .entry(entity_id.clone())
-                            .or_insert_with(Vec::new);
+                        let list = entity_actions.entry(entity_id.clone()).or_default();
                         list.push((rule.priority, rule.clone(), action.clone()));
                     }
                     _ => {
@@ -38,7 +36,7 @@ impl ConflictResolver {
 
         for (entity_id, mut actions) in entity_actions {
             // Sort by priority descending
-            actions.sort_by(|a, b| b.0.cmp(&a.0));
+            actions.sort_by_key(|action| std::cmp::Reverse(action.0));
 
             if actions.len() == 1 {
                 resolved_actions.push((actions[0].1.clone(), actions[0].2.clone()));

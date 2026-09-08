@@ -363,7 +363,7 @@ fn geofence_errors_and_alert_severity_have_stable_public_contracts() {
         assert_eq!(error.to_string(), expected);
         assert!(error.source().is_none());
     }
-    let io_error: GeofenceError = std::io::Error::new(std::io::ErrorKind::Other, "disk").into();
+    let io_error: GeofenceError = std::io::Error::other("disk").into();
     assert_eq!(io_error.to_string(), "io: disk");
     assert!(io_error.source().is_some());
     let json_error: GeofenceError = serde_json::from_str::<serde_json::Value>("{")

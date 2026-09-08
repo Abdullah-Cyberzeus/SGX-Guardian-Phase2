@@ -339,6 +339,7 @@ fn parse_permissions(raw: &str) -> Result<Vec<String>, String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{ca_host_config_candidates, parse_permissions, parse_role};
     use sgx_guardian_client::vc::credential::CredentialRole;

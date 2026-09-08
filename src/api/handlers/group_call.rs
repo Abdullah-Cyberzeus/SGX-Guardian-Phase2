@@ -304,9 +304,9 @@ pub async fn create(
         .into_iter()
         .filter(|peer| {
             peer.peer_id != actor_id
-                && peer.did.as_ref().map_or(true, |did| did != &actor_id)
+                && (peer.did.as_ref() != Some(&actor_id))
                 && (request.call_all || request.member_ids.contains(&peer.peer_id))
-                && member_contacts.as_ref().map_or(true, |contacts| {
+                && member_contacts.as_ref().is_none_or(|contacts| {
                     peer.did.as_ref().is_some_and(|did| contacts.contains(did))
                 })
         })
@@ -576,6 +576,7 @@ pub async fn heartbeat(
     }
 }
 
+#[allow(clippy::result_large_err)]
 async fn record_heartbeat(
     state: &Arc<AppState>,
     group_id: &str,

@@ -1,3 +1,20 @@
+#![cfg_attr(
+    test,
+    allow(
+        dead_code,
+        unused_must_use,
+        clippy::await_holding_lock,
+        clippy::cloned_ref_to_slice_refs,
+        clippy::default_constructed_unit_structs,
+        clippy::err_expect,
+        clippy::field_reassign_with_default,
+        clippy::items_after_test_module,
+        clippy::too_many_arguments,
+        clippy::type_complexity,
+        clippy::while_let_loop
+    )
+)]
+
 // ===== Public exports for integration tests =====
 
 // Core modules

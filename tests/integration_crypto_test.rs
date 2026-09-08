@@ -77,7 +77,7 @@ macro_rules! too_short_tests {
     ($($name:ident => $len:expr),+ $(,)?) => {$(
         #[test]
         fn $name() {
-            with_seed_dir(|| assert_eq!(decrypt_tokens(&vec![0; $len]).unwrap_err(), "Ciphertext payload too short"));
+            with_seed_dir(|| assert_eq!(decrypt_tokens(&[0; $len]).unwrap_err(), "Ciphertext payload too short"));
         }
     )+};
 }
@@ -113,7 +113,7 @@ roundtrip_tests! {
 
 #[test]
 fn decrypt_random_payload_with_valid_length_fails_authentication() {
-    with_seed_dir(|| assert!(decrypt_tokens(&vec![7; 32]).is_err()));
+    with_seed_dir(|| assert!(decrypt_tokens(&[7; 32]).is_err()));
 }
 
 #[test]

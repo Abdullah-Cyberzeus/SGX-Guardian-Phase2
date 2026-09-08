@@ -489,7 +489,7 @@ mod tests {
     #[test]
     fn routing_manager_constructors_are_usable() {
         let _explicit = RoutingManager::new();
-        let _default = RoutingManager::default();
+        let _default = RoutingManager;
     }
 }
 

@@ -904,7 +904,7 @@ async fn additional_circle_join_refuses_spent_archived_and_duplicated_requests()
     let (second_status, second_body) = support::call(
         fixture.env.router(),
         "POST",
-        &format!("/api/v1/circles/pwa-dup-circle/member-invites"),
+        "/api/v1/circles/pwa-dup-circle/member-invites",
         Some(&fixture.owner_token),
         Some(json!({"baseUrl": "https://guardian.local"})),
     )

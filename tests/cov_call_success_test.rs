@@ -41,17 +41,12 @@ async fn with_overlay_and_peer() -> (
     let port = listener.local_addr().expect("local addr").port();
     std::env::set_var("SGX_CALL_SIGNALING_PORT", port.to_string());
     let handle = tokio::spawn(async move {
-        loop {
-            match listener.accept().await {
-                Ok((mut stream, _)) => {
-                    tokio::spawn(async move {
-                        use tokio::io::AsyncReadExt;
-                        let mut buf = vec![0u8; 8192];
-                        let _ = stream.read(&mut buf).await;
-                    });
-                }
-                Err(_) => break,
-            }
+        while let Ok((mut stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut buf = vec![0u8; 8192];
+                let _ = stream.read(&mut buf).await;
+            });
         }
     });
     (guard, handle)

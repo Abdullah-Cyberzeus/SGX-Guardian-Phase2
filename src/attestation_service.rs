@@ -140,7 +140,7 @@ fn spawn_attestation_self_probes() {
                     // before the snapshot is released (FIX 1/2 contention
                     // notes). Every 13th round uses the extended window so
                     // the I2C error queue fully clears on the i.MX8 boards.
-                    let settle = if round % 13 == 0 {
+                    let settle = if round.is_multiple_of(13) {
                         1800
                     } else {
                         5 + (round % 40)
@@ -158,7 +158,7 @@ fn spawn_attestation_self_probes() {
 
                 // Stale-peer pruning every ~6th sweep (hourly-ish): evicts
                 // entries outside the adaptive freshness window below.
-                if round % 6 == 0 {
+                if round.is_multiple_of(6) {
                     prune_stale_trusted_peers();
                 }
             }
