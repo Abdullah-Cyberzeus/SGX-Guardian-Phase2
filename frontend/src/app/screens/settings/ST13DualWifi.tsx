@@ -6,6 +6,7 @@ import {
   Clock3,
   Eye,
   EyeOff,
+  Info,
   Loader2,
   Lock,
   Power,
@@ -96,6 +97,23 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <h2 className="px-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">{title}</h2>
       <div className="rounded-lg border bg-card p-4">{children}</div>
     </section>
+  );
+}
+
+function InfoTooltip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+        aria-label={label}
+      >
+        <Info size={15} />
+      </button>
+      <span className="pointer-events-none absolute right-0 top-8 z-30 hidden w-[min(20rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs leading-5 text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+        {children}
+      </span>
+    </span>
   );
 }
 
@@ -287,19 +305,30 @@ export function ST13DualWifi() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="Dual Wi-Fi Mode" />
+      <PageHeader
+        title="Dual Wi-Fi Mode"
+        right={
+          <InfoTooltip label="About Dual Wi-Fi settings">
+            Choose how Guardian connects your devices to Wi-Fi. Some changes may briefly disconnect devices for a few seconds while Guardian switches networks.
+          </InfoTooltip>
+        }
+      />
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 pb-28 pt-4">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-4">
             <div className="flex items-center gap-3">
               <span className="rounded px-2 py-1 text-[10px] font-semibold uppercase tracking-wider" style={tone}>{runtimeState}</span>
               <div>
-                <span className="group relative inline-flex">
-                  <p className="cursor-help text-sm font-semibold" tabIndex={0}>Network orchestrator</p>
-                  <span className="pointer-events-none absolute left-1/2 top-7 z-20 hidden w-72 -translate-x-1/2 rounded-md border border-border bg-popover px-3 py-2 text-xs leading-5 text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
-                    Coordinates Wi-Fi mode changes, applies hotspot/uplink routing, enables Zero-Trust network enforcement, and monitors transition status.
-                  </span>
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-sm font-semibold">Network orchestrator</p>
+                  <InfoTooltip label="About Network orchestrator">
+                    Guardian manages the Wi-Fi change for you and shows whether the new setup is working.
+                    <span className="mt-2 block"><strong>Dual Wi-Fi:</strong> Guardian creates its own Wi-Fi for nearby devices and also connects to your home or office Wi-Fi.</span>
+                    <span className="block"><strong>Hotspot only:</strong> Guardian creates a local Wi-Fi network, but does not connect it to the internet.</span>
+                    <span className="block"><strong>Client only:</strong> Guardian joins your existing Wi-Fi and does not create a separate Guardian Wi-Fi network.</span>
+                    <span className="block"><strong>Off:</strong> Guardian turns off its Wi-Fi sharing and connection management.</span>
+                  </InfoTooltip>
+                </div>
                 <p className="text-xs text-muted-foreground">Current mode: {modeData?.mode.replaceAll("_", " ") ?? "unknown"}</p>
               </div>
             </div>

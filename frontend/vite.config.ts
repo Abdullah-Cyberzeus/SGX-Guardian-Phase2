@@ -24,7 +24,7 @@ function warnOnNonLocalApiUrl(): Plugin {
           `unset for production builds.\n`,
         );
       }
-    },
+    },e
   };
 }
 

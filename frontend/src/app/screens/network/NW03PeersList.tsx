@@ -13,7 +13,7 @@ import {
   Check,
   ChevronRight,
 } from "lucide-react";
-import { usePeers } from "../../hooks/useApiData";
+import { useCircles, usePeers } from "../../hooks/useApiData";
 import { useContactNames } from "../../contexts/ContactNameContext";
 import { peerService, type Peer } from "../../services/peerService";
 import { toast } from "sonner";
@@ -268,6 +268,7 @@ function PeerCard({
 export function NW03PeersList() {
   const navigate = useNavigate();
   const { data: peersData, loading, source, refetch } = usePeers();
+  const { data: circlesData } = useCircles();
   const [filter, setFilter] = useState<FilterTab>("all");
   const [attestingId, setAttestingId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -288,6 +289,11 @@ export function NW03PeersList() {
     pending: peers.filter((p) => p.status === "pending").length,
     failed: peers.filter((p) => p.status === "failed").length,
   }), [peers]);
+
+  const primaryActiveCircle = useMemo(() => {
+    const circles = Array.isArray(circlesData) ? circlesData : [];
+    return circles.find((circle: any) => circle.status !== "archived") ?? null;
+  }, [circlesData]);
 
   const lastVerifiedAgo = useMemo(() => {
     const verifiedTimestamps = peers
@@ -317,6 +323,14 @@ export function NW03PeersList() {
       setIsRefreshing(false);
       toast.success("Peers refreshed", { description: `${peers.length} peers discovered` });
     }, 1000);
+  };
+
+  const openCircleTopology = () => {
+    if (!primaryActiveCircle?.id) {
+      navigate("/network");
+      return;
+    }
+    navigate(`/network?topology=${encodeURIComponent(primaryActiveCircle.id)}`);
   };
 
   if (loading) {
@@ -491,7 +505,7 @@ export function NW03PeersList() {
         {/* Topology link */}
         <div className="px-4 pb-4">
           <button
-            onClick={() => navigate("/home/topology")}
+            onClick={openCircleTopology}
             className="w-full flex items-center justify-between p-4 rounded-lg border transition-opacity active:opacity-80"
             style={{
               backgroundColor: "var(--card)",
