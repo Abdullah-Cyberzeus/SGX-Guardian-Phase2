@@ -50,6 +50,8 @@ export interface CircleInvite {
   url?: string;
   qrPayload?: string;
   targetDid?: string;
+  targetName?: string;
+  targetEmail?: string;
   issuerDid?: string;
   circleId?: string;
   circleName?: string;
@@ -196,6 +198,8 @@ function normalizeInvite(value: any): CircleInvite {
     url: merged?.url || merged?.link,
     qrPayload: merged?.qrPayload || merged?.qr_payload,
     targetDid: merged?.targetDid || merged?.target_did,
+    targetName: merged?.targetName || merged?.target_name,
+    targetEmail: merged?.targetEmail || merged?.target_email,
     issuerDid: merged?.issuerDid || merged?.issuer_did || merged?.createdBy || merged?.created_by,
     circleId: merged?.circleId || merged?.circle_id || circle?.id || circle?.circle_id,
     circleName: merged?.circleName || merged?.circle_name || circle?.name,
@@ -376,6 +380,9 @@ export const circleService = {
 
   sendMemberEnrollmentInvite: (id: string, approvalId: string) =>
     api.post<MemberEnrollment>(`/circles/${encode(id)}/member-enrollments/${encode(approvalId)}/send`),
+
+  revokeMemberEnrollment: (id: string, approvalId: string) =>
+    api.delete<MemberEnrollment>(`/circles/${encode(id)}/member-enrollments/${encode(approvalId)}`),
 
   async deliverInvite(id: string, inviteId: string): Promise<CircleInvite> {
     const payload = await api.post<any>(`/circles/${encode(id)}/invites/${encode(inviteId)}/deliver`);

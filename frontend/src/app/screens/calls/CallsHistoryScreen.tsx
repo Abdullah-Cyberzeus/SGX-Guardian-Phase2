@@ -32,8 +32,15 @@ export function CallsHistoryScreen() {
   const groupCalling = useGroupCall();
   const peers = Array.isArray(peersData) ? peersData : [];
   const peerName = (id: string) => {
-    const peer = peers.find((item: any) => item.peerId === id);
-    return displayForDid(peer?.did, peer?.peerId || id);
+    const peer = peers.find((item: any) => item.peerId === id || item.did === id);
+    const fallback = [peer?.displayName, peer?.fullName, peer?.deviceName, peer?.peerId]
+      .map((value) => String(value || "").trim())
+      .find((value) => value
+        && value !== id
+        && value !== peer?.ip
+        && !["browser", "pwa member device"].includes(value.toLowerCase())
+        && !value.toLowerCase().startsWith("did:"));
+    return displayForDid(peer?.did || id, fallback || id);
   };
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -53,12 +60,12 @@ export function CallsHistoryScreen() {
         const participantIds = Array.from(new Set(record.participantIds.filter((id) => id && id !== currentDevice)));
         if (!participantIds.length) throw new Error("No group participants are available to call.");
         await groupCalling.createGroup(participantIds, false, media, record.title || "Group call");
-        toast.success(`Calling ${participantIds.length} group participant${participantIds.length === 1 ? "" : "s"}`);
+        toast.success(`Ringing ${participantIds.length} group participant${participantIds.length === 1 ? "" : "s"}`);
       } else {
         const target = record.participantIds[0];
         if (!target) throw new Error("The peer for this call is unavailable.");
-        const targetPeer = peers.find((peer: any) => peer.peerId === target);
-        await startCall(target, media, targetPeer?.online);
+        const targetPeer = peers.find((peer: any) => peer.peerId === target || peer.did === target);
+        await startCall(target, media, targetPeer?.presenceStatus === "online" || Boolean(targetPeer?.online));
       }
     } catch (cause) {
       toast.error("Call could not start", { description: cause instanceof Error ? cause.message : "One or more participants may be unavailable." });

@@ -47,6 +47,7 @@ fn pwa_contact_omits_none_optionals() {
         full_name: None,
         device_name: "Device".into(),
         did: None,
+        ip: String::new(),
         status: "active".into(),
         role: "member".into(),
         member_type: "guardian".into(),

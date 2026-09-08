@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Info, Loader2, MessageSquare, Phone, RefreshCw, RotateCcw, Search, Send, UserPlus, Video, X, XCircle } from "lucide-react";
+import { ChevronDown, Info, Loader2, MessageSquare, Phone, RefreshCw, RotateCcw, Search, Send, UserPlus, Users, Video, X, XCircle } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import * as Dialog from "@radix-ui/react-dialog";
 import { toast } from "sonner";
 import { PageHeader } from "../../components/PageHeader";
 import { AttachmentMenu } from "../../components/circle/AttachmentMenu";
 import { MessageAttachment } from "../../components/circle/MessageAttachment";
-import { useCircles, useCommunicationPeers } from "../../hooks/useApiData";
+import { useCircles, useCommunicationPeers, useGuardianInfo } from "../../hooks/useApiData";
 import { didService } from "../../services/didService";
 import chatService, { openChatSocket, parseChatPayload, type ChatMessageRecord } from "../../services/chatService";
 import { useCall } from "../../../features/calls/CallContext";
@@ -24,6 +24,7 @@ import { decryptValue } from "../../../pwa/crypto/vault";
 import { contactRepository } from "../../../pwa/db/contactRepository";
 import { ApiError } from "../../services/api";
 import contactService from "../../services/contactService";
+import type { CircleMember } from "../../services/circleService";
 
 function timeLabel(timestamp: number) {
   const date = new Date(timestamp > 10_000_000_000 ? timestamp : timestamp * 1000);
@@ -66,6 +67,40 @@ function readBy(record: Pick<ChatMessageRecord, "read_by">) {
   return Array.isArray(record.read_by) ? record.read_by : [];
 }
 
+function syntheticBrowserMemberIp(seed: string) {
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `100.115.${((hash >>> 8) % 254) + 1}.${((hash >>> 16) % 254) + 1}`;
+}
+
+function peerDeviceName(peer?: Partial<Peer> | null, fallback?: string) {
+  const values = [peer?.displayName, peer?.fullName, peer?.deviceName, peer?.peerId, fallback];
+  return values
+    .map((value) => String(value || "").trim())
+    .find((value) => value
+      && value !== peer?.did
+      && value !== peer?.ip
+      && !["browser", "pwa member device"].includes(value.toLowerCase())
+      && !value.toLowerCase().startsWith("did:")) || "Trusted device";
+}
+
+function circleMemberDisplayName(member: Partial<CircleMember>, fallback = "Circle member") {
+  return [member.name, (member as any).deviceName, member.email, member.did, fallback]
+    .map((value) => String(value || "").trim())
+    .find(Boolean) || fallback;
+}
+
+function circleMemberRoleLabel(member: Partial<CircleMember>) {
+  return String(member.role || "").toLowerCase() === "owner" ? "Admin" : (member.role || "member");
+}
+
+function peerIsOnline(peer?: Partial<Peer> | null) {
+  return peer?.presenceStatus === "online" || Boolean(peer?.online);
+}
+
 function conversationIdForRoute(isGroup: boolean, circleId?: string, peerDid?: string, guardianDid?: string, browserMemberDid?: string) {
   if (isGroup) return `circle:${circleId}`;
   const canonicalPeerDid = peerDid && guardianDid && browserMemberDid && peerDid === guardianDid
@@ -96,7 +131,7 @@ function PeerDetailsDialog({
     { label: "DID", value: peer.did, mono: true },
     { label: "Device", value: peer.deviceName || peer.peerId },
     { label: "Peer ID", value: peer.peerId, mono: true },
-    { label: "IP Address", value: peer.ip || "Hidden", mono: true },
+    { label: "IP Address", value: peer.ip || peer.overlayIp || peer.physicalIp || "Hidden", mono: true },
     { label: "Role", value: peer.role },
     { label: "Type", value: peer.memberType },
     { label: "Presence", value: peer.presenceStatus || (peer.online ? "online" : "offline") },
@@ -210,6 +245,105 @@ function ContactSaveDialog({
   );
 }
 
+function CircleMembersSheet({
+  open,
+  onOpenChange,
+  members,
+  selectedMemberId,
+  onSelectMember,
+  peerForMember,
+  currentDid,
+  ownerDid,
+  adminIp,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  members: CircleMember[];
+  selectedMemberId: string | null;
+  onSelectMember: (id: string) => void;
+  peerForMember: (member: CircleMember) => Peer | undefined;
+  currentDid?: string;
+  ownerDid?: string;
+  adminIp?: string;
+}) {
+  const rowsForMember = (member: CircleMember) => {
+    const peer = peerForMember(member);
+    const browserMember = String(member.memberType || (member as any).member_type || "").toLowerCase() === "browser";
+    return [
+      { label: "Name", value: circleMemberDisplayName(member) },
+      { label: "Role", value: circleMemberRoleLabel(member) },
+      { label: "DID", value: member.did, mono: true },
+      {
+        label: "IP Address",
+        value: peer?.ip || member.overlayIp || member.physicalIp || (member.did && member.did === ownerDid ? adminIp : undefined) || (browserMember && member.did ? syntheticBrowserMemberIp(member.did) : "Hidden"),
+        mono: true,
+      },
+      { label: "Member Type", value: member.memberType || (member as any).member_type || peer?.memberType || "guardian" },
+      { label: "Presence", value: member.presenceStatus || peer?.presenceStatus || member.status || (member.online ? "online" : "offline") },
+      { label: "Peer ID", value: peer?.peerId, mono: true },
+      { label: "Joined", value: member.joinedAt || member.joinDate },
+    ];
+  };
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[60] bg-background/45 backdrop-blur-[2px]" />
+        <Dialog.Content className="fixed bottom-0 right-0 top-0 z-[70] flex w-full max-w-sm flex-col border-l border-border bg-card shadow-2xl">
+          <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-4">
+            <div className="min-w-0">
+              <Dialog.Title className="text-base font-semibold">Circle members</Dialog.Title>
+              <Dialog.Description className="mt-1 text-xs text-muted-foreground">{members.length} trusted member{members.length === 1 ? "" : "s"}</Dialog.Description>
+            </div>
+            <Dialog.Close asChild>
+              <button aria-label="Close Circle members" className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-muted"><X size={17} /></button>
+            </Dialog.Close>
+          </div>
+          <div className="flex-1 overflow-y-auto p-3">
+            <div className="flex flex-col gap-2">
+              {members.map((member) => {
+                const id = String(member.did || member.id || circleMemberDisplayName(member));
+                const selected = selectedMemberId === id;
+                const isCurrent = currentDid && member.did === currentDid;
+                return (
+                  <div key={id} className="overflow-hidden rounded-lg border border-border bg-background">
+                    <button
+                      type="button"
+                      onClick={() => onSelectMember(id)}
+                      className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left hover:bg-muted"
+                      aria-expanded={selected}
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-foreground">
+                          {circleMemberDisplayName(member)}{isCurrent ? " (you)" : ""}
+                        </div>
+                        <div className="mt-0.5 truncate text-xs text-muted-foreground">{circleMemberRoleLabel(member)} · {member.presenceStatus || member.status || "unknown"}</div>
+                      </div>
+                      <ChevronDown size={16} className={`shrink-0 text-muted-foreground transition-transform ${selected ? "rotate-180" : ""}`} />
+                    </button>
+                    {selected && (
+                      <dl className="divide-y divide-border border-t border-border">
+                        {rowsForMember(member).filter((row) => row.value).map((row) => (
+                          <div key={row.label} className="flex items-start justify-between gap-3 px-3 py-2.5">
+                            <dt className="shrink-0 text-xs text-muted-foreground">{row.label}</dt>
+                            <dd className={`min-w-0 text-right text-xs font-medium text-foreground ${row.mono ? "font-mono" : ""}`} title={String(row.value)}>
+                              <span className="break-all">{row.value}</span>
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 export function ChatConversationScreen() {
   const { circleId, peerDid } = useParams<{ circleId: string; peerDid?: string }>();
   const navigate = useNavigate();
@@ -218,12 +352,17 @@ export function ChatConversationScreen() {
   const [searchParams] = useSearchParams();
   const { data: circlesData, loading: circlesLoading } = useCircles();
   const { data: peersData, loading: peersLoading, error: peersError } = useCommunicationPeers();
+  const { data: guardianInfo } = useGuardianInfo();
   const circle = (Array.isArray(circlesData) ? circlesData : []).find((item: any) => item.id === circleId);
   const member = circle?.members?.find((item: any) => item.did === peerDid);
   const [cachedPeer, setCachedPeer] = useState<any>(null);
   const memberPeer = member?.did ? {
-    peerId: member.did,
+    peerId: member.name || member.deviceName || "PWA member",
+    displayName: member.name || member.deviceName || "PWA member",
+    deviceName: member.name || member.deviceName || "PWA member",
     did: member.did,
+    ip: syntheticBrowserMemberIp(member.did),
+    memberType: member.memberType || "browser",
     online: member.presenceStatus ? member.presenceStatus === "online" : member.status === "active",
     callAvailable: member.status === "active",
     callUnavailableReason: member.status === "active" ? undefined : "The member browser is inactive.",
@@ -246,6 +385,8 @@ export function ChatConversationScreen() {
   const [liveConnected, setLiveConnected] = useState(false);
   const [typingSenderDid, setTypingSenderDid] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [membersSheetOpen, setMembersSheetOpen] = useState(false);
+  const [selectedRosterMemberId, setSelectedRosterMemberId] = useState<string | null>(null);
   const [contactDialogOpen, setContactDialogOpen] = useState(false);
   const [savingContact, setSavingContact] = useState(false);
   const [queuedMessageIds, setQueuedMessageIds] = useState<Set<string>>(new Set());
@@ -304,20 +445,44 @@ export function ChatConversationScreen() {
     circleMembers
       .map((circleMember: any) => {
         const memberDid = String(circleMember?.did || "").trim();
+        const normalizedMemberDid = memberDid.toLowerCase();
+        if (
+          normalizedMemberDid
+          && [
+            localDid,
+            session?.browserMemberDid,
+          ].map((value) => String(value || "").trim().toLowerCase()).includes(normalizedMemberDid)
+        ) {
+          return undefined;
+        }
         const isBrowserMember = String(circleMember?.memberType || circleMember?.member_type || "").toLowerCase() === "browser";
         if (isBrowserMember) return memberDid || undefined;
         const memberPeer = peerForMember(circleMember);
         return memberPeer?.callAvailable ? memberPeer.peerId : undefined;
       })
       .filter((id): id is string => Boolean(id))
-      .filter((id) => id !== currentDevice && id !== session?.browserMemberDid),
-  )), [circleMembers, currentDevice, peerForMember, session?.browserMemberDid]);
+      .filter((id) => ![
+        currentDevice,
+        localDid,
+        session?.browserMemberDid,
+      ].map((value) => String(value || "").trim().toLowerCase()).includes(id.trim().toLowerCase())),
+  )), [circleMembers, currentDevice, localDid, peerForMember, session?.browserMemberDid]);
+  const otherCircleMemberCount = useMemo(() => {
+    const ownDids = [localDid, session?.browserMemberDid]
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean);
+    return circleMembers.filter((circleMember: any) => {
+      const memberDid = String(circleMember?.did || "").trim().toLowerCase();
+      return !memberDid || !ownDids.includes(memberDid);
+    }).length;
+  }, [circleMembers, localDid, session?.browserMemberDid]);
+  const canStartGroupCall = callableGroupMemberIds.length > 0 || (isMemberRole(session?.user.role) && otherCircleMemberCount > 0);
 
   useEffect(() => {
     if (!peerDid || !peersError) return;
     void contactRepository.list().then((items) => {
       const contact = items.find((item) => item.did === peerDid);
-      if (contact) setCachedPeer({ peerId: contact.displayName, did: contact.did, online: false, callAvailable: false });
+      if (contact) setCachedPeer({ peerId: contact.displayName, displayName: contact.displayName, deviceName: contact.displayName, did: contact.did, online: false, callAvailable: false });
     });
   }, [peerDid, peersError]);
 
@@ -715,14 +880,17 @@ export function ChatConversationScreen() {
     // member is a display label (see useCommunicationPeers), not a call
     // target, so it must never be sent to the call API.
     const target = peer.memberType === "browser" ? (peer.did || peerDid) : (peer.peerId || peerDid);
-    if (target === currentDevice) {
-      toast.info("This is the current Guardian");
+    const ownCallIds = [currentDevice, localDid, session?.browserMemberDid]
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean);
+    if (ownCallIds.includes(target.trim().toLowerCase()) || (peer.did && ownCallIds.includes(peer.did.trim().toLowerCase()))) {
+      toast.info("You cannot call yourself.");
       return;
     }
     const mode = media.includes("video") ? "video" : "audio";
     setStartingCall(mode);
     try {
-      await startCall(target, media, peer.online);
+      await startCall(target, media, peerIsOnline(peer as Peer));
     } catch (cause) {
       toast.error("Call could not start", { description: cause instanceof Error ? cause.message : "The peer may be unavailable." });
     } finally {
@@ -736,7 +904,7 @@ export function ChatConversationScreen() {
       toast.error("Guardian is busy", { description: "End or leave the current call before starting another." });
       return;
     }
-    if (!callableGroupMemberIds.length) {
+    if (!canStartGroupCall) {
       toast.error("No callable Circle members were found.");
       return;
     }
@@ -744,7 +912,8 @@ export function ChatConversationScreen() {
     setStartingCall(mode);
     try {
       await groupCalling.createGroup(callableGroupMemberIds, false, media, `${circle?.name || "Circle"} Circle call`);
-      toast.success(`Calling ${callableGroupMemberIds.length} Circle member${callableGroupMemberIds.length === 1 ? "" : "s"}`);
+      const calledCount = callableGroupMemberIds.length || otherCircleMemberCount;
+      toast.success(`Ringing ${calledCount} Circle member${calledCount === 1 ? "" : "s"}`);
     } catch (cause) {
       toast.error("Circle call could not start", { description: cause instanceof Error ? cause.message : "One or more members may be unavailable." });
     } finally {
@@ -767,7 +936,7 @@ export function ChatConversationScreen() {
     const queue = queuedMessages.get(record.message_id);
     return {
       id: record.message_id,
-      sender: isMe ? "You" : (contactNameForDid(record.sender_did) || senderMember?.name || member?.name || record.sender_did),
+      sender: isMe ? "You" : (contactNameForDid(record.sender_did) || senderMember?.name || senderMember?.deviceName || member?.name || member?.deviceName || "Trusted device"),
       content: attachment ? "" : (payload.content || ""),
       timestamp: timeLabel(record.timestamp),
       isMe,
@@ -790,16 +959,31 @@ export function ChatConversationScreen() {
   if ((isGroup && !circle) || (!isGroup && !peer && !member)) return <div className="grid h-full place-items-center p-6 text-sm text-muted-foreground">Conversation not found.</div>;
 
   const peerContactName = !isGroup ? (contactNameForDid(peerDid) || contactNameForDid(peer?.did)) : undefined;
-  const title = isGroup ? circle!.name : (peerContactName || member?.name || peer?.peerId || peerDid);
-  const subtitle = `${isGroup ? `Secure group chat · ${circle!.members?.length || 0} members` : "Private peer-to-peer chat"} · ${liveConnected ? "Live" : "Reconnecting…"}`;
-  const peerComposerName = peerContactName || member?.name || peer?.peerId || "peer";
+  const title = isGroup ? circle!.name : (peerContactName || member?.name || member?.deviceName || peerDeviceName(peer as Peer | null, peerDid));
+  const subtitle = isGroup ? (
+    <span>
+      Secure group chat ·{" "}
+      <button
+        type="button"
+        onClick={() => {
+          setSelectedRosterMemberId((current) => current || String(circleMembers[0]?.did || circleMembers[0]?.id || ""));
+          setMembersSheetOpen(true);
+        }}
+        className="font-semibold text-purple-600 hover:text-purple-700 hover:underline dark:text-purple-400 dark:hover:text-purple-300"
+      >
+        {circleMembers.length} members
+      </button>
+      {" · "}{liveConnected ? "Live" : "Reconnecting…"}
+    </span>
+  ) : `Private peer-to-peer chat · ${liveConnected ? "Live" : "Reconnecting…"}`;
+  const peerComposerName = peerContactName || member?.name || member?.deviceName || peerDeviceName(peer as Peer | null, "peer");
   return (
     <div className="flex h-full flex-col">
       <PageHeader showBack={paneMode === "standalone"} title={title} subtitle={subtitle} onBack={() => navigate(isGroup ? (openedFromChats ? "/chats" : `/network/${circleId}?tab=members`) : "/chats")} right={
         <div className="flex items-center gap-1">
           {isGroup ? <>
-            <button aria-label={`Voice call ${title}`} title={callableGroupMemberIds.length ? "Voice call Circle" : "No callable Circle members"} disabled={startingCall !== null || callableGroupMemberIds.length === 0} onClick={() => void callGroup(["audio"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "audio" ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} />}</button>
-            <button aria-label={`Video call ${title}`} title={callableGroupMemberIds.length ? "Video call Circle" : "No callable Circle members"} disabled={startingCall !== null || callableGroupMemberIds.length === 0} onClick={() => void callGroup(["audio", "video"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "video" ? <Loader2 size={18} className="animate-spin" /> : <Video size={18} />}</button>
+            <button aria-label={`Voice call ${title}`} title={canStartGroupCall ? "Voice call Circle" : "No callable Circle members"} disabled={startingCall !== null || !canStartGroupCall} onClick={() => void callGroup(["audio"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "audio" ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} />}</button>
+            <button aria-label={`Video call ${title}`} title={canStartGroupCall ? "Video call Circle" : "No callable Circle members"} disabled={startingCall !== null || !canStartGroupCall} onClick={() => void callGroup(["audio", "video"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "video" ? <Loader2 size={18} className="animate-spin" /> : <Video size={18} />}</button>
           </> : <>
             <button aria-label={`Voice call ${title}`} title="Voice call" disabled={startingCall !== null || !peer} onClick={() => void callPeer(["audio"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "audio" ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} />}</button>
             <button aria-label={`Video call ${title}`} title="Video call" disabled={startingCall !== null || !peer} onClick={() => void callPeer(["audio", "video"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "video" ? <Loader2 size={18} className="animate-spin" /> : <Video size={18} />}</button>
@@ -814,7 +998,7 @@ export function ChatConversationScreen() {
               type="button"
               onClick={() => setDetailsOpen(true)}
               className="flex min-w-0 items-center gap-2 rounded-full border border-border bg-input-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted"
-              title={peer.ip || "Device details"}
+              title={peerDeviceName(peer as Peer | null)}
             >
               <Info size={14} className="shrink-0" />
               <span className="truncate">Device info</span>
@@ -882,11 +1066,24 @@ export function ChatConversationScreen() {
         saving={savingContact}
         onAddContact={openContactDialog}
       />
+      {isGroup && (
+        <CircleMembersSheet
+          open={membersSheetOpen}
+          onOpenChange={setMembersSheetOpen}
+          members={circleMembers as CircleMember[]}
+          selectedMemberId={selectedRosterMemberId}
+          onSelectMember={(id) => setSelectedRosterMemberId((current) => current === id ? null : id)}
+          peerForMember={(circleMember) => peerForMember(circleMember) as Peer | undefined}
+          currentDid={localDid || session?.browserMemberDid}
+          ownerDid={circle?.ownerDid}
+          adminIp={guardianInfo?.ip}
+        />
+      )}
       <ContactSaveDialog
         open={contactDialogOpen}
         onOpenChange={setContactDialogOpen}
         peer={peer as Peer | null}
-        defaultName={String(peerContactName || member?.name || peer?.displayName || peer?.peerId || "")}
+        defaultName={String(peerContactName || member?.name || member?.deviceName || peerDeviceName(peer as Peer | null, ""))}
         saving={savingContact}
         onSave={(fields) => void savePeerContact(fields)}
       />

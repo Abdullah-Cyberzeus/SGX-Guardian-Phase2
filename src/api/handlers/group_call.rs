@@ -303,7 +303,9 @@ pub async fn create(
     let selected: Vec<_> = trusted
         .into_iter()
         .filter(|peer| {
-            (request.call_all || request.member_ids.contains(&peer.peer_id))
+            peer.peer_id != actor_id
+                && peer.did.as_ref().map_or(true, |did| did != &actor_id)
+                && (request.call_all || request.member_ids.contains(&peer.peer_id))
                 && member_contacts.as_ref().map_or(true, |contacts| {
                     peer.did.as_ref().is_some_and(|did| contacts.contains(did))
                 })
@@ -312,11 +314,12 @@ pub async fn create(
     let selected_browser: Vec<String> = local_browser_dids
         .into_iter()
         .filter(|did| {
-            (request.call_all || request.member_ids.contains(did))
+            did != &actor_id
+                && (request.call_all || request.member_ids.contains(did))
                 && (member_contacts.is_none() || member_browser_dids.contains(did))
         })
         .collect();
-    if selected.is_empty() && selected_browser.is_empty() {
+    if selected.is_empty() && selected_browser.is_empty() && actor_id == state.node_id {
         return error(
             StatusCode::BAD_REQUEST,
             "Select at least one trusted member",

@@ -3,9 +3,11 @@ import { useNavigate } from "react-router";
 import { MessageCircle, X } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { useChatUnread, type MessageToast } from "../../contexts/ChatUnreadContext";
+import { isMemberRole } from "../../utils/authorization";
 
 function MessageToastCard({ toast, onClose }: { toast: MessageToast; onClose: () => void }) {
   const navigate = useNavigate();
+  const { session } = useAuth();
 
   useEffect(() => {
     const timer = window.setTimeout(onClose, 5_000);
@@ -16,7 +18,9 @@ function MessageToastCard({ toast, onClose }: { toast: MessageToast; onClose: ()
   const openConversation = () => {
     onClose();
     navigate(toast.mode === "group"
-      ? `/network/${encodeURIComponent(toast.conversationId)}/chat`
+      ? isMemberRole(session?.user.role)
+        ? `/chats/circle/${encodeURIComponent(toast.conversationId)}`
+        : `/network/${encodeURIComponent(toast.conversationId)}/chat`
       : `/chats/${encodeURIComponent(toast.conversationId)}`);
   };
 

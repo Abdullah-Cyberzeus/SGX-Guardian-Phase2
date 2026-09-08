@@ -215,14 +215,15 @@ pub async fn list_blocks(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<BlocksResponse>, ApiError> {
     let mut blocked = nft_blocked_ips().await.unwrap_or_default();
-    if blocked.is_empty() {
-        let path = PathBuf::from(&state.threat_state_dir).join("blocked_ips.json");
-        blocked = load_block_records(&path)
+    let now = Utc::now().timestamp();
+    let path = PathBuf::from(&state.threat_state_dir).join("blocked_ips.json");
+    blocked.extend(
+        load_block_records(&path)
             .unwrap_or_default()
             .into_iter()
-            .map(|record| record.ip)
-            .collect();
-    }
+            .filter(|record| record.expires_at > now)
+            .map(|record| record.ip),
+    );
     blocked.sort();
     blocked.dedup();
     Ok(Json(BlocksResponse { blocked }))
@@ -493,16 +494,15 @@ async fn save_alert_state(state: &AppState, alert_state: &AlertStateFile) -> Res
 
 async fn active_block_count(state: &AppState) -> usize {
     let mut blocked = nft_blocked_ips().await.unwrap_or_default();
-    if blocked.is_empty() {
-        let now = Utc::now().timestamp();
-        let path = PathBuf::from(&state.threat_state_dir).join("blocked_ips.json");
-        blocked = load_block_records(&path)
+    let now = Utc::now().timestamp();
+    let path = PathBuf::from(&state.threat_state_dir).join("blocked_ips.json");
+    blocked.extend(
+        load_block_records(&path)
             .unwrap_or_default()
             .into_iter()
             .filter(|record| record.expires_at > now)
-            .map(|record| record.ip)
-            .collect();
-    }
+            .map(|record| record.ip),
+    );
     blocked.sort();
     blocked.dedup();
     blocked.len()

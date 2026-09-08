@@ -119,9 +119,14 @@ export function ST08DevicePairing() {
               <Hash size={18} style={{ color: "var(--primary)" }} />
             </div>
             <div>
-              <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
-                Serial Number
-              </p>
+              <span className="group relative inline-flex">
+                <p tabIndex={0} className="cursor-help" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
+                  Serial Number
+                </p>
+                <span className="pointer-events-none absolute left-1/2 top-7 z-20 hidden w-72 -translate-x-1/2 rounded-md border border-border bg-popover px-3 py-2 text-xs leading-5 text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+                  Unique Guardian hardware identifier used to request a pairing code and link the physical device to this account.
+                </span>
+              </span>
               <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
                 Required before a pairing code can be minted.
               </p>

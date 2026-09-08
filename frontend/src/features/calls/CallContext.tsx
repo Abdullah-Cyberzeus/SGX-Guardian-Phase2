@@ -82,7 +82,13 @@ export function CallProvider({children}:{children:ReactNode}){
   const timer=window.setInterval(()=>void sample(),5000);
   return()=>{stopped=true;window.clearInterval(timer)};
  },[call?.session_id,call?.state]);
- const startCall=async(target:string,media:MediaType[],online?:boolean)=>{setError(undefined);caller.current=true;startedOffer.current=false;lastSignal.current=0;setPeerId(target);setPeerOnline(online);const{stream,actualMedia,warning}=await rtc.current.prepareMedia(media);setLocalStream(stream);if(warning)setError(warning);try{const result=await callsApi.initiate(target,actualMedia);setup(result.session_id);await hydrate()}catch(e){rtc.current.close();setLocalStream(undefined);throw e}};
+ const startCall=async(target:string,media:MediaType[],online?:boolean)=>{
+  const normalizedTarget=target.trim().toLowerCase();
+  const ownIds=[localNode.current,currentDevice,isMemberRole(session?.user.role)?session?.browserMemberDid:undefined]
+   .map(value=>String(value||"").trim().toLowerCase())
+   .filter(Boolean);
+  if(normalizedTarget&&ownIds.includes(normalizedTarget))throw new Error("You cannot call yourself.");
+  setError(undefined);caller.current=true;startedOffer.current=false;lastSignal.current=0;setPeerId(target);setPeerOnline(online);const{stream,actualMedia,warning}=await rtc.current.prepareMedia(media);setLocalStream(stream);if(warning)setError(warning);try{const result=await callsApi.initiate(target,actualMedia);setup(result.session_id);await hydrate()}catch(e){rtc.current.close();setLocalStream(undefined);throw e}};
  const accept=async(media=incoming?.requested_media??["audio"] as MediaType[])=>{if(!incoming)return;setPeerId(incoming.initiator_device_id);setPeerOnline(true);setError(undefined);caller.current=false;lastSignal.current=0;const{stream,actualMedia,warning}=await rtc.current.prepareMedia(media);setLocalStream(stream);if(warning)setError(warning);setup(incoming.session_id);await callsApi.accept(incoming.session_id,actualMedia);setIncoming(undefined);await hydrate()};
  const decline=async()=>{if(incoming){await callsApi.reject(incoming.session_id);callHistoryService.recordDirect({...incoming,ended_at:new Date().toISOString(),terminal:true},localNode.current,"declined")}setIncoming(undefined)};const end=async()=>{if(call){await callsApi.end(call.session_id);callHistoryService.recordDirect({...call,ended_at:new Date().toISOString(),terminal:true},localNode.current)}rtc.current.close();setCall(undefined);setLocalStream(undefined);setRemoteStream(undefined);setPeerOnline(undefined)};
  const toggleMute=()=>{const next=!muted;setMuted(next);rtc.current.setMuted(next)};const toggleCamera=()=>{const next=!cameraEnabled;setCameraEnabled(next);rtc.current.setCameraEnabled(next)};

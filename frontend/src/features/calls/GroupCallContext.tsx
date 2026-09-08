@@ -44,6 +44,7 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
   const mediaReadySent = useRef(false);
   const lastGroup = useRef<GroupSession | undefined>(undefined);
   const locallyEndedGroups = useRef(new Set<string>());
+  const startingGroup = useRef(false);
   const socketConnected = useRef(false);
   const signalApplyChain = useRef(Promise.resolve());
   const effectiveLocalDevice = groupLocalDevice || localDevice;
@@ -68,6 +69,7 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     }
     setGroup(next);
     if (!next) {
+      if (startingGroup.current && localStream) return;
       rtc.current.close(); setLocalStream(undefined); setRemoteStreams({}); return;
     }
     const local = localId ? next.participants[localId] : undefined;
@@ -189,9 +191,14 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     }
   };
   const createGroup = async (memberIds: string[], callAll: boolean, media: MediaType[], title = "") => {
-    setError(undefined); const actualMedia = await prepare(media);
-    try { setGroup((await groupCallsApi.create(title, memberIds, callAll, actualMedia)).session); }
+    setError(undefined); startingGroup.current = true; const actualMedia = await prepare(media);
+    try {
+      const created = await groupCallsApi.create(title, memberIds, callAll, actualMedia);
+      setGroup(created.session);
+      setGroup(await groupCallsApi.join(created.session.group_id));
+    }
     catch (reason) { rtc.current.close(); setLocalStream(undefined); throw reason; }
+    finally { startingGroup.current = false; }
   };
   const acceptGroup = async () => {
     if (!group) return;

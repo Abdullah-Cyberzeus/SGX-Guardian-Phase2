@@ -62,7 +62,7 @@ pub async fn require_auth(
         return unauthorized("missing bearer token");
     };
 
-    let claims = match session::verify(&state.device_pubkey_point, &token) {
+    let mut claims = match session::verify(&state.device_pubkey_point, &token) {
         Ok(claims) => claims,
         Err(_) => {
             tracing::warn!(
@@ -142,16 +142,15 @@ pub async fn require_auth(
             );
             return unauthorized("browser registration expired; rejoin this Guardian");
         }
-        // A token with a strict subset of the account's Circles remains safe
-        // while an additional membership is approved: it cannot access the
-        // new Circle until `/auth/session/refresh` reissues its claims. A
-        // token containing a Circle removed from the account still fails.
-        if !member_circle_claims_are_safe(&claims.circle_ids, &user.circle_ids)
-            || claims.browser_registration_id != user.browser_registration_id
+        if claims.browser_registration_id != user.browser_registration_id
             || claims.guardian_fingerprint != user.guardian_fingerprint
         {
             return unauthorized("browser registration changed; sign in again");
         }
+        // Keep the browser session alive when Circle membership changes, but
+        // never trust stale Circle IDs embedded in an older token. Downstream
+        // handlers see the current account-scoped Circle list immediately.
+        claims.circle_ids = user.circle_ids.clone();
         let current_fingerprint =
             crate::api::handlers::pwa::guardian_fingerprint(&state.device_pubkey_point);
         if claims.guardian_fingerprint.as_deref() != Some(current_fingerprint.as_str()) {
@@ -219,10 +218,6 @@ pub async fn require_auth(
     req.extensions_mut()
         .insert(AuthenticatedSession { claims, token });
     next.run(req).await
-}
-
-fn member_circle_claims_are_safe(claimed: &[String], current: &[String]) -> bool {
-    claimed.iter().all(|circle_id| current.contains(circle_id))
 }
 
 fn login_disabled() -> bool {
@@ -414,23 +409,6 @@ mod tests {
     use serde_json::json;
     use tempfile::TempDir;
     use tokio::net::TcpListener;
-
-    #[test]
-    fn member_tokens_may_lag_additions_but_never_removals() {
-        let old_claims = vec!["circle-a".to_string()];
-        let expanded_account = vec!["circle-a".to_string(), "circle-b".to_string()];
-        assert!(member_circle_claims_are_safe(
-            &old_claims,
-            &expanded_account
-        ));
-
-        let stale_removed_claims = vec!["circle-a".to_string(), "circle-b".to_string()];
-        let reduced_account = vec!["circle-a".to_string()];
-        assert!(!member_circle_claims_are_safe(
-            &stale_removed_claims,
-            &reduced_account,
-        ));
-    }
 
     async fn spawn_secured_app_for_role(
         role: UserRole,

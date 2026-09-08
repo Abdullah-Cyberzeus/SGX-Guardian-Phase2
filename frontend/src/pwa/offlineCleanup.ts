@@ -1,7 +1,8 @@
 import api from "../app/services/api";
 import { deletePwaDatabase } from "./db/database";
 
-const KNOWN_INDEXED_DBS = ["sgx-guardian-pwa", "cervais_monitor"];
+const MONITORING_DB_NAME = "cervais_monitor";
+const KNOWN_INDEXED_DBS = ["sgx-guardian-pwa"];
 
 export function guardianOrigin() {
   try {
@@ -27,7 +28,9 @@ export async function purgeBrowserState() {
   const dbNames = new Set(KNOWN_INDEXED_DBS);
   if ("databases" in indexedDB) {
     const databases = await indexedDB.databases().catch(() => []);
-    databases.forEach((database) => { if (database.name) dbNames.add(database.name); });
+    databases.forEach((database) => {
+      if (database.name && database.name !== MONITORING_DB_NAME) dbNames.add(database.name);
+    });
   }
   await Promise.all([...dbNames].map((name) => new Promise<void>((resolve) => {
     const request = indexedDB.deleteDatabase(name);

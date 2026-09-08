@@ -14,7 +14,7 @@ use base64::{engine::general_purpose, Engine as _};
 use chrono::{Duration, Utc};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use uuid::Uuid;
 
@@ -166,12 +166,14 @@ pub fn list_invites(circle_id: &str) -> Result<Vec<InviteToken>, CircleError> {
     if !dir.exists() {
         return Ok(Vec::new());
     }
+    let hidden = load_hidden_invites()?;
     let mut invites = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
         if !path.is_file()
             || path.file_name().and_then(|name| name.to_str()) == Some("redeemed.json")
+            || path.file_name().and_then(|name| name.to_str()) == Some("hidden_history.json")
         {
             continue;
         }
@@ -181,12 +183,29 @@ pub fn list_invites(circle_id: &str) -> Result<Vec<InviteToken>, CircleError> {
         let Ok(invite) = serde_json::from_slice::<InviteToken>(&bytes) else {
             continue;
         };
-        if invite.circle_id == circle_id {
+        if invite.circle_id == circle_id && !hidden.contains(&invite.id) {
             invites.push(invite);
         }
     }
     invites.sort_by(|left, right| left.issued_at.cmp(&right.issued_at));
     Ok(invites)
+}
+
+fn load_hidden_invites() -> Result<BTreeSet<String>, CircleError> {
+    let path = persistence::hidden_invites_path();
+    if !path.exists() {
+        return Ok(BTreeSet::new());
+    }
+    Ok(serde_json::from_slice(&fs::read(path)?)?)
+}
+
+pub fn hide_invite_from_history(invite_id: &str) -> Result<(), CircleError> {
+    let mut hidden = load_hidden_invites()?;
+    hidden.insert(invite_id.to_string());
+    persistence::write_atomic(
+        &persistence::hidden_invites_path(),
+        &serde_json::to_vec_pretty(&hidden)?,
+    )
 }
 
 pub fn list_received_invites() -> Result<Vec<ReceivedInvite>, CircleError> {

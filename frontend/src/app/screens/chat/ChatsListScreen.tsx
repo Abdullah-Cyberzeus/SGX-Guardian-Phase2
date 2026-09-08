@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, MessageSquare, Plus, RefreshCw, Search, ShieldCheck, UsersRound, X } from "lucide-react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
 import { memberCanDirectChatWithPeer, useChatPeers } from "../../hooks/useApiData";
 import { useChatUnread } from "../../contexts/ChatUnreadContext";
@@ -11,11 +11,22 @@ import { useAuth } from "../../contexts/AuthContext";
 import { isMemberRole } from "../../utils/authorization";
 
 function initials(peer: Peer) {
-  return peer.peerId.split(/[-_:]/).filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "P";
+  return chatDeviceName(peer).split(/[-_:\s]/).filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "D";
 }
 
 function displayName(peer: Peer, contactName?: string) {
-  return contactName || peer.displayName || peer.peerId || peer.did || "Trusted peer";
+  return contactName || chatDeviceName(peer);
+}
+
+function chatDeviceName(peer: Partial<Peer>) {
+  const values = [peer.displayName, peer.fullName, peer.deviceName, peer.peerId];
+  return values
+    .map((value) => String(value || "").trim())
+    .find((value) => value
+      && value !== peer.did
+      && value !== peer.ip
+      && !["browser", "pwa member device"].includes(value.toLowerCase())
+      && !value.toLowerCase().startsWith("did:")) || "Trusted device";
 }
 
 function dedupePeers(peers: Peer[]) {
@@ -57,6 +68,7 @@ function previewTime(timestamp?: number) {
 
 export function ChatsListScreen({ compact = false }: { compact?: boolean } = {}) {
   const navigate = useNavigate();
+  const { circleId: activeCircleId, peerDid: activePeerDid } = useParams<{ circleId?: string; peerDid?: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useAuth();
   const memberSession = isMemberRole(session?.user.role);
@@ -70,7 +82,7 @@ export function ChatsListScreen({ compact = false }: { compact?: boolean } = {})
     if (Array.isArray(data)) {
       const current = dedupePeers(data as Peer[]);
       setCachedPeers(current);
-      current.filter((peer) => peer.did).forEach((peer) => void contactRepository.save({ did: peer.did!, displayName: peer.peerId, online: peer.online, lastSeen: peer.lastSeenAgo, updatedAt: Date.now() }));
+      current.filter((peer) => peer.did).forEach((peer) => void contactRepository.save({ did: peer.did!, displayName: chatDeviceName(peer), online: peer.online, lastSeen: peer.lastSeenAgo, updatedAt: Date.now() }));
     } else if (error) {
       void contactRepository.list().then((items) => setCachedPeers(dedupePeers(items
         .map((item) => ({ peerId: item.displayName, did: item.did, online: false, lastSeenAgo: item.lastSeen || "Cached", status: "verified", callAvailable: false, memberType: "guardian" } as Peer))
@@ -81,13 +93,17 @@ export function ChatsListScreen({ compact = false }: { compact?: boolean } = {})
     .filter((peer: Peer) => peer.status === "verified" && Boolean(peer.did))
     .filter((peer: Peer) => !memberSession || memberCanDirectChatWithPeer(peer, session?.guardianDid))), [data, cachedPeers, memberSession, session?.guardianDid]);
 
-  const tab: "individual" | "groups" = searchParams.get("tab") === "groups" ? "groups" : "individual";
+  const tab: "individual" | "groups" = activeCircleId || searchParams.get("tab") === "groups" ? "groups" : "individual";
 
   const setTab = (next: "individual" | "groups") => {
     const params = new URLSearchParams(searchParams);
     if (next === "individual") params.delete("tab");
     else params.set("tab", next);
-    setSearchParams(params, { replace: true });
+    if (compact && (activeCircleId || activePeerDid)) {
+      navigate(`/chats${params.toString() ? `?${params.toString()}` : ""}`, { replace: true });
+    } else {
+      setSearchParams(params, { replace: true });
+    }
   };
 
   const { peerRows, circleRows } = useMemo(() => {
@@ -96,7 +112,7 @@ export function ChatsListScreen({ compact = false }: { compact?: boolean } = {})
     const allCircleRows = circleChats.map((circle) => ({ kind: "circle" as const, circle, id: circle.circleId, name: circle.name, preview: circlePreviews[circle.circleId], unread: circleCounts[circle.circleId] || 0 }));
     const matches = (row: (typeof allPeerRows)[number] | (typeof allCircleRows)[number]) => {
       if (!needle) return true;
-      const extra = row.kind === "peer" ? `${row.peer.peerId} ${row.peer.did} ${row.peer.ip}` : `circle group ${row.circle.memberCount} members`;
+      const extra = row.kind === "peer" ? `${chatDeviceName(row.peer)} ${row.peer.peerId} ${row.peer.did} ${row.peer.ip}` : `circle group ${row.circle.memberCount} members`;
       return `${row.name} ${extra}`.toLowerCase().includes(needle);
     };
     const byRecency = (a: { preview?: { timestamp: number } }, b: { preview?: { timestamp: number } }) => (b.preview?.timestamp || 0) - (a.preview?.timestamp || 0);
@@ -162,6 +178,9 @@ export function ChatsListScreen({ compact = false }: { compact?: boolean } = {})
           const target = row.kind === "circle"
             ? (compact ? `/chats/circle/${encodeURIComponent(row.id)}` : `/network/${encodeURIComponent(row.id)}/chat?from=chats`)
             : `/chats/${encodeURIComponent(row.id)}`;
+          const active = row.kind === "circle"
+            ? row.id === activeCircleId
+            : row.id === activePeerDid;
           return <div
             key={`${row.kind}:${row.id}`}
             role="button"
@@ -173,7 +192,7 @@ export function ChatsListScreen({ compact = false }: { compact?: boolean } = {})
                 navigate(target);
               }
             }}
-            className={`flex w-full cursor-pointer items-center gap-3 bg-transparent px-4 py-3.5 text-left hover:bg-muted/50 ${compact ? "" : "md:px-6"}`}
+            className={`flex w-full cursor-pointer items-center gap-3 px-4 py-3.5 text-left hover:bg-muted/50 ${active ? "bg-primary/10" : "bg-transparent"} ${compact ? "" : "md:px-6"}`}
           >
             <div className="relative grid h-12 w-12 shrink-0 place-items-center rounded-full bg-primary/15 font-semibold text-primary">{row.kind === "circle" ? <UsersRound size={21} /> : (name.split(/[-_:\s]/).filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || initials(peer!))}{peer && !presenceHidden(peer) && <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-background" style={{ background: peer.online ? "var(--chart-2)" : "var(--muted-foreground)" }} />}</div>
             <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="truncate text-sm font-semibold">{name}</p>{row.kind === "peer" ? <ShieldCheck size={14} className="shrink-0 text-primary" /> : <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-primary">Circle</span>}</div><p className={`truncate text-xs ${unread > 0 ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{preview?.text || fallback}</p></div>

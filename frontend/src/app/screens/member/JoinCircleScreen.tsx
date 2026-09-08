@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { AlertTriangle, CheckCircle2, Clock3, Link2, Loader2, UsersRound } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, Clock3, Link2, Loader2, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "../../components/PageHeader";
 import { useAuth } from "../../contexts/AuthContext";
@@ -24,16 +24,51 @@ function restorePending(): AdditionalCircleJoinResult | null {
 
 export function JoinCircleScreen() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { session, refreshSession } = useAuth();
   const queryInvite = searchParams.get("member_invite") || searchParams.get("invite") || searchParams.get("token") || "";
   const [inviteMaterial, setInviteMaterial] = useState(queryInvite);
   const [preview, setPreview] = useState<MemberInvitePreview | null>(null);
   const [pending, setPending] = useState<AdditionalCircleJoinResult | null>(() => restorePending());
+  const [pendingInvites, setPendingInvites] = useState<Array<{ approvalId: string; circleName: string; state: string; expiresAt: string }>>([]);
   const [approvalState, setApprovalState] = useState<string>(() => pending?.enrollment.state || "pending");
-  const [busy, setBusy] = useState<"preview" | "join" | null>(null);
+  const [busy, setBusy] = useState<"preview" | "join" | "invite" | null>(null);
   const parsed = useMemo(() => parseInviteMaterial(inviteMaterial), [inviteMaterial]);
   const hasCircleAccess = (session?.circleIds.length || 0) > 0;
+  const tab: "paste" | "pending" = hasCircleAccess && searchParams.get("tab") === "pending" ? "pending" : "paste";
+
+  const setTab = (next: "paste" | "pending") => {
+    const params = new URLSearchParams(searchParams);
+    if (next === "pending") params.set("tab", "pending");
+    else params.delete("tab");
+    setSearchParams(params, { replace: true });
+  };
+
+  const loadPendingInvites = async () => {
+    if (!hasCircleAccess) return;
+    const result = await pwaOnboardingService.targetedInvites();
+    setPendingInvites(Array.isArray(result.invites) ? result.invites : []);
+  };
+
+  useEffect(() => {
+    if (!hasCircleAccess) return;
+    let stopped = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const result = await pwaOnboardingService.targetedInvites();
+        if (!stopped) setPendingInvites(Array.isArray(result.invites) ? result.invites : []);
+      } catch {
+        if (!stopped) setPendingInvites([]);
+      }
+      if (!stopped) timer = window.setTimeout(() => void poll(), 5_000);
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [hasCircleAccess]);
 
   useEffect(() => {
     if (!pending || approvalState !== "pending") return;
@@ -103,6 +138,31 @@ export function JoinCircleScreen() {
     }
   };
 
+  const decideInvite = async (approvalId: string, accept: boolean) => {
+    setBusy("invite");
+    try {
+      await pwaOnboardingService.decideTargetedInvite(approvalId, accept);
+      if (accept) {
+        const refreshed = await refreshSession();
+        if (refreshed.error) {
+          toast.error("Invite accepted, but session refresh failed", { description: refreshed.error });
+        } else {
+          toast.success("Circle invitation accepted");
+          navigate("/chats?tab=groups", { replace: true });
+        }
+      } else {
+        toast.success("Circle invitation declined");
+      }
+      await loadPendingInvites();
+    } catch (cause) {
+      toast.error(accept ? "Accept failed" : "Decline failed", {
+        description: cause instanceof Error ? cause.message : "Try again.",
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const reset = () => {
     sessionStorage.removeItem(PENDING_KEY);
     setPending(null);
@@ -132,7 +192,14 @@ export function JoinCircleScreen() {
     {hasCircleAccess && <PageHeader title="Join Circle" subtitle="Add another secure group" onBack={() => navigate("/chats?tab=groups")} />}
     <main className={`${hasCircleAccess ? "flex-1 overflow-y-auto p-4 md:p-6" : "grid min-h-[100dvh] place-items-center overflow-y-auto p-4"}`}>
       <div className="mx-auto max-w-xl space-y-4">
-        <section className="rounded-xl border border-border bg-card p-5">
+        {hasCircleAccess && <div className="grid grid-cols-2 gap-2 rounded-lg border border-border bg-card p-1">
+          <button onClick={() => setTab("paste")} className={`h-10 rounded-md text-sm font-semibold ${tab === "paste" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}>Paste link</button>
+          <button onClick={() => setTab("pending")} className={`flex h-10 items-center justify-center gap-2 rounded-md text-sm font-semibold ${tab === "pending" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}>
+            Pending
+            {pendingInvites.length > 0 && <span className={`grid min-w-[18px] place-items-center rounded-full px-1.5 text-[10px] ${tab === "pending" ? "bg-primary-foreground/20" : "bg-primary text-primary-foreground"}`}>{pendingInvites.length}</span>}
+          </button>
+        </div>}
+        {tab === "paste" && <section className="rounded-xl border border-border bg-card p-5">
           <div className="flex items-start gap-3"><Link2 size={20} className="mt-0.5 text-primary" /><div><h2 className="font-semibold">{hasCircleAccess ? "Paste your member invitation" : "You are not part of any Circle yet"}</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">{hasCircleAccess ? "Use the one-time link created by that Circle's administrator. Your existing account and chats will be preserved." : "Paste an invitation link from a Circle administrator to request access or get an invite from the guardian."}</p></div></div>
           <textarea
             value={inviteMaterial}
@@ -144,8 +211,36 @@ export function JoinCircleScreen() {
           <button disabled={!parsed.token || busy !== null} onClick={() => void previewInvite()} className="mt-3 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-50">
             {busy === "preview" && <Loader2 size={17} className="animate-spin" />} Verify invitation
           </button>
-        </section>
-        {preview && <section className="rounded-xl border border-primary/30 bg-card p-5">
+        </section>}
+        {tab === "pending" && <section className="rounded-xl border border-border bg-card">
+          <div className="border-b border-border p-5">
+            <h2 className="font-semibold">Pending invitations</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Invitations stay here until you decline them or they expire.</p>
+          </div>
+          {pendingInvites.length === 0 && <div className="flex flex-col items-center gap-3 p-10 text-center">
+            <Clock3 size={36} className="text-muted-foreground" />
+            <p className="text-sm font-semibold">No pending invitations</p>
+            <p className="max-w-xs text-xs text-muted-foreground">New Circle invites from administrators will appear here.</p>
+          </div>}
+          {pendingInvites.map((invite) => {
+            const expired = invite.state === "expired" || (invite.expiresAt && new Date(invite.expiresAt).getTime() <= Date.now());
+            return <div key={invite.approvalId} className="flex flex-col gap-3 border-b border-border p-4 last:border-0 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold">{invite.circleName}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{expired ? "Expired" : "Awaiting your decision"}</p>
+              </div>
+              <div className="flex gap-2">
+                <button disabled={busy !== null || expired} onClick={() => void decideInvite(invite.approvalId, false)} className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-md border border-border px-3 text-sm font-semibold disabled:opacity-50 sm:flex-none">
+                  <X size={15} /> Decline
+                </button>
+                <button disabled={busy !== null || expired} onClick={() => void decideInvite(invite.approvalId, true)} className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground disabled:opacity-50 sm:flex-none">
+                  {busy === "invite" ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Accept
+                </button>
+              </div>
+            </div>;
+          })}
+        </section>}
+        {tab === "paste" && preview && <section className="rounded-xl border border-primary/30 bg-card p-5">
           <div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-full bg-primary/15 text-primary"><UsersRound size={21} /></div><div><h2 className="font-semibold">{preview.circleName}</h2><p className="text-xs text-muted-foreground">Administrator approval required</p></div></div>
           <p className="mt-4 text-sm leading-6 text-muted-foreground">After approval, this Circle will appear under Chats → Groups with its own isolated conversation history.</p>
           <button disabled={busy !== null} onClick={() => void requestJoin()} className="mt-4 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-50">

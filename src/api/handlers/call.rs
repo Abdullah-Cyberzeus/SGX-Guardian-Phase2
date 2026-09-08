@@ -356,6 +356,19 @@ pub async fn initiate_browser_call(
             .into_response();
     }
     let actor_id = browser_call_actor_id(&state, &session);
+    if request
+        .target_peer_id
+        .trim()
+        .eq_ignore_ascii_case(&actor_id)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "You cannot call yourself.".into(),
+            }),
+        )
+            .into_response();
+    }
     if request.target_peer_id == state.node_id {
         if actor_id != state.node_id {
             return initiate_local_browser_call(
@@ -1315,6 +1328,19 @@ pub async fn initiate_call(
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
                 error: "Invalid device IDs".to_string(),
+            }),
+        )
+            .into_response();
+    }
+    if req
+        .initiator_device_id
+        .trim()
+        .eq_ignore_ascii_case(req.receiver_device_id.trim())
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "You cannot call yourself.".to_string(),
             }),
         )
             .into_response();

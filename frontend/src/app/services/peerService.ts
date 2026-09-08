@@ -79,35 +79,59 @@ interface ContactsResponse {
   timestamp: string;
 }
 
+function syntheticBrowserMemberIp(seed: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const third = ((hash >>> 8) % 254) + 1;
+  const fourth = ((hash >>> 16) % 254) + 1;
+  return `100.115.${third}.${fourth}`;
+}
+
+function usableBrowserMemberName(p: PeersResponse['peers'][number]): string | undefined {
+  return [p.displayName, p.fullName, p.deviceName]
+    .map((value) => value?.trim())
+    .find((value) => value && !["browser", "pwa member device"].includes(value.toLowerCase()));
+}
+
 function normalizePeers(peers: PeersResponse['peers']): Peer[] {
-  return peers.map((p, i) => ({
-    id: `peer_${String(i + 1).padStart(3, '0')}`,
-    peerId: p.peerId,
-    displayName: p.displayName || p.peerId,
-    fullName: p.fullName,
-    deviceName: p.deviceName || p.peerId,
-    did: p.did,
-    ip: p.ip || '',
-    physicalIp: p.physicalIp || p.physical_ip,
-    overlayIp: p.overlayIp || p.overlay_ip,
-    port: 0,
-    status: (p.status === 'verified' || p.status === 'trusted' || p.status === 'success'
-      ? 'verified'
-      : p.status === 'failed' ? 'failed' : 'pending') as Peer['status'],
-    role: p.role || 'member',
-    memberType: p.memberType || 'guardian',
-    joinDate: p.joinDate,
-    lastSeen: p.lastSeen,
-    lastSeenAgo: p.lastSeen ? formatTimeAgo(p.lastSeen) : 'Unknown',
-    attestationCount: 0,
-    online: p.online ?? Boolean(p.lastSeen),
-    presenceStatus: p.presenceStatus || (p.online ? 'online' : 'offline'),
-    presenceStale: Boolean(p.presenceStale),
-    presenceExpiresAt: p.presenceExpiresAt,
-    heartbeatIntervalSeconds: p.heartbeatIntervalSeconds,
-    callAvailable: p.callAvailable ?? true,
-    callUnavailableReason: p.callUnavailableReason,
-  }));
+  return peers.map((p, i) => {
+    const memberType = p.memberType || 'guardian';
+    const browserMember = memberType.toLowerCase() === 'browser';
+    const browserName = browserMember ? usableBrowserMemberName(p) : undefined;
+    const deviceName = browserName || p.deviceName || (browserMember ? 'PWA member' : p.peerId);
+    const seed = p.did || p.peerId || String(i);
+    return {
+      id: `peer_${String(i + 1).padStart(3, '0')}`,
+      peerId: p.peerId,
+      displayName: browserName || p.displayName || deviceName || p.peerId,
+      fullName: p.fullName || browserName,
+      deviceName,
+      did: p.did,
+      ip: p.ip || (browserMember ? syntheticBrowserMemberIp(seed) : ''),
+      physicalIp: p.physicalIp || p.physical_ip,
+      overlayIp: p.overlayIp || p.overlay_ip,
+      port: 0,
+      status: (p.status === 'verified' || p.status === 'trusted' || p.status === 'success'
+        ? 'verified'
+        : p.status === 'failed' ? 'failed' : 'pending') as Peer['status'],
+      role: p.role || 'member',
+      memberType,
+      joinDate: p.joinDate,
+      lastSeen: p.lastSeen,
+      lastSeenAgo: p.lastSeen ? formatTimeAgo(p.lastSeen) : 'Unknown',
+      attestationCount: 0,
+      online: p.online ?? Boolean(p.lastSeen),
+      presenceStatus: p.presenceStatus || (p.online ? 'online' : 'offline'),
+      presenceStale: Boolean(p.presenceStale),
+      presenceExpiresAt: p.presenceExpiresAt,
+      heartbeatIntervalSeconds: p.heartbeatIntervalSeconds,
+      callAvailable: p.callAvailable ?? true,
+      callUnavailableReason: p.callUnavailableReason,
+    };
+  });
 }
 
 /** True when this peer opted to hide their online status (Guardian-enforced

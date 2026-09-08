@@ -30,9 +30,8 @@ function storage() {
 }
 
 function currentResetAt() {
-  const value = storage()?.getItem(DEPLOYMENT_RESET_AT_STORAGE);
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  storage()?.removeItem(DEPLOYMENT_RESET_AT_STORAGE);
+  return 0;
 }
 
 function normalizeDeploymentKey(value?: string | null) {
@@ -71,7 +70,18 @@ function write(record: CallHistoryRecord) {
 
 async function replaceFromGuardian(nextRecords: CallHistoryRecord[]) {
   revision += 1;
-  records = visible([...nextRecords])
+  const merged = new Map<string, CallHistoryRecord>();
+  const cached = await callRepository.list().catch(() => []);
+  for (const record of cached) {
+    merged.set(record.id, {
+      ...record,
+      media: record.media as MediaType[],
+      startedAt: new Date(record.startedAt).toISOString(),
+    } as CallHistoryRecord);
+  }
+  for (const record of records) merged.set(record.id, record);
+  for (const record of nextRecords) merged.set(record.id, record);
+  records = visible([...merged.values()])
     .sort((a, b) => new Date(b.endedAt).getTime() - new Date(a.endedAt).getTime())
     .slice(0, 500);
   await callRepository.replaceAll(records.map((record) => ({
@@ -93,10 +103,15 @@ async function resetForDeployment(deploymentKey?: string | null) {
 
   if (normalized && storedKey !== normalized) {
     store?.setItem(DEPLOYMENT_KEY_STORAGE, normalized);
-    store?.setItem(DEPLOYMENT_RESET_AT_STORAGE, String(Date.now()));
+    store?.removeItem(DEPLOYMENT_RESET_AT_STORAGE);
   }
-
-  await resetLocal();
+  records = visible(records);
+  await callRepository.replaceAll(records.map((record) => ({
+    ...record,
+    media: record.media,
+    startedAt: new Date(record.startedAt).getTime(),
+  })));
+  window.dispatchEvent(new CustomEvent(EVENT_NAME));
 }
 
 const initialRevision = revision;
