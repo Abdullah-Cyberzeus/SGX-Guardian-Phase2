@@ -51,8 +51,20 @@ pub async fn handle_enroll(
         tracing::warn!("Rejected: empty node_id or circle_id");
         return Err(StatusCode::BAD_REQUEST);
     }
+    if !payload
+        .node_id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        tracing::warn!("Rejected: invalid node_id");
+        return Err(StatusCode::BAD_REQUEST);
+    }
     if payload.public_key_pem.is_empty() {
         tracing::warn!("Rejected: empty public_key_pem");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if payload.did_doc_json.is_empty() {
+        tracing::warn!("Rejected: empty did_doc_json");
         return Err(StatusCode::BAD_REQUEST);
     }
 
@@ -71,6 +83,11 @@ pub async fn handle_enroll(
                 key: String::new(),
                 ca_cert: String::new(),
                 config: String::new(),
+                member_vc_json: String::new(),
+                status_list_json: String::new(),
+                did_doc_aggregate_json: String::new(),
+                signing_pubkey_der_b64: String::new(),
+                signed_policy_b64: String::new(),
                 message: "Home CA node is not connected. Please ensure Node A is running and connected to the broker.".to_string(),
             }));
         }
@@ -109,7 +126,13 @@ pub async fn handle_enroll(
             key: String::new(),
             ca_cert: String::new(),
             config: String::new(),
-            message: "Failed to forward request to Home CA. Connection may have dropped.".to_string(),
+            member_vc_json: String::new(),
+            status_list_json: String::new(),
+            did_doc_aggregate_json: String::new(),
+            signing_pubkey_der_b64: String::new(),
+            signed_policy_b64: String::new(),
+            message: "Failed to forward request to Home CA. Connection may have dropped."
+                .to_string(),
         }));
     }
 
@@ -132,7 +155,10 @@ pub async fn handle_enroll(
         }
         Ok(Err(_)) => {
             // Sender dropped (Node A disconnected mid-request)
-            tracing::error!("CA bridge dropped while waiting for request_id={}", request_id);
+            tracing::error!(
+                "CA bridge dropped while waiting for request_id={}",
+                request_id
+            );
             state.remove_pending(&request_id);
             Ok(Json(EnrollmentResponse {
                 status: "ERROR".to_string(),
@@ -141,6 +167,11 @@ pub async fn handle_enroll(
                 key: String::new(),
                 ca_cert: String::new(),
                 config: String::new(),
+                member_vc_json: String::new(),
+                status_list_json: String::new(),
+                did_doc_aggregate_json: String::new(),
+                signing_pubkey_der_b64: String::new(),
+                signed_policy_b64: String::new(),
                 message: "Home CA disconnected while processing request.".to_string(),
             }))
         }
@@ -158,6 +189,11 @@ pub async fn handle_enroll(
                 key: String::new(),
                 ca_cert: String::new(),
                 config: String::new(),
+                member_vc_json: String::new(),
+                status_list_json: String::new(),
+                did_doc_aggregate_json: String::new(),
+                signing_pubkey_der_b64: String::new(),
+                signed_policy_b64: String::new(),
                 message: format!(
                     "Timeout after {}s waiting for Home CA to sign certificate.",
                     ENROLL_TIMEOUT_SECS
@@ -212,12 +248,7 @@ pub async fn handle_ca_ws(
 /// Two concurrent flows:
 /// 1. Outbound: VPS forwards pending enrollment requests to Node A
 /// 2. Inbound: Node A sends back signed certificate responses
-async fn ca_bridge_session(
-    socket: WebSocket,
-    state: AppState,
-    circle_id: String,
-    node_id: String,
-) {
+async fn ca_bridge_session(socket: WebSocket, state: AppState, circle_id: String, node_id: String) {
     let (mut ws_sink, mut ws_stream) = socket.split();
 
     // Channel for sending messages to Node A through this WebSocket
@@ -225,22 +256,14 @@ async fn ca_bridge_session(
 
     // Register this CA sender
     state.register_ca(&circle_id, outbound_tx);
-    tracing::info!(
-        "✅ CA bridge active: circle={} node={}",
-        circle_id,
-        node_id
-    );
+    tracing::info!("✅ CA bridge active: circle={} node={}", circle_id, node_id);
 
     // Spawn a task that forwards outbound messages to the WS sink
     let sink_circle = circle_id.clone();
     let sink_task = tokio::spawn(async move {
         while let Some(msg) = outbound_rx.recv().await {
             if let Err(e) = ws_sink.send(Message::Text(msg.into())).await {
-                tracing::error!(
-                    "❌ WS send error (circle={}): {}",
-                    sink_circle,
-                    e
-                );
+                tracing::error!("❌ WS send error (circle={}): {}", sink_circle, e);
                 break;
             }
         }
@@ -316,9 +339,6 @@ fn handle_ca_inbound_message(state: &AppState, text: &str) {
     };
 
     if state.resolve_pending(&envelope.request_id, response) {
-        tracing::info!(
-            "✅ Resolved pending request: {}",
-            envelope.request_id
-        );
+        tracing::info!("✅ Resolved pending request: {}", envelope.request_id);
     }
 }

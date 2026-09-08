@@ -19,6 +19,7 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Hard cap on a single protocol line (memory-abuse guard).
 pub const MAX_LINE_BYTES: usize = 1_048_576;
+pub const PEER_CLOSED_BEFORE_MESSAGE: &str = "gossip peer closed connection";
 /// Hard cap on entries carried in one message.
 pub const MAX_ENTRIES_PER_MESSAGE: usize = 1000;
 /// Per-read timeout (mirrors `doc_distribution::REQ_TIMEOUT_SECS`).
@@ -101,7 +102,7 @@ where
     .await
     .map_err(|_| std::io::Error::other("gossip read timeout"))??;
     if bytes == 0 {
-        return Err(std::io::Error::other("gossip peer closed connection"));
+        return Err(std::io::Error::other(PEER_CLOSED_BEFORE_MESSAGE));
     }
     if line.len() > MAX_LINE_BYTES {
         return Err(std::io::Error::other("gossip line exceeds MAX_LINE_BYTES"));

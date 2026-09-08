@@ -44,7 +44,7 @@ use tokio::{signal, task};
 #[cfg(windows)]
 use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
 
-const RELAY_SYNC_INTERVAL_SECS: u64 = 10;
+const RELAY_SYNC_INTERVAL_SECS: u64 = 60;
 const DID_DOC_REFRESH_INTERVAL_SECS: u64 = 300;
 const DID_DOC_PULL_INTERVAL_SECS: u64 = 30;
 const VC_STATUS_LIST_PULL_INTERVAL_SECS: u64 = 300;
@@ -1454,9 +1454,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let member_cert_path = format!("{}/nodes/{}.crt", nebula_base_dir, node_id);
             let member_key_path = format!("{}/nodes/{}.key", nebula_base_dir, node_id);
             let ca_exists = NebulaCA::ca_cert_exists(&nebula_base_dir);
-            let cert_exists = Path::new(&member_cert_path).exists()
+            let mesh_credentials_exist = Path::new(&member_cert_path).exists()
                 && Path::new(&member_key_path).exists()
                 && ca_exists;
+            let cot_trust_exists =
+                sgx_guardian_client::cert_client::broker_trust_material_available();
+            let cert_exists = mesh_credentials_exist && cot_trust_exists;
+
+            if mesh_credentials_exist && !cot_trust_exists {
+                println!(
+                    "⚠️ Guardian Mesh certificate exists, but CoT membership trust material is missing or stale — refreshing bootstrap"
+                );
+            }
 
             if cert_exists {
                 // ── Fast-Path: Existing valid certificate on disk ────────────────
@@ -1965,6 +1974,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if topology_changed {
                     match LighthouseRegistry::load(registry_sync::LIGHTHOUSE_REGISTRY_PATH) {
                         Ok(lh) => {
+                            let config_path =
+                                format!("{}/nebula.yaml", nebula_dir_for_registry_sync);
+                            // Read the current nebula.yaml BEFORE regenerating
+                            let config_before =
+                                std::fs::read_to_string(&config_path).unwrap_or_default();
+
                             if let Err(e) = NebulaConfig::generate_config_with_lighthouse(
                                 &node_for_registry_sync,
                                 &pool_for_registry_sync,
@@ -1978,11 +1993,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 continue;
                             }
 
-                            let config_path =
-                                format!("{}/nebula.yaml", nebula_dir_for_registry_sync);
-                            if let Err(e) = NebulaDaemon::start(&config_path).await {
+                            // Only restart Nebula if the actual YAML content changed
+                            let config_after =
+                                std::fs::read_to_string(&config_path).unwrap_or_default();
+                            if config_before == config_after {
+                                tracing::debug!(
+                                    "Registry changed but nebula.yaml unchanged — skipping restart"
+                                );
+                            } else if let Err(e) = NebulaDaemon::reload(&config_path).await {
                                 eprintln!(
-                                "⚠️  Failed to restart Guardian Mesh after relay/lighthouse update: {}",
+                                "⚠️  Failed to reload Guardian Mesh after relay/lighthouse update: {}",
                                 e
                             );
                             } else {
@@ -2057,39 +2077,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     match LighthouseRegistry::load(&lh_path) {
                         Ok(mut lh) => {
-                            let vps_cfg = sgx_guardian_client::config_loader::resolve_vps_config(&node_for_local_reload);
+                            let vps_cfg = sgx_guardian_client::config_loader::resolve_vps_config(
+                                &node_for_local_reload,
+                            );
                             if let Some(vps_pub_ip) = vps_cfg.vps_public_ip {
                                 if !vps_pub_ip.trim().is_empty() {
                                     let vps_ovl_ip = vps_cfg
                                         .vps_overlay_ip
                                         .unwrap_or_else(|| "192.168.100.10".to_string());
                                     let vps_endpoint = format!("{}:4242", vps_pub_ip.trim());
-                                    lh.upsert_node("vps-lighthouse", &vps_ovl_ip, &vps_endpoint, true, true);
+                                    lh.upsert_node(
+                                        "vps-lighthouse",
+                                        &vps_ovl_ip,
+                                        &vps_endpoint,
+                                        true,
+                                        true,
+                                    );
                                     lh.mark_active("vps-lighthouse");
                                 }
                             }
 
-                            if let Err(e) = NebulaConfig::generate_config_with_lighthouse(
+                            match NebulaConfig::generate_config_with_lighthouse(
                                 &node_for_local_reload,
                                 &pool_for_local_reload,
                                 &lh,
                                 &nebula_dir_for_local_reload,
                             ) {
-                                eprintln!(
-                                "⚠️ nodeA failed to regenerate Guardian Mesh config on local registry update: {:?}",
-                                e
-                            );
-                                continue;
-                            }
-                            let config_path =
-                                format!("{}/nebula.yaml", nebula_dir_for_local_reload);
-                            if let Err(e) = NebulaDaemon::start(&config_path).await {
-                                eprintln!(
-                                "⚠️ nodeA failed to reload Guardian Mesh after local registry update: {}",
-                                e
-                            );
-                            } else {
-                                // println!("🔄 nodeA reloaded Nebula after local registry update");
+                                Ok(changed) => {
+                                    if !changed {
+                                        tracing::debug!(
+                                            "Local registry updated but nebula.yaml unchanged — skipping reload"
+                                        );
+                                        continue;
+                                    }
+                                    let config_path =
+                                        format!("{}/nebula.yaml", nebula_dir_for_local_reload);
+                                    if let Err(e) = NebulaDaemon::reload(&config_path).await {
+                                        eprintln!(
+                                            "⚠️ nodeA failed to reload Guardian Mesh after local registry update: {}",
+                                            e
+                                        );
+                                    } else {
+                                        println!(
+                                            "🔄 Guardian Mesh reloaded after local registry update"
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "⚠️ nodeA failed to regenerate Guardian Mesh config on local registry update: {:?}",
+                                        e
+                                    );
+                                    continue;
+                                }
                             }
                         }
                         Err(e) => {

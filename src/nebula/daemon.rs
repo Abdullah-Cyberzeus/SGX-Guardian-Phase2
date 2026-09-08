@@ -57,6 +57,33 @@ impl NebulaDaemon {
         }
     }
 
+    /// Reload the Nebula daemon gracefully via SIGHUP without dropping tunnels or resetting interfaces.
+    /// If the daemon is not currently running or the TUN interface is missing, falls back to `start()`.
+    pub async fn reload(config_path: &str) -> Result<(), Error> {
+        // 1. Validate the new config before applying
+        Self::test_config(config_path)?;
+
+        // 2. If running and interface exists, send SIGHUP
+        let pattern = format!("nebula -config {}", config_path);
+        let is_running = Command::new("pgrep")
+            .args(["-f", &pattern])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if is_running && Self::interface_exists() {
+            let status = Command::new("pkill")
+                .args(["-HUP", "-f", &pattern])
+                .status()?;
+            if status.success() {
+                return Ok(());
+            }
+        }
+
+        // Fall back to full start if daemon wasn't running
+        Self::start(config_path).await
+    }
+
     /// Start the Nebula daemon in the background.
     ///
     /// Steps:

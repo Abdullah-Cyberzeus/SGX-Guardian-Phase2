@@ -13,6 +13,7 @@ use crate::nebula::ca::NebulaCA;
 use crate::nebula::registry_sync;
 use crate::proto::sgx::cert_service_client::CertServiceClient;
 use crate::proto::sgx::CertSignRequest;
+use base64::{engine::general_purpose, Engine as _};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -496,6 +497,11 @@ async fn try_request(
 
 /// Write content to a file, creating parent dirs.
 async fn write_file(path: &str, content: &str) -> Result<(), String> {
+    write_file_bytes(path, content.as_bytes()).await
+}
+
+/// Write bytes to a file, creating parent dirs and replacing atomically.
+async fn write_file_bytes(path: &str, content: &[u8]) -> Result<(), String> {
     if let Some(parent) = Path::new(path).parent() {
         tokio::fs::create_dir_all(parent)
             .await
@@ -575,6 +581,7 @@ struct BrokerEnrollRequest {
     circle_id: String,
     node_id: String,
     public_key_pem: String,
+    did_doc_json: String,
 }
 
 /// Enrollment response from the VPS broker.
@@ -592,7 +599,129 @@ struct BrokerEnrollResponse {
     #[serde(default)]
     config: String,
     #[serde(default)]
+    member_vc_json: String,
+    #[serde(default)]
+    status_list_json: String,
+    #[serde(default)]
+    did_doc_aggregate_json: String,
+    #[serde(default)]
+    signing_pubkey_der_b64: String,
+    #[serde(default)]
+    signed_policy_b64: String,
+    #[serde(default)]
     message: String,
+}
+
+pub fn broker_trust_material_available() -> bool {
+    let Ok(local_did) = crate::did::DidRecord::load(crate::did::DEFAULT_DID_PATH) else {
+        return false;
+    };
+    let Ok(Some(vc)) = crate::vc::persistence::load_own_any() else {
+        return false;
+    };
+    vc.subject_did() == local_did.did
+        && vc.credential_subject.circle_id == crate::vc::issue::DEFAULT_CIRCLE_ID
+        && vc.has_active_membership_status()
+        && !vc.is_expired(chrono::Utc::now())
+        && crate::vc::persistence::status_list_path().exists()
+}
+
+async fn install_broker_trust_material(
+    node_id: &str,
+    response: &BrokerEnrollResponse,
+) -> Result<String, String> {
+    if response.did_doc_aggregate_json.trim().is_empty() {
+        return Err("broker response is missing the CA DID snapshot".into());
+    }
+    if response.member_vc_json.trim().is_empty() {
+        return Err("broker response is missing the membership VC".into());
+    }
+    if response.status_list_json.trim().is_empty() {
+        return Err("broker response is missing the signed VC status list".into());
+    }
+    let vc: crate::vc::credential::VerifiableCredential =
+        serde_json::from_str(&response.member_vc_json)
+            .map_err(|error| format!("membership VC parse failed: {}", error))?;
+    let snapshot: Vec<crate::did::document::DidDocument> =
+        serde_json::from_str(&response.did_doc_aggregate_json)
+            .map_err(|error| format!("CA DID snapshot parse failed: {}", error))?;
+    if !snapshot.iter().any(|doc| {
+        doc.id == vc.issuer_did()
+            && doc.sgx_node_name.as_deref() == Some("nodeA")
+            && doc.sgx_status.as_deref() == Some("active")
+    }) {
+        return Err(format!(
+            "CA DID snapshot does not contain active nodeA issuer {}",
+            vc.issuer_did()
+        ));
+    }
+    let applied =
+        crate::did::doc_distribution::apply_aggregate_json(&response.did_doc_aggregate_json)
+            .map_err(|error| format!("CA DID snapshot verification failed: {}", error))?;
+    if !applied.iter().any(|did| did == vc.issuer_did()) {
+        return Err(format!(
+            "CA DID issuer {} failed snapshot verification",
+            vc.issuer_did()
+        ));
+    }
+
+    let status: crate::vc::status_list::StatusListCredential =
+        serde_json::from_str(&response.status_list_json)
+            .map_err(|error| format!("status-list parse failed: {}", error))?;
+    let local_did = crate::did::DidRecord::load(crate::did::DEFAULT_DID_PATH)
+        .map_err(|error| format!("local DID load failed: {}", error))?;
+    let resolver = crate::did::Resolver::new(crate::did::ResolverConfig::default());
+    let status_view = crate::vc::status_list::verify_status_list_credential(
+        &status,
+        &resolver,
+        Some(vc.issuer_did()),
+    )
+    .await
+    .map_err(|error| format!("status-list verification failed: {}", error))?;
+    crate::vc::verify::verify_vc(
+        &vc,
+        &resolver,
+        crate::vc::verify::VerifyOptions {
+            expected_subject_did: Some(&local_did.did),
+            expected_circle_id: Some(crate::vc::issue::DEFAULT_CIRCLE_ID),
+            expected_issuer_did: Some(vc.issuer_did()),
+            check_status_list: true,
+            status_list: Some(&status_view),
+        },
+    )
+    .await
+    .map_err(|error| format!("membership VC verification failed: {}", error))?;
+
+    crate::vc::persistence::save_status_list_credential(&status)
+        .map_err(|error| format!("status-list save failed: {}", error))?;
+    crate::vc::persistence::save_own(&vc)
+        .map_err(|error| format!("membership VC save failed: {}", error))?;
+
+    if !response.signing_pubkey_der_b64.trim().is_empty() {
+        let bytes = general_purpose::STANDARD
+            .decode(response.signing_pubkey_der_b64.trim())
+            .map_err(|error| format!("PA public key Base64 invalid: {}", error))?;
+        write_file_bytes("/etc/sgx-guardian/policies/pa_admin_pub.der", &bytes)
+            .await
+            .map_err(|error| format!("PA public key save failed: {}", error))?;
+    }
+    if !response.signed_policy_b64.trim().is_empty() {
+        let bytes = general_purpose::STANDARD
+            .decode(response.signed_policy_b64.trim())
+            .map_err(|error| format!("signed policy Base64 invalid: {}", error))?;
+        write_file_bytes("/etc/sgx-guardian/policies/policy.sig", &bytes)
+            .await
+            .map_err(|error| format!("signed policy save failed: {}", error))?;
+    }
+
+    log_audit(
+        node_id,
+        AuditCategory::Vc,
+        AuditSeverity::Info,
+        AuditAction::Succeeded,
+        &format!("Broker CoT trust material verified and stored: {}", vc.id),
+    );
+    Ok(vc.id)
 }
 
 /// Request a CA-signed Nebula certificate via the VPS enrollment broker.
@@ -605,6 +734,8 @@ struct BrokerEnrollResponse {
 /// - Writes `<NEBULA_BASE_DIR>/nodes/<node_id>.crt`
 /// - Writes `<NEBULA_BASE_DIR>/ca/ca.crt`
 /// - Writes `<NEBULA_BASE_DIR>/nebula.yaml` (VPS-pointing config)
+/// - Verifies and stores the CA DID snapshot, membership VC, and VC status list
+/// - Stores the Policy Authority key and signed policy when supplied by Node A
 pub async fn request_certificate_via_broker(
     node_id: String,
     broker_url: String,
@@ -620,11 +751,37 @@ pub async fn request_certificate_via_broker(
     }
 
     let cert_path = format!("{}/nodes/{}.crt", NEBULA_BASE_DIR, node_id);
+    let key_path = format!("{}/nodes/{}.key", NEBULA_BASE_DIR, node_id);
 
-    // Idempotent: already enrolled
-    if Path::new(&cert_path).exists() && NebulaCA::ca_cert_exists(NEBULA_BASE_DIR) {
+    let did_doc_json = match crate::did::doc_persistence::load_self() {
+        Ok(Some(doc)) => match serde_json::to_string(&doc) {
+            Ok(json) => json,
+            Err(error) => {
+                eprintln!(
+                    "❌ Failed to serialize the local signed DID Document: {}",
+                    error
+                );
+                return;
+            }
+        },
+        Ok(None) => {
+            eprintln!("❌ Local signed DID Document is missing; broker enrollment cannot continue");
+            return;
+        }
+        Err(error) => {
+            eprintln!("❌ Failed to load the local signed DID Document: {}", error);
+            return;
+        }
+    };
+
+    // Idempotent: the mesh credential and CoT trust material are all present.
+    if Path::new(&cert_path).exists()
+        && Path::new(&key_path).exists()
+        && NebulaCA::ca_cert_exists(NEBULA_BASE_DIR)
+        && broker_trust_material_available()
+    {
         println!(
-            "ℹ️  Cert + CA cert already present for {} — skipping broker enrollment.",
+            "ℹ️  Cert + CA cert + CoT trust material already present for {} — skipping broker enrollment.",
             node_id
         );
         return;
@@ -653,8 +810,12 @@ pub async fn request_certificate_via_broker(
         attempt += 1;
 
         // Re-check in case another code path wrote the files
-        if Path::new(&cert_path).exists() && NebulaCA::ca_cert_exists(NEBULA_BASE_DIR) {
-            println!("✅ Cert + CA cert detected on filesystem — done.");
+        if Path::new(&cert_path).exists()
+            && Path::new(&key_path).exists()
+            && NebulaCA::ca_cert_exists(NEBULA_BASE_DIR)
+            && broker_trust_material_available()
+        {
+            println!("✅ Cert + CA cert + CoT trust material detected on filesystem — done.");
             return;
         }
 
@@ -666,6 +827,7 @@ pub async fn request_certificate_via_broker(
             circle_id: "guardian-circle-alpha".to_string(),
             node_id: node_id.clone(),
             public_key_pem: public_key_pem.clone(),
+            did_doc_json: did_doc_json.clone(),
         };
 
         let client = match reqwest::Client::builder().build() {
@@ -731,7 +893,6 @@ pub async fn request_certificate_via_broker(
 
                         // Save node private key
                         if !resp.key.is_empty() {
-                            let key_path = format!("{}/nodes/{}.key", NEBULA_BASE_DIR, node_id);
                             if let Err(e) = write_file(&key_path, &resp.key).await {
                                 eprintln!("⚠️  Save key failed: {}", e);
                             }
@@ -739,8 +900,7 @@ pub async fn request_certificate_via_broker(
 
                         // Save nebula config (VPS-pointing)
                         if !resp.config.is_empty() {
-                            let config_path =
-                                format!("{}/nebula.yaml", NEBULA_BASE_DIR);
+                            let config_path = format!("{}/nebula.yaml", NEBULA_BASE_DIR);
                             if let Err(e) = write_file(&config_path, &resp.config).await {
                                 eprintln!("⚠️  Save nebula config failed: {}", e);
                             } else {
@@ -748,8 +908,41 @@ pub async fn request_certificate_via_broker(
                             }
                         }
 
-                        println!("✅ Broker enrollment complete for {} (overlay: {})", node_id, resp.overlay_ip);
-                        log_event(&node_id, &format!("Broker enrollment completed successfully (overlay: {})", resp.overlay_ip));
+                        match install_broker_trust_material(&node_id, &resp).await {
+                            Ok(vc_id) => {
+                                println!(
+                                    "🔐 Broker CoT trust material verified (membership VC: {})",
+                                    vc_id
+                                );
+                            }
+                            Err(error) => {
+                                eprintln!(
+                                    "⚠️  Broker certificate received, but CoT trust bootstrap failed: {} — retrying",
+                                    error
+                                );
+                                log_error(
+                                    &node_id,
+                                    &format!("Broker CoT trust bootstrap: {}", error),
+                                );
+                                tokio::time::sleep(std::time::Duration::from_secs(
+                                    RETRY_INTERVAL_SECS,
+                                ))
+                                .await;
+                                continue;
+                            }
+                        }
+
+                        println!(
+                            "✅ Broker enrollment complete for {} (overlay: {})",
+                            node_id, resp.overlay_ip
+                        );
+                        log_event(
+                            &node_id,
+                            &format!(
+                                "Broker enrollment completed successfully (overlay: {})",
+                                resp.overlay_ip
+                            ),
+                        );
                         log_audit(
                             &node_id,
                             AuditCategory::Network,

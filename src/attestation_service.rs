@@ -2468,7 +2468,17 @@ impl AttestationService {
         let peer_ev = match read_evidence_framed(&mut stream).await {
             Ok(ev) => ev,
             Err(e) => {
-                println!("⚠️ No valid attestation reply from peer {}: {:?}", addr, e);
+                if e.downcast_ref::<std::io::Error>()
+                    .map(|ioe| ioe.kind() == ErrorKind::UnexpectedEof)
+                    .unwrap_or(false)
+                {
+                    println!(
+                        "⚠️ Peer {} closed the attestation connection before replying; check that peer's log for the exact VC or evidence rejection reason",
+                        addr
+                    );
+                } else {
+                    println!("⚠️ No valid attestation reply from peer {}: {:?}", addr, e);
+                }
                 return Ok(false);
             }
         };
@@ -2503,6 +2513,7 @@ impl AttestationService {
             }
             Ok(None) => {}
             Err(e) => {
+                eprintln!("❌ Peer {} VC rejected: {}", addr, e);
                 log_audit(
                     &node_id,
                     AuditCategory::Vc,
@@ -2941,6 +2952,7 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                             }
                             Ok(None) => {}
                             Err(e) => {
+                                eprintln!("❌ Incoming peer VC rejected from {}: {}", remote, e);
                                 log_audit(
                                     &node_id,
                                     AuditCategory::Vc,

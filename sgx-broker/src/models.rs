@@ -21,6 +21,10 @@ pub struct EnrollmentRequest {
     pub node_id: String,
     /// Nebula public key PEM generated on the requesting node
     pub public_key_pem: String,
+    /// The requesting Guardian's signed DID Document. Node A verifies this
+    /// before issuing circle-membership trust material.
+    #[serde(default)]
+    pub did_doc_json: String,
 }
 
 /// Payload returned to Node C as the HTTP 200 body.
@@ -43,6 +47,21 @@ pub struct EnrollmentResponse {
     /// Pre-built nebula.yaml config for the remote node
     #[serde(default)]
     pub config: String,
+    /// Node-A-issued circle membership VC for the requesting Guardian.
+    #[serde(default)]
+    pub member_vc_json: String,
+    /// Current signed VC status-list credential.
+    #[serde(default)]
+    pub status_list_json: String,
+    /// Signed CA DID Document aggregate used to verify the VC issuer.
+    #[serde(default)]
+    pub did_doc_aggregate_json: String,
+    /// Policy Authority public key, encoded as standard Base64 DER.
+    #[serde(default)]
+    pub signing_pubkey_der_b64: String,
+    /// Signed policy bytes, encoded as standard Base64 when available.
+    #[serde(default)]
+    pub signed_policy_b64: String,
     /// Human-readable message or rejection reason
     #[serde(default)]
     pub message: String,

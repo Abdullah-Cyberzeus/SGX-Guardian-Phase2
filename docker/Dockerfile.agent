@@ -49,13 +49,16 @@ WORKDIR /src
 COPY . .
 COPY --from=frontend-builder /src/frontend/dist /src/frontend/dist
 
-# Keep the workspace contract aligned with CI and scripts/build.sh.
+# Keep the workspace contract aligned with CI and scripts/build.sh. `build.rs`
+# embeds hashed frontend files, so clear this package from the target cache
+# before compiling to avoid reusing a generated map from an older frontend build.
 # Cache mounts persist cargo's registry + incremental build artifacts across
 # `docker build` invocations even though `COPY . .` above invalidates the
 # layer cache on every source change. They're excluded from the committed
 # layer, so the built binaries are copied out to /out before this RUN ends.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
+    cargo clean -p sgx_guardian_client --release && \
     cargo build --release --workspace --locked --features tpm && \
     mkdir -p /out && \
     cp target/release/sgx_guardian_client target/release/sgx-pa-cli target/release/sgx-broker /out/

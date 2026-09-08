@@ -12,6 +12,7 @@ use crate::nebula::ca::NebulaCA;
 use crate::nebula::models::CircleMembership;
 use crate::nebula::overlay_registry::OverlayRegistry;
 use crate::nebula::registry_sync::REGISTRY_PATH;
+use base64::{engine::general_purpose, Engine as _};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -19,6 +20,8 @@ use tokio_tungstenite::tungstenite::Message;
 
 const NEBULA_BASE_DIR: &str = "/var/lib/sgx-guardian/nebula";
 const RECONNECT_INTERVAL_SECS: u64 = 5;
+const PA_PUB_PATH: &str = "/etc/sgx-guardian/policies/pa_admin_pub.der";
+const SIGNED_POLICY_PATH: &str = "/etc/sgx-guardian/policies/policy.sig";
 
 // ────────────────────────────────────────────────────────────────────
 // Message types (mirrors sgx-broker/src/models.rs)
@@ -29,6 +32,8 @@ struct EnrollmentRequest {
     circle_id: String,
     node_id: String,
     public_key_pem: String,
+    #[serde(default)]
+    did_doc_json: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +45,16 @@ struct EnrollmentResponse {
     key: String,
     ca_cert: String,
     config: String,
+    #[serde(default)]
+    member_vc_json: String,
+    #[serde(default)]
+    status_list_json: String,
+    #[serde(default)]
+    did_doc_aggregate_json: String,
+    #[serde(default)]
+    signing_pubkey_der_b64: String,
+    #[serde(default)]
+    signed_policy_b64: String,
     message: String,
 }
 
@@ -53,6 +68,130 @@ struct WsEnvelope {
     response: Option<EnrollmentResponse>,
 }
 
+#[derive(Default)]
+struct EnrollmentTrustMaterial {
+    member_vc_json: String,
+    status_list_json: String,
+    did_doc_aggregate_json: String,
+    signing_pubkey_der_b64: String,
+    signed_policy_b64: String,
+}
+
+fn validate_enrollment_did(
+    request: &EnrollmentRequest,
+) -> Result<crate::did::document::DidDocument, String> {
+    if request.did_doc_json.trim().is_empty() {
+        return Err("signed DID document is missing from enrollment request".into());
+    }
+    let doc: crate::did::document::DidDocument = serde_json::from_str(&request.did_doc_json)
+        .map_err(|error| format!("invalid DID document JSON: {}", error))?;
+    if doc.sgx_node_name.as_deref() != Some(request.node_id.as_str()) {
+        return Err(format!(
+            "DID node name mismatch: request={} document={}",
+            request.node_id,
+            doc.sgx_node_name.as_deref().unwrap_or("<missing>")
+        ));
+    }
+    if doc.controller != doc.id {
+        return Err("DID document controller does not match its id".into());
+    }
+    if doc.sgx_status.as_deref() != Some("active") {
+        return Err("DID document is not active".into());
+    }
+    crate::did::Did::parse(&doc.id).map_err(|error| format!("invalid DID: {}", error))?;
+    crate::did::doc_sign::verify(&doc)
+        .map_err(|error| format!("DID document signature invalid: {}", error))?;
+
+    // The key already displayed in the approval YAML must be the same key
+    // that signed the DID document. This binds the administrator's approval
+    // to the identity that will receive the membership VC.
+    let supplied_key = general_purpose::STANDARD
+        .decode(request.public_key_pem.trim())
+        .map_err(|error| format!("enrollment public key is not Base64 DER: {}", error))?;
+    let raw_key = if supplied_key.len() == 65 && supplied_key.first() == Some(&0x04) {
+        supplied_key
+    } else if supplied_key.len() >= 65 && supplied_key.get(supplied_key.len() - 65) == Some(&0x04) {
+        supplied_key[supplied_key.len() - 65..].to_vec()
+    } else {
+        return Err(format!(
+            "unsupported enrollment P-256 public key length {}",
+            supplied_key.len()
+        ));
+    };
+    let vm = doc
+        .verification_method
+        .first()
+        .ok_or_else(|| "DID document has no verification method".to_string())?;
+    let expected_x = general_purpose::URL_SAFE_NO_PAD.encode(&raw_key[1..33]);
+    let expected_y = general_purpose::URL_SAFE_NO_PAD.encode(&raw_key[33..65]);
+    if vm.public_key_jwk.x != expected_x || vm.public_key_jwk.y != expected_y {
+        return Err("enrollment public key does not match DID document key".into());
+    }
+    Ok(doc)
+}
+
+async fn ingest_enrollment_did(request: &EnrollmentRequest) -> Result<String, String> {
+    let doc = validate_enrollment_did(request)?;
+    crate::did::doc_distribution::ca_ingest_published(&request.did_doc_json)
+        .await
+        .map_err(|error| format!("DID document ingest failed: {}", error))?;
+    Ok(doc.id)
+}
+
+fn issue_member_vc_for_subject(
+    node_id: &str,
+    subject_did: &str,
+) -> Result<crate::vc::credential::VerifiableCredential, String> {
+    let issuer = crate::did::DidRecord::load(crate::did::DEFAULT_DID_PATH)
+        .map_err(|error| format!("CA DID load failed: {}", error))?;
+    let km = crate::vc::issue::load_runtime_key_manager("nodeA")
+        .map_err(|error| format!("VC key manager failed: {}", error))?;
+    crate::vc::issue::issue_membership_vc_with_outcome(
+        &issuer,
+        &km,
+        crate::vc::issue::IssueRequest {
+            subject_did,
+            role: crate::vc::credential::CredentialRole::Member,
+            permissions: crate::vc::issue::default_permissions_for_role(
+                crate::vc::credential::CredentialRole::Member,
+            ),
+            circle_id: crate::vc::issue::DEFAULT_CIRCLE_ID,
+            node_hint: Some(node_id.to_string()),
+            duration_days: None,
+        },
+    )
+    .map(crate::vc::issue::IssueMembershipOutcome::into_vc)
+    .map_err(|error| format!("membership VC issue failed: {}", error))
+}
+
+async fn build_trust_material(
+    request: &EnrollmentRequest,
+    subject_did: &str,
+) -> Result<EnrollmentTrustMaterial, String> {
+    let vc = issue_member_vc_for_subject(&request.node_id, subject_did)?;
+    let status_list_json = std::fs::read_to_string(crate::vc::persistence::status_list_path())
+        .map_err(|error| format!("status-list read failed: {}", error))?;
+    let did_doc_aggregate_json = crate::did::doc_distribution::ca_export_aggregate()
+        .await
+        .map_err(|error| format!("DID aggregate export failed: {}", error))?;
+    Ok(EnrollmentTrustMaterial {
+        member_vc_json: serde_json::to_string(&vc)
+            .map_err(|error| format!("membership VC serialization failed: {}", error))?,
+        status_list_json,
+        did_doc_aggregate_json,
+        signing_pubkey_der_b64: std::fs::read(PA_PUB_PATH)
+            .ok()
+            .filter(|bytes| !bytes.is_empty())
+            .map(|bytes| general_purpose::STANDARD.encode(bytes))
+            .unwrap_or_default(),
+        signed_policy_b64: std::fs::read(SIGNED_POLICY_PATH)
+            .ok()
+            .filter(|bytes| !bytes.is_empty())
+            .map(|bytes| general_purpose::STANDARD.encode(bytes))
+            .unwrap_or_default(),
+    })
+}
+
 // ────────────────────────────────────────────────────────────────────
 // Public entry point
 // ────────────────────────────────────────────────────────────────────
@@ -61,18 +200,20 @@ struct WsEnvelope {
 /// reconnects automatically on disconnect with a 5-second backoff.
 ///
 /// Called from main.rs on Node A only when `SGX_BROKER_URL` is set.
-pub async fn start_ca_broker_worker(
-    vps_url: String,
-    circle_id: String,
-    auth_token: String,
-) {
+pub async fn start_ca_broker_worker(vps_url: String, circle_id: String, auth_token: String) {
     println!("☁️  CA broker worker starting (VPS: {})", vps_url);
-    log_event("nodeA", &format!("CA broker worker connecting to {}", vps_url));
+    log_event(
+        "nodeA",
+        &format!("CA broker worker connecting to {}", vps_url),
+    );
 
     loop {
         match connect_and_serve(&vps_url, &circle_id, &auth_token).await {
             Ok(_) => {
-                println!("☁️  CA broker session ended cleanly, reconnecting in {}s...", RECONNECT_INTERVAL_SECS);
+                println!(
+                    "☁️  CA broker session ended cleanly, reconnecting in {}s...",
+                    RECONNECT_INTERVAL_SECS
+                );
             }
             Err(e) => {
                 eprintln!(
@@ -86,11 +227,7 @@ pub async fn start_ca_broker_worker(
 }
 
 /// Single connection attempt: connect, serve requests, return on disconnect.
-async fn connect_and_serve(
-    vps_url: &str,
-    circle_id: &str,
-    auth_token: &str,
-) -> Result<(), String> {
+async fn connect_and_serve(vps_url: &str, circle_id: &str, auth_token: &str) -> Result<(), String> {
     // Build the WebSocket URL
     let ws_base = vps_url
         .replace("http://", "ws://")
@@ -210,6 +347,27 @@ async fn connect_and_serve(
 ///      - Delete the request YAML.
 ///      - Return `status: "APPROVED"`.
 async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
+    if request.node_id.is_empty()
+        || !request
+            .node_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return EnrollmentResponse {
+            status: "REJECTED".to_string(),
+            overlay_ip: String::new(),
+            cert: String::new(),
+            key: String::new(),
+            ca_cert: String::new(),
+            config: String::new(),
+            member_vc_json: String::new(),
+            status_list_json: String::new(),
+            did_doc_aggregate_json: String::new(),
+            signing_pubkey_der_b64: String::new(),
+            signed_policy_b64: String::new(),
+            message: "invalid node_id".to_string(),
+        };
+    }
     let requests_dir = format!("{}/requests", NEBULA_BASE_DIR);
     let _ = std::fs::create_dir_all(&requests_dir);
 
@@ -217,6 +375,41 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
     let key_path = format!("{}/nodes/{}.key", NEBULA_BASE_DIR, request.node_id);
     let ca_path = format!("{}/ca/ca.crt", NEBULA_BASE_DIR);
     let yaml_path = format!("{}/{}.yaml", requests_dir, request.node_id);
+    if request.circle_id != crate::vc::issue::DEFAULT_CIRCLE_ID {
+        return EnrollmentResponse {
+            status: "REJECTED".to_string(),
+            overlay_ip: String::new(),
+            cert: String::new(),
+            key: String::new(),
+            ca_cert: String::new(),
+            config: String::new(),
+            member_vc_json: String::new(),
+            status_list_json: String::new(),
+            did_doc_aggregate_json: String::new(),
+            signing_pubkey_der_b64: String::new(),
+            signed_policy_b64: String::new(),
+            message: format!("unsupported circle_id {}", request.circle_id),
+        };
+    }
+    let subject_did = match validate_enrollment_did(request) {
+        Ok(doc) => doc.id,
+        Err(message) => {
+            return EnrollmentResponse {
+                status: "REJECTED".to_string(),
+                overlay_ip: String::new(),
+                cert: String::new(),
+                key: String::new(),
+                ca_cert: String::new(),
+                config: String::new(),
+                member_vc_json: String::new(),
+                status_list_json: String::new(),
+                did_doc_aggregate_json: String::new(),
+                signing_pubkey_der_b64: String::new(),
+                signed_policy_b64: String::new(),
+                message,
+            };
+        }
+    };
 
     // ── 1. Fast-path: Already approved and issued on disk ────────────────
     if std::path::Path::new(&cert_path).exists()
@@ -228,6 +421,41 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
             std::fs::read_to_string(&key_path),
             std::fs::read_to_string(&ca_path),
         ) {
+            if let Err(message) = ingest_enrollment_did(request).await {
+                return EnrollmentResponse {
+                    status: "REJECTED".to_string(),
+                    overlay_ip: String::new(),
+                    cert: String::new(),
+                    key: String::new(),
+                    ca_cert: String::new(),
+                    config: String::new(),
+                    member_vc_json: String::new(),
+                    status_list_json: String::new(),
+                    did_doc_aggregate_json: String::new(),
+                    signing_pubkey_der_b64: String::new(),
+                    signed_policy_b64: String::new(),
+                    message,
+                };
+            }
+            let trust = match build_trust_material(request, &subject_did).await {
+                Ok(trust) => trust,
+                Err(message) => {
+                    return EnrollmentResponse {
+                        status: "ERROR".to_string(),
+                        overlay_ip: String::new(),
+                        cert: String::new(),
+                        key: String::new(),
+                        ca_cert: String::new(),
+                        config: String::new(),
+                        member_vc_json: String::new(),
+                        status_list_json: String::new(),
+                        did_doc_aggregate_json: String::new(),
+                        signing_pubkey_der_b64: String::new(),
+                        signed_policy_b64: String::new(),
+                        message,
+                    };
+                }
+            };
             let reg = OverlayRegistry::load_or_create(
                 REGISTRY_PATH,
                 "guardian-circle-alpha",
@@ -247,6 +475,11 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
                 key,
                 ca_cert,
                 config,
+                member_vc_json: trust.member_vc_json,
+                status_list_json: trust.status_list_json,
+                did_doc_aggregate_json: trust.did_doc_aggregate_json,
+                signing_pubkey_der_b64: trust.signing_pubkey_der_b64,
+                signed_policy_b64: trust.signed_policy_b64,
                 message: format!("Certificate already active for {}", request.node_id),
             };
         }
@@ -275,6 +508,11 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
                     key: String::new(),
                     ca_cert: String::new(),
                     config: String::new(),
+                    member_vc_json: String::new(),
+                    status_list_json: String::new(),
+                    did_doc_aggregate_json: String::new(),
+                    signing_pubkey_der_b64: String::new(),
+                    signed_policy_b64: String::new(),
                     message: format!("IP allocation failed: {}", e),
                 };
             }
@@ -303,7 +541,10 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
         }
 
         println!();
-        println!("📥 [Broker] Remote enrollment request from: {}", request.node_id);
+        println!(
+            "📥 [Broker] Remote enrollment request from: {}",
+            request.node_id
+        );
         println!("Approval file created: {}", yaml_path);
         println!();
         println!("Edit the file and set 'approve' to ONE of:");
@@ -330,6 +571,11 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
             key: String::new(),
             ca_cert: String::new(),
             config: String::new(),
+            member_vc_json: String::new(),
+            status_list_json: String::new(),
+            did_doc_aggregate_json: String::new(),
+            signing_pubkey_der_b64: String::new(),
+            signed_policy_b64: String::new(),
             message: format!(
                 "Enrollment request pending administrator approval on Node A (file: {})",
                 yaml_path
@@ -348,25 +594,58 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
                 key: String::new(),
                 ca_cert: String::new(),
                 config: String::new(),
+                member_vc_json: String::new(),
+                status_list_json: String::new(),
+                did_doc_aggregate_json: String::new(),
+                signing_pubkey_der_b64: String::new(),
+                signed_policy_b64: String::new(),
                 message: format!("Reading approval YAML failed: {}", e),
             };
         }
     };
 
-    let parsed_yaml: crate::cert_service::CertRequestYaml = match serde_yaml::from_str(&yaml_content) {
-        Ok(p) => p,
-        Err(e) => {
-            return EnrollmentResponse {
-                status: "PENDING".to_string(),
-                overlay_ip: overlay_ip.clone(),
-                cert: String::new(),
-                key: String::new(),
-                ca_cert: String::new(),
-                config: String::new(),
-                message: format!("Parsing approval YAML failed: {}", e),
-            };
-        }
+    let parsed_yaml: crate::cert_service::CertRequestYaml =
+        match serde_yaml::from_str(&yaml_content) {
+            Ok(p) => p,
+            Err(e) => {
+                return EnrollmentResponse {
+                    status: "PENDING".to_string(),
+                    overlay_ip: overlay_ip.clone(),
+                    cert: String::new(),
+                    key: String::new(),
+                    ca_cert: String::new(),
+                    config: String::new(),
+                    member_vc_json: String::new(),
+                    status_list_json: String::new(),
+                    did_doc_aggregate_json: String::new(),
+                    signing_pubkey_der_b64: String::new(),
+                    signed_policy_b64: String::new(),
+                    message: format!("Parsing approval YAML failed: {}", e),
+                };
+            }
+        };
+
+    let current_fingerprint = {
+        use sha2::{Digest, Sha256};
+        let hash = Sha256::digest(request.public_key_pem.as_bytes());
+        hex::encode(&hash[..8])
     };
+    if parsed_yaml.public_key_fingerprint != current_fingerprint {
+        return EnrollmentResponse {
+            status: "REJECTED".to_string(),
+            overlay_ip: String::new(),
+            cert: String::new(),
+            key: String::new(),
+            ca_cert: String::new(),
+            config: String::new(),
+            member_vc_json: String::new(),
+            status_list_json: String::new(),
+            did_doc_aggregate_json: String::new(),
+            signing_pubkey_der_b64: String::new(),
+            signed_policy_b64: String::new(),
+            message: "enrollment identity key changed after administrator review began".to_string(),
+        };
+    }
 
     match parsed_yaml.approve {
         crate::cert_service::ApprovalDecision::False => {
@@ -378,6 +657,11 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
                 key: String::new(),
                 ca_cert: String::new(),
                 config: String::new(),
+                member_vc_json: String::new(),
+                status_list_json: String::new(),
+                did_doc_aggregate_json: String::new(),
+                signing_pubkey_der_b64: String::new(),
+                signed_policy_b64: String::new(),
                 message: format!(
                     "Enrollment request for {} is pending administrator review in {}",
                     request.node_id, yaml_path
@@ -394,6 +678,23 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
                 request.node_id, parsed_yaml.approve
             );
 
+            if let Err(message) = ingest_enrollment_did(request).await {
+                return EnrollmentResponse {
+                    status: "REJECTED".to_string(),
+                    overlay_ip: String::new(),
+                    cert: String::new(),
+                    key: String::new(),
+                    ca_cert: String::new(),
+                    config: String::new(),
+                    member_vc_json: String::new(),
+                    status_list_json: String::new(),
+                    did_doc_aggregate_json: String::new(),
+                    signing_pubkey_der_b64: String::new(),
+                    signed_policy_b64: String::new(),
+                    message,
+                };
+            }
+
             let membership = CircleMembership {
                 node_name: request.node_id.clone(),
                 circle_id: request.circle_id.clone(),
@@ -409,6 +710,11 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
                     key: String::new(),
                     ca_cert: String::new(),
                     config: String::new(),
+                    member_vc_json: String::new(),
+                    status_list_json: String::new(),
+                    did_doc_aggregate_json: String::new(),
+                    signing_pubkey_der_b64: String::new(),
+                    signed_policy_b64: String::new(),
                     message: format!("Certificate signing failed: {}", e),
                 };
             }
@@ -423,6 +729,11 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
                         key: String::new(),
                         ca_cert: String::new(),
                         config: String::new(),
+                        member_vc_json: String::new(),
+                        status_list_json: String::new(),
+                        did_doc_aggregate_json: String::new(),
+                        signing_pubkey_der_b64: String::new(),
+                        signed_policy_b64: String::new(),
                         message: format!("Failed to read signed cert: {}", e),
                     };
                 }
@@ -438,6 +749,11 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
                         key: String::new(),
                         ca_cert: String::new(),
                         config: String::new(),
+                        member_vc_json: String::new(),
+                        status_list_json: String::new(),
+                        did_doc_aggregate_json: String::new(),
+                        signing_pubkey_der_b64: String::new(),
+                        signed_policy_b64: String::new(),
                         message: format!("Failed to read node key: {}", e),
                     };
                 }
@@ -453,6 +769,11 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
                         key: String::new(),
                         ca_cert: String::new(),
                         config: String::new(),
+                        member_vc_json: String::new(),
+                        status_list_json: String::new(),
+                        did_doc_aggregate_json: String::new(),
+                        signing_pubkey_der_b64: String::new(),
+                        signed_policy_b64: String::new(),
                         message: format!("Failed to read CA cert: {}", e),
                     };
                 }
@@ -462,6 +783,25 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
             let _ = std::fs::remove_file(&yaml_path);
 
             let config = generate_remote_node_config(&request.node_id, &overlay_ip);
+            let trust = match build_trust_material(request, &subject_did).await {
+                Ok(trust) => trust,
+                Err(message) => {
+                    return EnrollmentResponse {
+                        status: "ERROR".to_string(),
+                        overlay_ip: overlay_ip.clone(),
+                        cert: String::new(),
+                        key: String::new(),
+                        ca_cert: String::new(),
+                        config: String::new(),
+                        member_vc_json: String::new(),
+                        status_list_json: String::new(),
+                        did_doc_aggregate_json: String::new(),
+                        signing_pubkey_der_b64: String::new(),
+                        signed_policy_b64: String::new(),
+                        message,
+                    };
+                }
+            };
 
             log_event(
                 "nodeA",
@@ -478,6 +818,11 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
                 key: node_key,
                 ca_cert,
                 config,
+                member_vc_json: trust.member_vc_json,
+                status_list_json: trust.status_list_json,
+                did_doc_aggregate_json: trust.did_doc_aggregate_json,
+                signing_pubkey_der_b64: trust.signing_pubkey_der_b64,
+                signed_policy_b64: trust.signed_policy_b64,
                 message: format!(
                     "Certificate signed for {} at {}",
                     request.node_id, overlay_ip

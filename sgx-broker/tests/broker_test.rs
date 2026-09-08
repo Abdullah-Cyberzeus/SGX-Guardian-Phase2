@@ -34,7 +34,8 @@ async fn test_enrollment_ca_offline_rejection() {
     let payload = serde_json::json!({
         "circle_id": "guardian-circle-alpha",
         "node_id": "test-node",
-        "public_key_pem": "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----"
+        "public_key_pem": "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+        "did_doc_json": "{}"
     });
 
     let req = Request::builder()
@@ -81,6 +82,7 @@ async fn test_models_roundtrip() {
         circle_id: "circle-1".to_string(),
         node_id: "nodeC".to_string(),
         public_key_pem: "key-pem-data".to_string(),
+        did_doc_json: "{\"id\":\"did:guardian:test\"}".to_string(),
     };
 
     let serialized = serde_json::to_string(&req).unwrap();
@@ -95,6 +97,11 @@ async fn test_models_roundtrip() {
         key: "key-data".to_string(),
         ca_cert: "ca-data".to_string(),
         config: "config-yaml".to_string(),
+        member_vc_json: "member-vc".to_string(),
+        status_list_json: "status-list".to_string(),
+        did_doc_aggregate_json: "[]".to_string(),
+        signing_pubkey_der_b64: "pa-key".to_string(),
+        signed_policy_b64: "policy".to_string(),
         message: "signed".to_string(),
     };
 

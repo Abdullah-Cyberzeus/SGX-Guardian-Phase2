@@ -425,7 +425,22 @@ pub async fn listener_task(node_id: String, resolver: Resolver, config: GossipCo
                 tokio::spawn(async move {
                     if let Err(reason) = handle_inbound(stream, &node_id, &resolver, &config).await
                     {
-                        tracing::warn!("CRL-GOSSIP inbound from {} failed: {}", peer_addr, reason);
+                        if reason == protocol::PEER_CLOSED_BEFORE_MESSAGE {
+                            // The offline synchronizer uses a connect-only
+                            // reachability probe before selecting peers. It is
+                            // not a failed gossip exchange and should not
+                            // generate an operator-facing warning.
+                            tracing::debug!(
+                                "CRL-GOSSIP reachability probe from {} completed",
+                                peer_addr
+                            );
+                        } else {
+                            tracing::warn!(
+                                "CRL-GOSSIP inbound from {} failed: {}",
+                                peer_addr,
+                                reason
+                            );
+                        }
                     }
                 });
             }
