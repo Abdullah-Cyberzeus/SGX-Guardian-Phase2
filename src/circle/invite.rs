@@ -201,7 +201,9 @@ fn load_hidden_invites() -> Result<BTreeSet<String>, CircleError> {
 
 pub fn hide_invite_from_history(invite_id: &str) -> Result<(), CircleError> {
     let mut hidden = load_hidden_invites()?;
-    hidden.insert(invite_id.to_string());
+    if !hidden.insert(invite_id.to_string()) {
+        return Err(CircleError::NotFound(invite_id.to_string()));
+    }
     persistence::write_atomic(
         &persistence::hidden_invites_path(),
         &serde_json::to_vec_pretty(&hidden)?,

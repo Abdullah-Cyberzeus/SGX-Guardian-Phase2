@@ -183,6 +183,11 @@ pub mod guardian {
                 crate::xfer::persistence::XFER_BASE_ENV,
                 root.path().join("xfer"),
             );
+            saved.push((
+                "SGX_FORCE_SOFTWARE_KEYS",
+                std::env::var_os("SGX_FORCE_SOFTWARE_KEYS"),
+            ));
+            std::env::set_var("SGX_FORCE_SOFTWARE_KEYS", "1");
             Self { saved, root }
         }
 
