@@ -1103,6 +1103,7 @@ mod tests {
 
     /// Writes an executable shell script standing in for `sgx-pa-cli` and
     /// points `SGX_PA_CLI_PATH` at it so `run_cli` never touches a real binary.
+    #[cfg(unix)]
     fn install_fake_cli(temp: &tempfile::TempDir, exit_code: i32) -> ScopedEnvVar {
         use std::os::unix::fs::PermissionsExt;
         let script_path = temp.path().join("fake-sgx-pa-cli.sh");
@@ -1122,6 +1123,7 @@ mod tests {
         )
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn block_ip_reports_success_when_cli_exits_zero() {
         let _guard = crate::test_support::async_env_lock().await;
@@ -1142,6 +1144,7 @@ mod tests {
         assert!(action.stdout.contains("203.0.113.55"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn unblock_reports_failure_when_cli_exits_nonzero() {
         let _guard = crate::test_support::async_env_lock().await;
@@ -1162,6 +1165,7 @@ mod tests {
         assert!(action.stderr.contains("boom"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn update_rules_and_validate_config_surface_cli_output() {
         let _guard = crate::test_support::async_env_lock().await;

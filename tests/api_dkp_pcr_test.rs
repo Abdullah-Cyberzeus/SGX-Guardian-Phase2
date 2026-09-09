@@ -3,6 +3,7 @@ use axum::Json;
 use sgx_guardian_client::api::handlers::{dkp, pcr};
 use sgx_guardian_client::api::state::AppState;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -115,6 +116,7 @@ async fn test_dkp_status_missing_file_fails() {
 }
 
 #[tokio::test]
+#[cfg(unix)]
 async fn test_run_cli_handlers() {
     let (state, temp_dir) = create_mock_app_state("test-node");
 
