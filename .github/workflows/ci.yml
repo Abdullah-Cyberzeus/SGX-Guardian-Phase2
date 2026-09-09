@@ -300,6 +300,9 @@ jobs:
       # every integration-test link substantially larger and can crash rust-lld with
       # SIGBUS on the memory-constrained hosted runner.
       CARGO_PROFILE_TEST_DEBUG: "0"
+      # rust-lld otherwise parallelizes each large Tarpaulin link and can exhaust the
+      # hosted runner. Serial linker work is slower but uses substantially less memory.
+      RUSTFLAGS: "-C link-arg=-Wl,--threads=1"
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -57,6 +57,13 @@ pub fn run(args: StatusArgs) {
         exe_dir.join("..").join("..").join("config").join(&filename),
         // Historical relative path used by previous CLI versions.
         exe_dir.join("..").join("config").join(&filename),
+        // Development/CI fallback that is independent of a custom Cargo target dir.
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("packaging")
+            .join("common")
+            .join("config")
+            .join(&filename),
     ];
 
     let config_path = candidates.iter().find_map(|p| p.canonicalize().ok());

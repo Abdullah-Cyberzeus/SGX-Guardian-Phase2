@@ -78,9 +78,8 @@ fn pairing_proof_reports_missing_node_id() {
 
 #[test]
 fn status_loads_the_real_checked_in_nodea_config() {
-    // The compiled binary's exe_dir/../../config/nodeA.yaml resolves to the real,
-    // already-checked-in `config/nodeA.yaml` at the workspace root — read-only, exercises
-    // the full success path including the `relay` block.
+    // The CLI resolves the packaged, checked-in node configuration independently of the
+    // Cargo target directory used by local or hosted CI builds.
     Command::cargo_bin("sgx-pa-cli")
         .unwrap()
         .args(["status", "--node", "nodeA"])
