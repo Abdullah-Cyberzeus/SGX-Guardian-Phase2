@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import {
   Plus, Search, Cpu, Shield, ShieldAlert, Trash2, Loader2, Info, LayoutList, ChevronRight,
@@ -18,6 +18,30 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as Switch from "@radix-ui/react-switch";
 
 type Tab = "paired" | "unpaired" | "fleet";
+
+function InfoTooltip({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <span className="relative inline-flex items-center group" onClick={(e) => e.stopPropagation()}>
+      <span
+        role="img"
+        aria-label={label}
+        tabIndex={0}
+        className="inline-flex items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+        style={{ width: "18px", height: "18px" }}
+      >
+        <Info size={12} />
+      </span>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute left-0 top-7 z-50 hidden w-72 rounded-md border border-border bg-popover p-3 text-left shadow-xl group-hover:block group-focus-within:block"
+      >
+        <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--popover-foreground)", lineHeight: 1.5 }}>
+          {children}
+        </span>
+      </span>
+    </span>
+  );
+}
 
 function safeTrim(value: unknown): string {
   return String(value ?? "").trim();
@@ -1088,13 +1112,19 @@ export function DV01DevicesList() {
             onClick={() => setTab("fleet")}
             style={{ padding: "6px 16px", borderRadius: "var(--radius)", backgroundColor: tab === "fleet" ? "var(--background)" : "transparent", color: tab === "fleet" ? "var(--foreground)" : "var(--muted-foreground)", boxShadow: tab === "fleet" ? "0 1px 3px rgba(0,0,0,0.1)" : "none", border: "none", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", cursor: "pointer", transition: "all 0.2s", display: "flex", alignItems: "center", gap: "6px" }}
           >
-            <ShieldAlert size={14} /> Fleet Security
+            <ShieldAlert size={14} /> Fleet Discovery
+            <InfoTooltip label="Fleet Discovery help">
+              Fleet Discovery scans your network for devices Guardian can monitor. It helps you spot new devices, risky devices, and devices that should be blocked or reviewed.
+            </InfoTooltip>
           </button>
           <button
             onClick={() => navigate("/devices/smart-home")}
             style={{ padding: "6px 16px", borderRadius: "var(--radius)", backgroundColor: "transparent", color: "var(--muted-foreground)", border: "none", fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", cursor: "pointer", transition: "all 0.2s", display: "flex", alignItems: "center", gap: "6px" }}
           >
             <Home size={14} /> Smart Home
+            <InfoTooltip label="Smart Home help">
+              Smart Home connects supported household devices, like cameras, thermostats, plugs, and switches, so Guardian can show their status and help automate simple actions.
+            </InfoTooltip>
           </button>
         </div>
         <div className="flex items-center gap-3">

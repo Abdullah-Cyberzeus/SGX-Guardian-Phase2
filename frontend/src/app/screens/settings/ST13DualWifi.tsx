@@ -110,7 +110,7 @@ function InfoTooltip({ label, children }: { label: string; children: React.React
       >
         <Info size={15} />
       </button>
-      <span className="pointer-events-none absolute right-0 top-8 z-30 hidden w-[min(20rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs leading-5 text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+      <span className="pointer-events-none absolute left-0 top-8 z-30 hidden w-[min(20rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs leading-5 text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
         {children}
       </span>
     </span>

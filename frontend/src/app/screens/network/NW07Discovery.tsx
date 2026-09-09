@@ -27,6 +27,7 @@ import {
   AlertTriangle,
   CircleCheck,
   CircleX,
+  Info,
 } from "lucide-react";
 import { PageHeader } from "../../components/PageHeader";
 import {
@@ -61,6 +62,24 @@ import type {
 import { toast } from "sonner";
 
 type Tab = "inventory" | "whitelist" | "schedule" | "runs";
+
+function InfoTooltip({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <span className="group relative inline-flex align-middle">
+      <span
+        tabIndex={0}
+        role="img"
+        aria-label={label}
+        className="inline-flex h-6 w-6 cursor-help items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+      >
+        <Info size={14} />
+      </span>
+      <span className="pointer-events-none absolute left-0 top-7 z-30 hidden w-[min(22rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs normal-case leading-5 tracking-normal text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+        {children}
+      </span>
+    </span>
+  );
+}
 
 function guardianDisplayText(value: string) {
   return value.replace(/suricata|nmap/gi, "Guardian");
@@ -1426,8 +1445,11 @@ function WhitelistTab({ inventoryDevices, data, loading, error, refetch, onSaved
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <ListChecks size={16} style={{ color: "var(--primary)" }} />
-          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
+          <p className="inline-flex items-center gap-1.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
             Discovery whitelist
+            <InfoTooltip label="About discovery whitelist">
+              The whitelist is the list of devices you have approved. Guardian treats these devices as allowed during discovery and highlights anything new or changed for review.
+            </InfoTooltip>
           </p>
           {loading && <Loader2 className="animate-spin" size={13} style={{ color: "var(--muted-foreground)" }} />}
         </div>
@@ -3308,7 +3330,14 @@ export function NW07Discovery() {
                 fontWeight: "var(--font-weight-medium)",
               }}
             >
-              {t.label}
+              <span className="inline-flex items-center justify-center gap-1.5">
+                {t.label}
+                {t.key === "whitelist" ? (
+                  <InfoTooltip label="About whitelist">
+                    The whitelist contains approved devices. Use it to confirm which discovered devices belong on your network.
+                  </InfoTooltip>
+                ) : null}
+              </span>
             </button>
           ))}
         </div>

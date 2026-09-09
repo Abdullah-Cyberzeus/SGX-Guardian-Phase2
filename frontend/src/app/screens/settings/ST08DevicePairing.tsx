@@ -1,11 +1,28 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
-import { Check, Clock, Copy, Hash, Loader2, Shield } from "lucide-react";
+import { Check, Clock, Copy, Hash, Info, Loader2, Shield } from "lucide-react";
 import { PageHeader } from "../../components/PageHeader";
 import { deviceService, type PairingCodeResponse } from "../../services/deviceService";
 
 type Step = "serial" | "code" | "proof";
+
+function InfoTooltip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+        aria-label={label}
+      >
+        <Info size={15} />
+      </button>
+      <span className="pointer-events-none absolute left-0 top-8 z-30 hidden w-[min(20rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs leading-5 text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+        {children}
+      </span>
+    </span>
+  );
+}
 
 function CountdownTimer({ expiresAt }: { expiresAt: number }) {
   const [remaining, setRemaining] = useState(() => Math.max(0, expiresAt - Math.floor(Date.now() / 1000)));
@@ -119,14 +136,14 @@ export function ST08DevicePairing() {
               <Hash size={18} style={{ color: "var(--primary)" }} />
             </div>
             <div>
-              <span className="group relative inline-flex">
-                <p tabIndex={0} className="cursor-help" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
+              <div className="flex items-center gap-1.5">
+                <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
                   Serial Number
                 </p>
-                <span className="pointer-events-none absolute left-1/2 top-7 z-20 hidden w-72 -translate-x-1/2 rounded-md border border-border bg-popover px-3 py-2 text-xs leading-5 text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
-                  Unique Guardian hardware identifier used to request a pairing code and link the physical device to this account.
-                </span>
-              </span>
+                <InfoTooltip label="About serial numbers">
+                  The serial number is printed on your Guardian device. It helps the app find the right Guardian and link that physical device to your account.
+                </InfoTooltip>
+              </div>
               <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
                 Required before a pairing code can be minted.
               </p>

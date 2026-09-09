@@ -16,6 +16,7 @@ import {
   Hourglass,
   ChevronDown,
   ChevronUp,
+  Info,
 } from "lucide-react";
 import { useVidShow, useVidPeers } from "../../hooks/useApiData";
 import { useContactNames } from "../../contexts/ContactNameContext";
@@ -23,6 +24,23 @@ import type { VidPeer, VidChangeReason } from "../../services/vidService";
 import { toast } from "sonner";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+function InfoTooltip({ label, placement = "right", children }: { label: string; placement?: "left" | "right"; children: React.ReactNode }) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+        aria-label={label}
+      >
+        <Info size={14} />
+      </button>
+      <span className={`pointer-events-none absolute top-7 z-30 hidden w-[min(21rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs leading-5 text-popover-foreground shadow-lg group-hover:block group-focus-within:block ${placement === "right" ? "left-0" : "right-0"}`}>
+        {children}
+      </span>
+    </span>
+  );
+}
 
 function shortDid(did: string) {
   if (!did) return "";
@@ -291,6 +309,9 @@ function CurrentVidCard() {
             <RefreshCw size={11} />
             Refresh
           </button>
+          <InfoTooltip label="About nonce refresh">
+            Nonce refresh asks Guardian for the latest one-time session values. This helps keep the Virtual ID fresh so old session data cannot be reused.
+          </InfoTooltip>
         </div>
       </div>
 
@@ -379,6 +400,14 @@ function CurrentVidCard() {
         >
           <Layers size={11} />
           VID Inputs
+          <InfoTooltip label="About VID inputs">
+            <span className="block">These are the security ingredients Guardian combines to create the Virtual ID.</span>
+            <span className="mt-2 block"><strong>DKP:</strong> the device key material used for this secure session.</span>
+            <span className="mt-1 block"><strong>PCR Digest:</strong> a summary of the Guardian boot and system state.</span>
+            <span className="mt-1 block"><strong>Policy Digest:</strong> a summary of the active rules Guardian is enforcing.</span>
+            <span className="mt-1 block"><strong>Nonce I:</strong> a one-time value from the device starting the session.</span>
+            <span className="mt-1 block"><strong>Nonce R:</strong> a one-time value from the device responding to the session.</span>
+          </InfoTooltip>
         </div>
         <div
           className="grid gap-2"

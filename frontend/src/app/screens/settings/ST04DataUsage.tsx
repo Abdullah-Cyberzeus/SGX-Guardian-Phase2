@@ -2,7 +2,7 @@ import { useState, ReactNode } from "react";
 import { toast } from "sonner";
 import {
   Loader2, AlertTriangle, RotateCcw, Pencil, Check, X,
-  BarChart2, Network, History, Gauge, CheckCircle2,
+  BarChart2, Network, History, Gauge, CheckCircle2, Info,
 } from "lucide-react";
 import { PageHeader } from "../../components/PageHeader";
 import { useDusageCurrent, useDusageHistory, useDusageQuota } from "../../hooks/useApiData";
@@ -10,6 +10,24 @@ import type { InterfaceUsage } from "../../services/dusageService";
 import { dusageService } from "../../services/dusageService";
 import { networkInterfaceDisplay } from "../../utils/networkInterfaceDisplay";
 import type { InterfaceGroup } from "../../utils/networkInterfaceDisplay";
+
+function InfoTooltip({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <span className="group relative inline-flex align-middle">
+      <span
+        tabIndex={0}
+        role="img"
+        aria-label={label}
+        className="inline-flex h-6 w-6 cursor-help items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+      >
+        <Info size={14} />
+      </span>
+      <span className="pointer-events-none absolute left-0 top-7 z-30 hidden w-[min(22rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs normal-case leading-5 tracking-normal text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+        {children}
+      </span>
+    </span>
+  );
+}
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes < 0) return "0 B";
@@ -59,13 +77,16 @@ function groupInterfacesByDisplay(ifaces: InterfaceUsage[]) {
   return groups;
 }
 
-function SectionCard({ title, titleColor, icon: Icon, right, divider, children }: { title: string; titleColor?: string; icon?: typeof BarChart2; right?: ReactNode; divider?: boolean; children: ReactNode }) {
+function SectionCard({ title, titleColor, icon: Icon, right, divider, tooltip, children }: { title: string; titleColor?: string; icon?: typeof BarChart2; right?: ReactNode; divider?: boolean; tooltip?: ReactNode; children: ReactNode }) {
   return (
     <div className="rounded-lg border border-border p-4" style={{ backgroundColor: "var(--card)" }}>
       <div className="flex items-center justify-between" style={{ marginBottom: "12px" }}>
         <div className="flex items-center gap-1.5">
           {Icon && <Icon size={13} style={{ color: titleColor || "var(--muted-foreground)" }} />}
-          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: titleColor || "var(--muted-foreground)", letterSpacing: "0.08em" }}>{title}</p>
+          <p className="inline-flex items-center gap-1.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: titleColor || "var(--muted-foreground)", letterSpacing: "0.08em" }}>
+            {title}
+            {tooltip ? <InfoTooltip label={`About ${title}`}>{tooltip}</InfoTooltip> : null}
+          </p>
         </div>
         {right}
       </div>
@@ -268,7 +289,12 @@ export function ST04DataUsage() {
           {/* Main column — every other API's data stays on the left, where it already was */}
           <div className="flex-1 min-w-0 flex flex-col gap-4 lg:order-1">
             {/* API 1's interfaces[] — one card per actual interface with its rx/tx detail */}
-            <SectionCard title="Network Interfaces" titleColor="var(--primary)" icon={Network}>
+            <SectionCard
+              title="Network Interfaces"
+              titleColor="var(--primary)"
+              icon={Network}
+              tooltip="Network Interfaces show each connection Guardian can measure, such as Wi-Fi, hotspot, relay, or infrastructure links. The values below show how much data each interface has sent and received."
+            >
               <div className="flex flex-col gap-4">
                 {(Object.entries(interfaceGroups) as [InterfaceGroup, InterfaceUsage[]][])
                   .filter(([, ifaces]) => ifaces.length > 0)

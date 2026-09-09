@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { AlertTriangle, BellRing, Bug, CheckCircle2, Clock3, CloudOff, Eye, Inbox, Loader2, Radio, RefreshCw, Send, Wifi } from "lucide-react";
+import { AlertTriangle, BellRing, Bug, CheckCircle2, Clock3, CloudOff, Eye, Inbox, Info, Loader2, Radio, RefreshCw, Send, Wifi } from "lucide-react";
 import { toast } from "sonner";
 import { useContactNames } from "../../contexts/ContactNameContext";
 import { useGuardianConnectivity } from "../../../pwa/connectivity/GuardianConnectivityContext";
@@ -19,6 +19,24 @@ type Metric = {
   value: unknown;
   mono?: boolean;
 };
+
+function InfoTooltip({ label, placement = "right", children }: { label: string; placement?: "left" | "right"; children: ReactNode }) {
+  return (
+    <span className="group relative inline-flex align-middle">
+      <span
+        tabIndex={0}
+        role="img"
+        aria-label={label}
+        className="inline-flex h-6 w-6 cursor-help items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+      >
+        <Info size={14} />
+      </span>
+      <span className={`pointer-events-none absolute top-7 z-30 hidden w-[min(23rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs leading-5 text-popover-foreground shadow-lg group-hover:block group-focus-within:block ${placement === "right" ? "left-0" : "right-0"}`}>
+        {children}
+      </span>
+    </span>
+  );
+}
 
 function messageOf(error: unknown) {
   return error instanceof Error ? error.message : "The CRL operation failed.";
@@ -84,8 +102,8 @@ function MetricsGrid({ items }: { items: Metric[] }) {
   return <dl className="grid gap-2 sm:grid-cols-2">{visible.map((item) => <div key={item.label} className="rounded-md border border-border bg-background/60 p-3"><dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{item.label}</dt><dd className={`mt-1 break-words text-sm font-medium ${item.mono ? "font-mono text-xs" : ""}`}>{displayValue(item.value)}</dd></div>)}</dl>;
 }
 
-function InfoSection({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
-  return <div className="rounded-lg border border-border bg-background/40 p-4"><div className="mb-3"><h3 className="text-sm font-semibold">{title}</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">{subtitle}</p></div>{children}</div>;
+function InfoSection({ title, subtitle, tooltip, tooltipPlacement, children }: { title: string; subtitle: string; tooltip?: ReactNode; tooltipPlacement?: "left" | "right"; children: ReactNode }) {
+  return <div className="rounded-lg border border-border bg-background/40 p-4"><div className="mb-3"><h3 className="inline-flex items-center gap-1.5 text-sm font-semibold">{title}{tooltip ? <InfoTooltip label={`About ${title}`} placement={tooltipPlacement}>{tooltip}</InfoTooltip> : null}</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">{subtitle}</p></div>{children}</div>;
 }
 
 function GossipSummary({ data, latestTrigger }: { data: CrlGossipStatusResponse | null; latestTrigger: CrlGossipTriggerResponse | null }) {
@@ -104,7 +122,22 @@ function GossipSummary({ data, latestTrigger }: { data: CrlGossipStatusResponse 
       { label: "Threshold count", value: data.threshold_count },
     ]} />
 
-    <InfoSection title="Local CRL state" subtitle="These are the proof fields for what this node currently believes about CRL propagation.">
+    <InfoSection
+      title="Local CRL state"
+      subtitle="These are the proof fields for what this node currently believes about CRL propagation."
+      tooltipPlacement="right"
+      tooltip={
+        <>
+          <span className="block">Local CRL state is this Guardian's current copy of the revocation list.</span>
+          <span className="mt-2 block"><strong>Sequence:</strong> the CRL version number.</span>
+          <span className="mt-1 block"><strong>Merkle root:</strong> the fingerprint of the whole list.</span>
+          <span className="mt-1 block"><strong>Entries:</strong> revoked identities in this copy.</span>
+          <span className="mt-1 block"><strong>Propagated:</strong> entries already shared with peers.</span>
+          <span className="mt-1 block"><strong>Rounds:</strong> gossip exchanges started or answered by this Guardian.</span>
+          <span className="mt-1 block"><strong>Entries merged:</strong> peer revocations added locally.</span>
+        </>
+      }
+    >
       <MetricsGrid items={[
         { label: "Sequence", value: data.sequence },
         { label: "Merkle root", value: data.merkle_root, mono: true },
@@ -162,7 +195,19 @@ function OfflineSummary({ data, latestSync }: { data: CrlOfflineStatusResponse |
       { label: "Entries fetched", value: data.entries_fetched },
     ]} />
 
-    <InfoSection title="Peer sync state" subtitle="Last known Merkle root, sequence, and sync time this node has recorded per gossip peer.">
+    <InfoSection
+      title="Peer sync state"
+      subtitle="Last known Merkle root, sequence, and sync time this node has recorded per gossip peer."
+      tooltipPlacement="right"
+      tooltip={
+        <>
+          <span className="block">Peer sync state shows what this Guardian last heard from each peer.</span>
+          <span className="mt-2 block"><strong>Merkle root:</strong> the peer's last known CRL fingerprint.</span>
+          <span className="mt-1 block"><strong>Sequence:</strong> the peer's last known CRL version.</span>
+          <span className="mt-1 block"><strong>Last sync at:</strong> when this Guardian last exchanged CRL data with that peer.</span>
+        </>
+      }
+    >
       {peers.length ? <dl className="grid gap-2 sm:grid-cols-2">{peers.map(([peerDid, state]) => <div key={peerDid} className="rounded-md border border-border bg-background/60 p-3"><dt className="break-all text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{peerDid}</dt><dd className="mt-2 space-y-1 text-xs"><div className="flex justify-between gap-2"><span className="text-muted-foreground">Merkle root</span><span className="break-all text-right font-mono">{displayValue(state.last_seen_merkle_root)}</span></div><div className="flex justify-between gap-2"><span className="text-muted-foreground">Sequence</span><span className="font-medium">{displayValue(state.last_seen_sequence)}</span></div><div className="flex justify-between gap-2"><span className="text-muted-foreground">Last sync at</span><span className="font-medium">{displayValue(state.last_sync_at)}</span></div></dd></div>)}</dl> : <p className="text-sm text-muted-foreground">No peer sync state recorded yet.</p>}
     </InfoSection>
 
@@ -179,8 +224,8 @@ function OfflineSummary({ data, latestSync }: { data: CrlOfflineStatusResponse |
   </div>;
 }
 
-function Card({ title, subtitle, icon: Icon, actions, children }: { title: string; subtitle: string; icon: typeof Radio; actions?: ReactNode; children: ReactNode }) {
-  return <section className="rounded-xl border border-border bg-card p-4 shadow-sm md:p-5"><div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div className="flex gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Icon size={18} /></span><div><h2 className="font-semibold">{title}</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">{subtitle}</p></div></div>{actions}</div>{children}</section>;
+function Card({ title, subtitle, icon: Icon, actions, tooltip, tooltipPlacement, children }: { title: string; subtitle: string; icon: typeof Radio; actions?: ReactNode; tooltip?: ReactNode; tooltipPlacement?: "left" | "right"; children: ReactNode }) {
+  return <section className="rounded-xl border border-border bg-card p-4 shadow-sm md:p-5"><div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div className="flex gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Icon size={18} /></span><div><h2 className="inline-flex items-center gap-1.5 font-semibold">{title}{tooltip ? <InfoTooltip label={`About ${title}`} placement={tooltipPlacement}>{tooltip}</InfoTooltip> : null}</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">{subtitle}</p></div></div>{actions}</div>{children}</section>;
 }
 
 function Button({ children, onClick, busy, danger = false, disabled = false, title }: { children: ReactNode; onClick: () => void; busy?: boolean; danger?: boolean; disabled?: boolean; title?: string }) {
@@ -294,19 +339,19 @@ export function CrlOperationsPanel({ section }: { section: CrlOperationsSection 
   return <div className="flex flex-col gap-4">
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4"><div><h2 className="font-semibold">{header.title}</h2><p className="mt-1 text-xs text-muted-foreground">{header.subtitle} Refreshes automatically every 30 seconds.</p></div><Button onClick={() => void load(true)} busy={loading}><RefreshCw size={14} />Refresh</Button></div>
     {Object.keys(errors).length > 0 && <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"><strong>Partial service failure.</strong> {Object.entries(errors).map(([key, value]) => `${key}: ${value}`).join(" · ")}</div>}
-    {section === "gossip" && <Card title="Gossip engine" subtitle="Peer propagation counters, hidden CRL proof fields, and the latest manual trigger result." icon={Radio} actions={<Button onClick={() => setConfirm("gossip")} disabled={loading || !reachable} title={!reachable ? "Guardian unreachable — reconnect to make changes" : undefined}><RefreshCw size={14} />Trigger round</Button>}><GossipSummary data={gossip} latestTrigger={latestTrigger} /></Card>}
+    {section === "gossip" && <Card title="Gossip engine" subtitle="Peer propagation counters, hidden CRL proof fields, and the latest manual trigger result." icon={Radio} tooltip={<><span className="block">The Gossip engine shares revocation updates with trusted peers.</span><span className="mt-2 block"><strong>Enabled:</strong> whether automatic sharing is turned on.</span><span className="mt-1 block"><strong>Port:</strong> the network port used for CRL sharing.</span><span className="mt-1 block"><strong>Interval secs:</strong> how often Guardian tries automatic sharing.</span><span className="mt-1 block"><strong>Threshold:</strong> how many peers must agree before the CRL is considered well shared.</span><span className="mt-1 block"><strong>Self DID:</strong> this Guardian's identity.</span><span className="mt-1 block"><strong>Circle ID:</strong> the trusted group being synchronized.</span><span className="mt-1 block"><strong>Other members:</strong> peers available for sharing.</span><span className="mt-1 block"><strong>Trigger round:</strong> starts one manual exchange with an available peer.</span></>} actions={<Button onClick={() => setConfirm("gossip")} disabled={loading || !reachable} title={!reachable ? "Guardian unreachable — reconnect to make changes" : undefined}><RefreshCw size={14} />Trigger round</Button>}><GossipSummary data={gossip} latestTrigger={latestTrigger} /></Card>}
     {section === "emergency" && <>
-      <Card title="Emergency revocation channel" subtitle={`Manual re-broadcast for an existing critical revocation, plus durable receiver notifications${notificationCount !== null ? ` · ${notificationCount} notifications` : ""}.`} icon={BellRing}>
+      <Card title="Emergency revocation channel" subtitle={`Manual re-broadcast for an existing critical revocation, plus durable receiver notifications${notificationCount !== null ? ` · ${notificationCount} notifications` : ""}.`} icon={BellRing} tooltip={<><span className="block">Emergency revocation is for high-risk identities that must be warned about quickly.</span><span className="mt-2 block"><strong>Re-broadcast:</strong> sends an existing critical revocation notice to peers again.</span><span className="mt-1 block"><strong>Notifications:</strong> emergency notices this Guardian received or stored.</span></>}>
         <Summary data={emergency} />
         <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]"><input className="rounded-md border border-border bg-input-background px-3 py-2 text-sm" value={did} onChange={(event) => setDid(event.target.value)} placeholder="did:guardian:... (single critical revoked DID)" aria-label="Emergency DID" /><Button danger disabled={!validDid || !reachable} title={!reachable ? "Guardian unreachable — reconnect to make changes" : undefined} onClick={() => setConfirm("broadcast")}><Send size={14} />Re-broadcast</Button></div>
         <p className="mt-2 text-xs leading-5 text-muted-foreground">Use one already-revoked <strong>critical</strong> DID only. This control re-sends the emergency notice to active peers; it does not create a new CRL entry.</p>
         <div className="mt-4 rounded-md border border-border p-3"><div className="flex items-center gap-2 text-sm font-medium"><BellRing size={15} />Emergency notifications</div><ItemCards data={notifications} keys={["notifications", "entries", "items"]} itemLabel="Notification" emptyTitle="No emergency notifications" emptyMessage="This is expected until an emergency revocation is received or broadcast and the backend stores a notification." /></div>
       </Card>
-      <Card title="Emergency debug session" subtitle="Inspect or seed test session state for backend validation. Debug controls should only be used in non-production environments." icon={Bug}>
+      <Card title="Emergency debug session" subtitle="Inspect or seed test session state for backend validation. Debug controls should only be used in non-production environments." icon={Bug} tooltipPlacement="left" tooltip={<><span className="block">Emergency debug session is a testing area for emergency revocation behavior.</span><span className="mt-2 block"><strong>DID field:</strong> the Guardian identity you want to inspect or seed.</span><span className="mt-1 block"><strong>Inspect session:</strong> checks saved debug state for that DID.</span><span className="mt-1 block"><strong>Seed test session:</strong> creates test-only debug state for backend validation.</span></>}>
         <div className="flex flex-wrap gap-2"><Button disabled={!validDid} busy={busy === "seed"} onClick={() => void inspectDebug()}><Eye size={14} />Inspect session</Button><Button disabled={!validDid} onClick={() => setConfirm("seed")}><Bug size={14} />Seed test session</Button></div>{debugResult && <pre className="mt-4 max-h-72 overflow-auto rounded-md bg-background p-3 text-xs">{JSON.stringify(debugResult, null, 2)}</pre>}
       </Card>
     </>}
-    {section === "offline" && <Card title="Offline synchronization" subtitle={`Queued revocations, peer synchronization state, and fetch-and-flush controls${pendingCount !== null ? ` · ${pendingCount} pending` : ""}.`} icon={CloudOff} actions={<Button onClick={() => setConfirm("sync")} disabled={loading || !reachable} title={!reachable ? "Guardian unreachable — reconnect to make changes" : undefined}><Wifi size={14} />Sync now</Button>}><OfflineSummary data={offline} latestSync={latestSync} /><div className="mt-4 rounded-md border border-border p-3"><div className="flex items-center gap-2 text-sm font-medium"><Clock3 size={15} />Pending revocations</div><ItemCards data={pending} keys={["pending", "revocations", "entries", "items", "queue"]} itemLabel="Revocation" emptyTitle="No pending revocations" emptyMessage="The offline queue is clear. New revocations appear here when they cannot be delivered to peers immediately." /></div></Card>}
+    {section === "offline" && <Card title="Offline synchronization" subtitle={`Queued revocations, peer synchronization state, and fetch-and-flush controls${pendingCount !== null ? ` · ${pendingCount} pending` : ""}.`} icon={CloudOff} tooltip={<><span className="block">Offline synchronization keeps revocation data moving when a Guardian was disconnected.</span><span className="mt-2 block"><strong>Pending:</strong> revocations waiting to be delivered.</span><span className="mt-1 block"><strong>Fetched:</strong> entries received from peers.</span><span className="mt-1 block"><strong>Delivered:</strong> entries sent to peers.</span><span className="mt-1 block"><strong>Sync now:</strong> starts a manual catch-up cycle.</span></>} actions={<Button onClick={() => setConfirm("sync")} disabled={loading || !reachable} title={!reachable ? "Guardian unreachable — reconnect to make changes" : undefined}><Wifi size={14} />Sync now</Button>}><OfflineSummary data={offline} latestSync={latestSync} /><div className="mt-4 rounded-md border border-border p-3"><div className="flex items-center gap-2 text-sm font-medium"><Clock3 size={15} />Pending revocations</div><ItemCards data={pending} keys={["pending", "revocations", "entries", "items", "queue"]} itemLabel="Revocation" emptyTitle="No pending revocations" emptyMessage="The offline queue is clear. New revocations appear here when they cannot be delivered to peers immediately." /></div></Card>}
     {confirm && <Confirm title={confirm === "broadcast" ? "Re-broadcast critical revocation?" : confirm === "seed" ? "Seed a test emergency session?" : confirm === "sync" ? "Run offline synchronization?" : "Trigger gossip now?"} message={confirm === "broadcast" ? `This re-sends the existing critical revocation notice for ${did.trim()} to active peers. It does not create a new CRL entry.` : confirm === "seed" ? `This changes debug session state for ${did.trim()}.` : confirm === "sync" ? "This starts an immediate fetch-and-flush cycle with configured peers." : "This starts a CRL gossip round immediately and may generate peer traffic."} confirmLabel={confirm === "broadcast" ? "Re-broadcast now" : confirm === "seed" ? "Seed session" : confirm === "sync" ? "Sync now" : "Trigger round"} busy={busy === confirm} onClose={() => !busy && setConfirm(null)} onConfirm={() => void execute(confirm)} />}
   </div>;
 }

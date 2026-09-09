@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import {
   Cloud, Home, Shield, Thermometer, Plus, Zap, Check, Loader2, ExternalLink,
   RefreshCw, Search, Trash2, Pencil, X, Power, ChevronLeft, ChevronRight,
-  Bell, Activity, AlertTriangle, Send, Cpu,
+  Bell, Activity, AlertTriangle, Send, Cpu, Info,
 } from "lucide-react";
 import { PageHeader } from "../../components/PageHeader";
 import { StatusBadge } from "../../components/SeverityBadge";
@@ -50,6 +50,30 @@ const PROVIDER_META: Record<string, { label: string; icon: any; desc: string }> 
   google_nest: { label: "Google Nest", icon: Home, desc: "Thermostats and cameras" },
   tp_link_kasa: { label: "TP-Link Kasa", icon: Zap, desc: "Smart plugs and switches" },
 };
+
+function InfoTooltip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span className="relative inline-flex items-center group" onClick={(e) => e.stopPropagation()}>
+      <span
+        role="img"
+        aria-label={label}
+        tabIndex={0}
+        className="inline-flex items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+        style={{ width: "18px", height: "18px" }}
+      >
+        <Info size={12} />
+      </span>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute left-0 top-7 z-50 hidden w-72 rounded-md border border-border bg-popover p-3 text-left shadow-xl group-hover:block group-focus-within:block"
+      >
+        <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--popover-foreground)", lineHeight: 1.5 }}>
+          {children}
+        </span>
+      </span>
+    </span>
+  );
+}
 
 function domainOf(entityId: string): string {
   return entityId.split(".")[0] || "";
@@ -944,8 +968,11 @@ function IntegrationsTab({
 
       <div className="flex items-center gap-3">
         <div style={{ flex: 1, height: "1px", backgroundColor: "var(--border)" }} />
-        <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", flexShrink: 0 }}>
+        <span className="inline-flex items-center gap-1.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", flexShrink: 0 }}>
           Home Assistant vendor integrations
+          <InfoTooltip label="Integrations help">
+            Integrations let Guardian connect to supported smart home accounts or local services, then bring those devices into Guardian for monitoring and control.
+          </InfoTooltip>
         </span>
         <div style={{ flex: 1, height: "1px", backgroundColor: "var(--border)" }} />
       </div>
@@ -963,8 +990,18 @@ function IntegrationsTab({
                 </div>
                 <StatusBadge status={status?.status ?? "disconnected"} variant={connected ? "success" : "muted"} />
               </div>
-              <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
+              <p className="inline-flex items-center gap-1.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
                 {status?.name ?? meta.label}
+                {key === "google_nest" && (
+                  <InfoTooltip label="Google Nest help">
+                    Google Nest connects supported thermostats and cameras through Google's device access flow so Guardian can show their status and help manage alerts.
+                  </InfoTooltip>
+                )}
+                {key === "tp_link_kasa" && (
+                  <InfoTooltip label="TP-Link Kasa help">
+                    TP-Link Kasa connects smart plugs and switches. Guardian can discover them locally or through your Kasa account, then monitor state and send simple commands.
+                  </InfoTooltip>
+                )}
               </p>
               <p style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", color: "var(--muted-foreground)", lineHeight: 1.4 }}>{meta.desc}</p>
               <div className="flex flex-col gap-1 mt-1">
@@ -1265,7 +1302,12 @@ function AutomationsTab({
       {error && <ErrorBanner error={error} onRetry={onRefetch} />}
 
       <div className="rounded-lg border p-4" style={{ backgroundColor: "color-mix(in srgb, var(--primary) 5%, var(--card))", borderColor: "color-mix(in srgb, var(--primary) 20%, transparent)" }}>
-        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--primary)", marginBottom: "4px" }}>Device Automation</p>
+        <p className="inline-flex items-center gap-1.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--primary)", marginBottom: "4px" }}>
+          Rule Automation
+          <InfoTooltip label="Rule Automation help">
+            Rule Automation lets Guardian watch for a device change and then run one or more actions for you, like switching on a plug or sending a command when a sensor changes.
+          </InfoTooltip>
+        </p>
         <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>
           Rules fire instantly when a Home Assistant entity's state changes and dispatch one or more device commands.
         </p>
@@ -1375,6 +1417,18 @@ function TelemetryTab({ devices, bump }: { devices: Paginated<SmartDevice> | nul
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="rounded-lg border p-4" style={{ backgroundColor: "color-mix(in srgb, var(--primary) 5%, var(--card))", borderColor: "color-mix(in srgb, var(--primary) 20%, transparent)" }}>
+        <p className="inline-flex items-center gap-1.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--primary)", marginBottom: "4px" }}>
+          Telemetry
+          <InfoTooltip label="Telemetry help">
+            Telemetry shows recent reports from smart home devices, such as whether a plug turned on, a thermostat changed mode, or a sensor sent a new reading.
+          </InfoTooltip>
+        </p>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", lineHeight: 1.5 }}>
+          Use the filters below to narrow the history by device or time window.
+        </p>
+      </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <select className={inputClass} value={deviceId} onChange={(e) => setDeviceId(e.target.value)}>
           <option value="">All devices</option>
@@ -1539,11 +1593,26 @@ export function DV11SmartHome() {
 
   const cyleniumConnected = localStorage.getItem("sgx_cylenium_connected") === "1" || cyleniumFlow === "done";
 
-  const tabs: { id: Tab; label: string; icon: any }[] = [
+  const tabs: { id: Tab; label: string; icon: any; tooltip?: React.ReactNode }[] = [
     { id: "devices", label: "Devices", icon: Cpu },
-    { id: "integrations", label: "Integrations", icon: Cloud },
-    { id: "automations", label: "Automations", icon: Shield },
-    { id: "telemetry", label: "Telemetry", icon: Activity },
+    {
+      id: "integrations",
+      label: "Integrations",
+      icon: Cloud,
+      tooltip: "Integrations connect Guardian to supported smart home services so devices can be discovered, monitored, and controlled from one place.",
+    },
+    {
+      id: "automations",
+      label: "Automations",
+      icon: Shield,
+      tooltip: "Rule automation lets Guardian take an action when something changes, such as turning on a light when a sensor reports motion.",
+    },
+    {
+      id: "telemetry",
+      label: "Telemetry",
+      icon: Activity,
+      tooltip: "Telemetry is the recent activity and status history reported by smart home devices, including state changes and timestamps.",
+    },
     { id: "notifications", label: "Alerts", icon: Bell },
   ];
 
@@ -1708,7 +1777,7 @@ export function DV11SmartHome() {
       <HealthStrip health={healthQuery.data} loading={healthQuery.loading} />
 
       <div className="flex border-b border-border" style={{ backgroundColor: "var(--card)" }}>
-        {tabs.map(({ id, label, icon: Icon }) => (
+        {tabs.map(({ id, label, icon: Icon, tooltip }) => (
           <button
             key={id}
             onClick={() => setActiveTab(id)}
@@ -1716,8 +1785,9 @@ export function DV11SmartHome() {
             style={{ backgroundColor: "transparent", border: "none", cursor: "pointer", borderBottom: activeTab === id ? "2px solid var(--primary)" : "2px solid transparent" }}
           >
             <Icon size={16} style={{ color: activeTab === id ? "var(--primary)" : "var(--muted-foreground)" }} />
-            <span style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", fontWeight: activeTab === id ? "var(--font-weight-semibold)" : "var(--font-weight-normal)", color: activeTab === id ? "var(--primary)" : "var(--muted-foreground)" }}>
+            <span className="inline-flex items-center gap-1" style={{ fontFamily: "Inter, sans-serif", fontSize: "10px", fontWeight: activeTab === id ? "var(--font-weight-semibold)" : "var(--font-weight-normal)", color: activeTab === id ? "var(--primary)" : "var(--muted-foreground)" }}>
               {label}
+              {tooltip && <InfoTooltip label={`${label} help`}>{tooltip}</InfoTooltip>}
             </span>
           </button>
         ))}

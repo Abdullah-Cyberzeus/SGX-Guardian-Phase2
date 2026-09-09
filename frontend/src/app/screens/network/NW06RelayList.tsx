@@ -14,6 +14,7 @@ import {
   Power,
   TowerControl,
   Server,
+  Info,
 } from "lucide-react";
 import {
   useRelayList,
@@ -36,6 +37,24 @@ type NodeEntry = RegistryNode & Partial<Pick<RelayNode, "maxPeers" | "maxBandwid
 type TabKey = "relays" | "lighthouses" | "members" | "dual";
 
 type RoleOverride = { relayEnabled?: boolean; lighthouseEnabled?: boolean };
+
+function InfoTooltip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span className="group relative inline-flex align-middle">
+      <span
+        tabIndex={0}
+        role="img"
+        aria-label={label}
+        className="inline-flex h-6 w-6 cursor-help items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+      >
+        <Info size={14} />
+      </span>
+      <span className="pointer-events-none absolute left-0 top-7 z-30 hidden w-[min(22rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs normal-case leading-5 tracking-normal text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+        {children}
+      </span>
+    </span>
+  );
+}
 
 const TABS: { key: TabKey; label: string; icon: typeof Radio }[] = [
   { key: "relays", label: "Relays", icon: Radio },
@@ -679,8 +698,17 @@ export function NW06RelayList() {
 
         {/* Node List */}
         <div>
-          <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "12px" }}>
+          <p className="inline-flex items-center gap-1.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "12px" }}>
             {current.heading}
+            {tab === "relays" ? (
+              <InfoTooltip label="About relay nodes">
+                Relay nodes help Guardians reach each other when a direct connection is not available. They pass encrypted traffic between peers without reading the contents.
+              </InfoTooltip>
+            ) : tab === "lighthouses" ? (
+              <InfoTooltip label="About lighthouse nodes">
+                Lighthouse nodes help Guardians find each other on the network by keeping track of where peers can currently be reached.
+              </InfoTooltip>
+            ) : null}
           </p>
           <div className="flex flex-col gap-3">
             {current.nodes.length === 0 ? (

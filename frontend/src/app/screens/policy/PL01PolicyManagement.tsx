@@ -35,6 +35,24 @@ import { toast } from "sonner";
 type TabId = "policies" | "sign" | "keys";
 type PolicyCategory = "active" | "backup" | "signed";
 
+function InfoTooltip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+        aria-label={label}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <Info size={14} />
+      </button>
+      <span className="pointer-events-none absolute left-0 top-7 z-30 hidden w-[min(22rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs leading-5 text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+        {children}
+      </span>
+    </span>
+  );
+}
+
 // Status Badge
 function VerifiedBadge({ verified, archived = false }: { verified: boolean; archived?: boolean }) {
   if (archived) {
@@ -968,7 +986,17 @@ export function PL01PolicyManagement() {
               }}
             >
               <Icon size={14} />
-              {label}
+              <span>{label}</span>
+              {id === "policies" ? (
+                <InfoTooltip label="About policy actions">
+                  <span className="block">Policies show the rules your Guardian uses to decide what is allowed.</span>
+                  <span className="mt-2 block"><strong>Active:</strong> the policy currently protecting your Guardian.</span>
+                  <span className="mt-1 block"><strong>Backup:</strong> the previous policy saved in case you need to review or restore it.</span>
+                  <span className="mt-1 block"><strong>Signed Policies:</strong> policies with a security signature so Guardian can confirm they were approved.</span>
+                  <span className="mt-1 block"><strong>Sign:</strong> approve a policy file before it can be used.</span>
+                  <span className="mt-1 block"><strong>Keys:</strong> manage the signing key used to approve policy changes.</span>
+                </InfoTooltip>
+              ) : null}
             </button>
           ))}
         </div>

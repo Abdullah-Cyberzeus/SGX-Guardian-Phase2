@@ -1,10 +1,27 @@
 import { useNavigate } from "react-router";
-import { BookOpen, ChevronRight, Fingerprint } from "lucide-react";
+import { BookOpen, ChevronRight, Fingerprint, Info } from "lucide-react";
 import { PageHeader } from "../../components/PageHeader";
 import { NotificationDeliverySettings } from "../../components/settings/NotificationDeliverySettings";
 import { PwaStorageControls } from "../../components/PwaStorageControls";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
 import { useAuth } from "../../contexts/AuthContext";
+
+function InfoTooltip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+        aria-label={label}
+      >
+        <Info size={15} />
+      </button>
+      <span className="pointer-events-none absolute left-0 top-8 z-30 hidden w-[min(20rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs leading-5 text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+        {children}
+      </span>
+    </span>
+  );
+}
 
 export function ST10DeviceSettings() {
   const navigate = useNavigate();
@@ -42,7 +59,12 @@ export function ST10DeviceSettings() {
               <div className="flex items-start gap-3 px-4 py-4">
                 <Fingerprint size={18} className="mt-0.5 text-primary flex-shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-sm text-foreground">Guardian fingerprint</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-sm text-foreground">Guardian fingerprint</p>
+                    <InfoTooltip label="About Guardian fingerprint">
+                      This is a short ID for this Guardian. Support may ask for it to confirm which device you are using, even when the Guardian is offline.
+                    </InfoTooltip>
+                  </div>
                   <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
                     {session?.guardianFingerprint || "Unavailable"}
                   </p>

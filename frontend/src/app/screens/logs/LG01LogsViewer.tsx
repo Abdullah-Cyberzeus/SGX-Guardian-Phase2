@@ -1213,9 +1213,8 @@ export function LG01LogsViewer() {
             }}
           >
             <Icon size={14} style={{ color: activeTab === id ? "var(--primary)" : "var(--muted-foreground)" }} />
-            <span className={id === "audit" ? "relative" : undefined}>
+            <span>
               <span
-                className={id === "audit" ? "cursor-help" : undefined}
                 style={{
                   fontFamily: "Inter, sans-serif",
                   fontSize: "var(--text-sm)",
@@ -1226,8 +1225,11 @@ export function LG01LogsViewer() {
                 {label}
               </span>
               {id === "audit" ? (
-                <span className="pointer-events-none absolute left-1/2 top-7 z-20 hidden w-72 -translate-x-1/2 rounded-md border border-border bg-popover px-3 py-2 text-xs leading-5 text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
-                  Tamper-evident security history for sign-ins, Circle activity, device events, admin actions, and system changes.
+                <span className="relative inline-flex cursor-help align-middle">
+                  <Info size={14} style={{ color: activeTab === id ? "var(--primary)" : "var(--muted-foreground)", marginLeft: "4px" }} />
+                  <span className="pointer-events-none absolute right-0 top-7 z-20 hidden w-72 rounded-md border border-border bg-popover px-3 py-2 text-left text-xs leading-5 text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+                    Audit logs keep a secure history of important activity, such as sign-ins, device changes, Circle activity, and admin actions.
+                  </span>
                 </span>
               ) : null}
             </span>

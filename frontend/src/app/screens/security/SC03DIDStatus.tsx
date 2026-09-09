@@ -52,11 +52,30 @@ function CopyButton({ value }: { value: string }) {
   );
 }
 
-function InfoRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+function InfoTooltip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span className="group relative inline-flex align-middle">
+      <span
+        tabIndex={0}
+        role="img"
+        aria-label={label}
+        className="inline-flex h-6 w-6 cursor-help items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+      >
+        <Info size={14} />
+      </span>
+      <span className="pointer-events-none absolute left-0 top-7 z-30 hidden w-[min(22rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs normal-case leading-5 tracking-normal text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+        {children}
+      </span>
+    </span>
+  );
+}
+
+function InfoRow({ label, value, mono = false, tooltip }: { label: string; value: string; mono?: boolean; tooltip?: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4 py-2" style={{ borderBottom: "1px solid var(--border)" }}>
-      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", flexShrink: 0 }}>
+      <span className="inline-flex items-center gap-1.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", flexShrink: 0 }}>
         {label}
+        {tooltip ? <InfoTooltip label={`About ${label}`}>{tooltip}</InfoTooltip> : null}
       </span>
       <div className="flex items-center gap-1 min-w-0">
         <span
@@ -390,12 +409,27 @@ export function SC03DIDStatus() {
         {/* DID Details */}
         {didStatus && (
           <div className="rounded-lg border p-4 flex flex-col" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
-            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>
+            <p className="inline-flex items-center gap-1.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>
               DID DETAILS
+              <InfoTooltip label="About DID details">
+                DID Details show the basic identity information for this Guardian. Each field below has its own help icon for a more specific explanation.
+              </InfoTooltip>
             </p>
-            <InfoRow label="Method" value={`${didStatus.method} v${didStatus.methodVersion}`} />
-            <InfoRow label="DKP Version" value={String(didStatus.currentDkpVersion)} />
-            <InfoRow label="SE050 UID Source" value={didStatus.se050UidSource} />
+            <InfoRow
+              label="Method"
+              value={`${didStatus.method} v${didStatus.methodVersion}`}
+              tooltip="The DID method is the identity format Guardian uses so other systems know how to read and verify this device identity."
+            />
+            <InfoRow
+              label="DKP Version"
+              value={String(didStatus.currentDkpVersion)}
+              tooltip="DKP Version shows which device key version is currently connected to this Guardian identity."
+            />
+            <InfoRow
+              label="SE050 UID Source"
+              value={didStatus.se050UidSource}
+              tooltip="SE050 UID Source shows how Guardian read the secure chip ID used to anchor this device identity in hardware."
+            />
             <InfoRow label="Created" value={formatDate(didStatus.createdAt)} />
             {didStatus.deactivatedAt && (
               <InfoRow label="Deactivated" value={formatDate(didStatus.deactivatedAt)} />
@@ -474,7 +508,12 @@ export function SC03DIDStatus() {
 
             <InfoRow label="Node" value={didDocument.node_name} />
             <InfoRow label="Status" value={didDocument.status} />
-            <InfoRow label="Proof VM" value={didDocument.proof_vm} mono />
+            <InfoRow
+              label="Proof VM"
+              value={didDocument.proof_vm}
+              mono
+              tooltip="Proof VM is the verification method used to check the DID document signature and confirm it was signed by the expected Guardian key."
+            />
 
             <div className="grid grid-cols-3 gap-2 pt-1">
               <button

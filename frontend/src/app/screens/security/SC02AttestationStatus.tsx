@@ -22,6 +22,24 @@ import { type AttestationResult } from "../../data/mockData";
 import { useAttestationResults } from "../../hooks/useApiData";
 import { toast } from "sonner";
 
+function InfoTooltip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span className="group relative inline-flex align-middle">
+      <span
+        tabIndex={0}
+        role="img"
+        aria-label={label}
+        className="inline-flex h-6 w-6 cursor-help items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+      >
+        <Info size={14} />
+      </span>
+      <span className="pointer-events-none absolute left-0 top-7 z-30 hidden w-[min(22rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs normal-case leading-5 tracking-normal text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+        {children}
+      </span>
+    </span>
+  );
+}
+
 // Status Badge
 function StatusBadge({ result }: { result: "success" | "failed" }) {
   const isSuccess = result === "success";
@@ -121,6 +139,7 @@ function AttestationCard({ attestation, isLatest }: { attestation: AttestationRe
             )}
           </div>
           <p
+            className="inline-flex items-center gap-1.5"
             style={{
               fontFamily: "Inter, sans-serif",
               fontSize: "var(--text-xs)",
@@ -360,6 +379,9 @@ export function SC02AttestationStatus() {
             }}
           >
             Attestation Results
+            <InfoTooltip label="About Attestation Results">
+              Attestation Results show each peer verification check. A passed result means the peer proved its identity and expected security state; a failed result needs review before trusting that peer.
+            </InfoTooltip>
           </p>
           <div className="flex flex-col gap-3">
             {attestationResults.map((att: AttestationResult, index: number) => (

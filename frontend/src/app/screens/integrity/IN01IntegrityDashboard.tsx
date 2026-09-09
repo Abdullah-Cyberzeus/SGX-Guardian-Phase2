@@ -33,6 +33,24 @@ import { isAdminRole } from "../../utils/authorization";
 
 type TabId = "status" | "baseline" | "history";
 
+function InfoTooltip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span className="group relative inline-flex align-middle">
+      <span
+        tabIndex={0}
+        role="img"
+        aria-label={label}
+        className="inline-flex h-6 w-6 cursor-help items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+      >
+        <Info size={14} />
+      </span>
+      <span className="pointer-events-none absolute left-0 top-7 z-50 hidden w-[min(22rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs normal-case leading-5 tracking-normal text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+        {children}
+      </span>
+    </span>
+  );
+}
+
 // PCR Register Icons
 const PCR_ICONS: Record<number, typeof Cpu> = {
   0: Terminal,      // BIOS/Bootloader
@@ -732,6 +750,7 @@ export function IN01IntegrityDashboard() {
         )}
         <div className="flex-1">
           <p
+            className="inline-flex items-center gap-1.5"
             style={{
               fontFamily: "Inter, sans-serif",
               fontSize: "var(--text-sm)",
@@ -740,6 +759,9 @@ export function IN01IntegrityDashboard() {
             }}
           >
             {allMatch ? "Device Integrity Verified" : noBaseline ? "No Baseline Established" : "Integrity Check Failed"}
+            <InfoTooltip label="About Integrity">
+              Integrity compares this Guardian's current boot measurements with a trusted baseline. If they match, the device is running the expected software and configuration.
+            </InfoTooltip>
           </p>
           <p
             style={{
@@ -788,7 +810,14 @@ export function IN01IntegrityDashboard() {
               }}
             >
               <Icon size={14} />
-              {label}
+              <span className="inline-flex items-center gap-1.5">
+                {label}
+                {id === "status" ? (
+                  <InfoTooltip label="About PCR Status">
+                    PCR Status shows whether the current device measurements match the saved Golden Baseline.
+                  </InfoTooltip>
+                ) : null}
+              </span>
             </button>
           ))}
         </div>
@@ -903,6 +932,7 @@ export function IN01IntegrityDashboard() {
             {/* PCR Registers */}
             <div>
               <p
+                className="inline-flex items-center gap-1.5"
                 style={{
                   fontFamily: "Inter, sans-serif",
                   fontSize: "var(--text-xs)",
@@ -913,6 +943,14 @@ export function IN01IntegrityDashboard() {
                 }}
               >
                 PCR Registers ({pcrRegisters.length})
+                <InfoTooltip label="About PCR Registers">
+                  <span className="block">PCR registers are protected measurement slots. Guardian uses them to remember what started and changed during boot.</span>
+                  <span className="mt-2 block"><strong>PCR0:</strong> BIOS or bootloader measurement.</span>
+                  <span className="mt-1 block"><strong>PCR1:</strong> firmware or device-tree measurement.</span>
+                  <span className="mt-1 block"><strong>PCR2:</strong> kernel measurement.</span>
+                  <span className="mt-1 block"><strong>PCR3:</strong> root filesystem measurement.</span>
+                  <span className="mt-1 block"><strong>PCR4:</strong> configuration measurement.</span>
+                </InfoTooltip>
               </p>
               <div className="flex flex-col gap-3">
                 {pcrRegisters.map((register: PCRRegister) => (
@@ -975,6 +1013,7 @@ export function IN01IntegrityDashboard() {
                       </div>
                       <div>
                         <p
+                          className="inline-flex items-center gap-1.5"
                           style={{
                             fontFamily: "Inter, sans-serif",
                             fontSize: "var(--text-base)",
@@ -983,6 +1022,9 @@ export function IN01IntegrityDashboard() {
                           }}
                         >
                           Golden Baseline
+                          <InfoTooltip label="About Golden Baseline">
+                            Golden Baseline is the trusted set of PCR values captured when the Guardian is known to be in a good state. Future checks compare against it.
+                          </InfoTooltip>
                         </p>
                         <p
                           style={{
@@ -999,7 +1041,7 @@ export function IN01IntegrityDashboard() {
                   </div>
 
                   <div
-                    className="rounded-lg border overflow-hidden"
+                    className="rounded-lg border overflow-visible"
                     style={{
                       backgroundColor: "var(--background)",
                       borderColor: "var(--border)",
@@ -1018,6 +1060,7 @@ export function IN01IntegrityDashboard() {
                         }}
                       >
                         <span
+                          className="inline-flex items-center gap-1.5"
                           style={{
                             fontFamily: "Inter, sans-serif",
                             fontSize: "var(--text-xs)",
@@ -1025,6 +1068,11 @@ export function IN01IntegrityDashboard() {
                           }}
                         >
                           {label}
+                          {label === "Registers" ? (
+                            <InfoTooltip label="About baseline registers">
+                              Registers shows how many PCR measurements are saved in the Golden Baseline. This page expects PCR0 through PCR4.
+                            </InfoTooltip>
+                          ) : null}
                         </span>
                         <span
                           style={{
@@ -1058,6 +1106,7 @@ export function IN01IntegrityDashboard() {
                 {/* Baseline PCR Values */}
                 <div>
                   <p
+                    className="inline-flex items-center gap-1.5"
                     style={{
                       fontFamily: "Inter, sans-serif",
                       fontSize: "var(--text-xs)",
@@ -1068,6 +1117,14 @@ export function IN01IntegrityDashboard() {
                     }}
                   >
                     Baseline Values
+                    <InfoTooltip label="About Baseline Values">
+                      <span className="block">Baseline Values are the trusted PCR hashes Guardian compares against current readings.</span>
+                      <span className="mt-2 block"><strong>PCR0:</strong> expected BIOS or bootloader value.</span>
+                      <span className="mt-1 block"><strong>PCR1:</strong> expected firmware or device-tree value.</span>
+                      <span className="mt-1 block"><strong>PCR2:</strong> expected kernel value.</span>
+                      <span className="mt-1 block"><strong>PCR3:</strong> expected root filesystem value.</span>
+                      <span className="mt-1 block"><strong>PCR4:</strong> expected configuration value.</span>
+                    </InfoTooltip>
                   </p>
                   <div
                     className="rounded-lg border overflow-hidden"

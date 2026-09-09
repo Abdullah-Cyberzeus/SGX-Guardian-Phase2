@@ -10,6 +10,7 @@ import {
   FileJson,
   Fingerprint,
   Hash,
+  Info,
   Loader2,
   RefreshCw,
   Search,
@@ -66,6 +67,24 @@ const SECURITY_CRITICAL_REASONS = new Set<CrlReason>([
   "stolen",
   "policy_violation",
 ]);
+
+function InfoTooltip({ label, placement = "right", children }: { label: string; placement?: "left" | "right"; children: ReactNode }) {
+  return (
+    <span className="group relative inline-flex align-middle">
+      <span
+        tabIndex={0}
+        role="img"
+        aria-label={label}
+        className="inline-flex h-6 w-6 cursor-help items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+      >
+        <Info size={14} />
+      </span>
+      <span className={`pointer-events-none absolute top-7 z-30 hidden w-[min(22rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs normal-case leading-5 tracking-normal text-popover-foreground shadow-lg group-hover:block group-focus-within:block ${placement === "right" ? "left-0" : "right-0"}`}>
+        {children}
+      </span>
+    </span>
+  );
+}
 
 const severityRank: Record<string, number> = {
   critical: 4,
@@ -404,7 +423,7 @@ function MonoValue({
   );
 }
 
-function SectionLabel({ children }: { children: string }) {
+function SectionLabel({ children }: { children: ReactNode }) {
   return (
     <p
       style={{
@@ -591,7 +610,14 @@ function SummaryCards({
         >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p style={{ fontSize: "var(--text-xs)", color: "var(--muted-foreground)", fontFamily: "Inter, sans-serif" }}>{label}</p>
+              <p className="flex items-center gap-1.5" style={{ fontSize: "var(--text-xs)", color: "var(--muted-foreground)", fontFamily: "Inter, sans-serif" }}>
+                {label}
+                {label === "CRL Sequence" ? (
+                  <InfoTooltip label="About CRL sequence">
+                    CRL Sequence is the version number for the revocation list. It goes up whenever the list changes, so Guardians can tell which copy is newest.
+                  </InfoTooltip>
+                ) : null}
+              </p>
               <p
                 className="truncate"
                 style={{
@@ -852,7 +878,12 @@ function DidCheckPanel({
           )}
         </div>
         <ActionButton icon={ShieldCheck} onClick={onCheck} disabled={!didIsValid} loading={checking}>
-          Check DID
+          <span className="inline-flex items-center gap-1.5">
+            Check DID
+            <InfoTooltip label="About DID check" placement="left">
+              DID check tells you whether a Guardian identity is currently revoked and should no longer be trusted.
+            </InfoTooltip>
+          </span>
         </ActionButton>
       </div>
 
@@ -1153,7 +1184,14 @@ function EntriesSection({
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <ActionButton icon={Eye} variant="muted" onClick={() => onView(entry)}>View</ActionButton>
-                  <ActionButton icon={ShieldCheck} variant="secondary" onClick={() => onCheckDid(entry.revoked_did)}>Check DID</ActionButton>
+                  <ActionButton icon={ShieldCheck} variant="secondary" onClick={() => onCheckDid(entry.revoked_did)}>
+                    <span className="inline-flex items-center gap-1.5">
+                      Check DID
+                      <InfoTooltip label="About DID check" placement="left">
+                        DID check tells you whether this Guardian identity is currently revoked and should no longer be trusted.
+                      </InfoTooltip>
+                    </span>
+                  </ActionButton>
                   {canAttemptUnrevoke && <ActionButton icon={ShieldX} variant="danger" onClick={() => onUnrevoke(entry)}>Unrevoke</ActionButton>}
                 </div>
               </div>
@@ -1248,7 +1286,14 @@ function IntegrityPanel({
     <div className="rounded-lg border p-4 flex flex-col gap-4" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <SectionLabel>MERKLE ROOT</SectionLabel>
+          <SectionLabel>
+            <span className="inline-flex items-center gap-1.5">
+              MERKLE ROOT
+              <InfoTooltip label="About Merkle root" placement="left">
+                The Merkle root is a short fingerprint of the whole CRL. If any revocation entry changes, this value changes too, helping Guardian detect tampering.
+              </InfoTooltip>
+            </span>
+          </SectionLabel>
           <p style={{ marginTop: "4px", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
             CRL sequence and integrity root
           </p>
@@ -1340,7 +1385,14 @@ function EntryLookupPanel({
   return (
     <div className="rounded-lg border p-4 flex flex-col gap-3" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
       <div>
-        <SectionLabel>ENTRY LOOKUP</SectionLabel>
+        <SectionLabel>
+          <span className="inline-flex items-center gap-1.5">
+            ENTRY LOOKUP
+            <InfoTooltip label="About entry lookup" placement="left">
+              Entry Lookup lets you paste a CRL entry ID from logs or CLI output and quickly find the matching revocation details.
+            </InfoTooltip>
+          </span>
+        </SectionLabel>
         <p style={{ marginTop: "4px", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
           Paste a CRL entry UUID from logs or CLI output.
         </p>
@@ -1526,7 +1578,12 @@ function EntryDrawer({
 
         <div className="p-4 flex flex-wrap gap-2" style={{ borderTop: "1px solid var(--border)" }}>
           <ActionButton icon={ShieldCheck} variant="secondary" onClick={() => onCheckDid(entry.revoked_did)}>
-            Check DID
+            <span className="inline-flex items-center gap-1.5">
+              Check DID
+              <InfoTooltip label="About DID check" placement="left">
+                DID check tells you whether this Guardian identity is currently revoked and should no longer be trusted.
+              </InfoTooltip>
+            </span>
           </ActionButton>
           <ActionButton icon={Copy} variant="muted" onClick={() => copyValue(json, "Entry JSON copied")}>
             Copy Entry JSON
@@ -2211,7 +2268,14 @@ export function SC05CRLStatus() {
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1180px] p-4 md:p-6 flex flex-col gap-4">
           <div className="flex rounded-lg border border-border bg-card p-1" role="tablist" aria-label="CRL sections">
-            <button type="button" role="tab" aria-selected={activeSection === "crl"} onClick={() => setActiveSection("crl")} className={`flex-1 rounded-md px-4 py-2.5 text-sm font-semibold transition ${activeSection === "crl" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>CRL entries</button>
+            <button type="button" role="tab" aria-selected={activeSection === "crl"} onClick={() => setActiveSection("crl")} className={`flex-1 rounded-md px-4 py-2.5 text-sm font-semibold transition ${activeSection === "crl" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+              <span className="inline-flex items-center justify-center gap-1.5">
+                CRL entries
+                <InfoTooltip label="About CRL entries">
+                  CRL entries are revoked Guardian identities. Devices on this list should not be trusted until an owner removes the revocation.
+                </InfoTooltip>
+              </span>
+            </button>
             <button type="button" role="tab" aria-selected={activeSection === "gossip"} onClick={() => setActiveSection("gossip")} className={`flex-1 rounded-md px-4 py-2.5 text-sm font-semibold transition ${activeSection === "gossip" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>Gossip</button>
             <button type="button" role="tab" aria-selected={activeSection === "emergency"} onClick={() => setActiveSection("emergency")} className={`flex-1 rounded-md px-4 py-2.5 text-sm font-semibold transition ${activeSection === "emergency" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>Emergency revocation</button>
             <button type="button" role="tab" aria-selected={activeSection === "offline"} onClick={() => setActiveSection("offline")} className={`flex-1 rounded-md px-4 py-2.5 text-sm font-semibold transition ${activeSection === "offline" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>Offline revocation</button>
