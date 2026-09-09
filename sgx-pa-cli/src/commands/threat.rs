@@ -368,9 +368,10 @@ mod tests {
 
     #[test]
     fn flush_threat_chain_fails_deterministically_when_nft_is_not_installed() {
-        // `nft` genuinely doesn't exist in this sandbox (confirmed separately), so this
-        // reaches the `ErrorKind::NotFound` mapping rather than a real firewall mutation.
-        let err = flush_threat_chain().expect_err("nft is not installed");
+        // Use a deliberately nonexistent executable so the result does not depend on
+        // whether the host (for example, a GitHub runner) happens to provide `nft`.
+        let err = flush_threat_chain_with("sgx-guardian-test-missing-nft")
+            .expect_err("the injected nft executable is not installed");
         assert!(err.to_string().contains("nft binary not found"));
     }
 
@@ -409,7 +410,11 @@ fn ensure_threat_table() -> Result<()> {
 }
 
 fn flush_threat_chain() -> Result<()> {
-    let status = std::process::Command::new("nft")
+    flush_threat_chain_with("nft")
+}
+
+fn flush_threat_chain_with(program: &str) -> Result<()> {
+    let status = std::process::Command::new(program)
         .args(["flush", "chain", "inet", "sgx_threat", "input"])
         .status();
 

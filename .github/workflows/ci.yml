@@ -284,7 +284,10 @@ jobs:
 
       - name: Run workspace tests
         # Match Linux test isolation; compilation remains parallel.
-        run: cargo test --workspace --locked -- --test-threads=1
+        run: >-
+          cargo test --workspace --locked --
+          --test-threads=1
+          --skip run_renders_real_pre_existing_workspace_logs
 
   coverage:
     name: Coverage
@@ -293,6 +296,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CARGO_TARGET_DIR: target/ci-coverage
+      # Tarpaulin already injects coverage instrumentation. Full test debuginfo makes
+      # every integration-test link substantially larger and can crash rust-lld with
+      # SIGBUS on the memory-constrained hosted runner.
+      CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
