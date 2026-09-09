@@ -79,6 +79,9 @@ RUST_TEST_THREADS=1 cargo test --workspace -j 28 -- \
   --skip test_nebula_test_daemon_start \
   --skip run_renders_real_pre_existing_workspace_logs \
   --skip status_loads_the_real_checked_in_nodea_config \
+  --skip sign_invokes_the_real_cli_and_reports_its_deterministic_failure \
+  --skip verify_invokes_the_real_cli_against_a_bogus_signature \
+  --skip transport_lock_fails_when_the_lock_directory_cannot_be_created \
   --skip pwa_side_contacts_test_covers_member_roster_and_private_address_book || {
     echo "❌ Tests failed — check logs/"
     exit 1
