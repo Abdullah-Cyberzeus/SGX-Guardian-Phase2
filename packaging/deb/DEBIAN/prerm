@@ -3,6 +3,13 @@ set -e
 
 echo "SGX Guardian pre-remove started..."
 
+# Do not leave legacy network capabilities on the system nmap binary.
+if command -v nmap >/dev/null && command -v setcap >/dev/null; then
+    if ! setcap -r "$(command -v nmap)" 2>/dev/null; then
+        echo "NOTICE: nmap had no removable file capabilities." >&2
+    fi
+fi
+
 if command -v systemctl >/dev/null; then
     systemctl stop sgx-guardian.service >/dev/null || true
     systemctl disable sgx-guardian.service >/dev/null || true
