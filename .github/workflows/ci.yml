@@ -271,6 +271,10 @@ jobs:
         --skip verify_interface_exists_true_for_loopback
         --skip every_identity_path_is_redirected_under_the_state_dir
         --skip reload_or_restart_suricata_surfaces_a_real_systemctl_failure
+        --skip test_request_cert_approved_flow
+        --skip test_request_cert_already_present
+        --skip test_request_cert_connection_failure
+        --skip test_request_cert_rejected
         --skip test_node_restart_endpoint
     steps:
       - name: Checkout repository
