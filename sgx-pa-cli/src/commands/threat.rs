@@ -337,6 +337,7 @@ mod tests {
         assert!(err.to_string().contains("not a valid IP address"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn cmd_block_with_a_valid_ip_fails_on_the_unwritable_state_directory() {
         // /var/lib/sgx-guardian/threat can't be created without root, so save_block_records

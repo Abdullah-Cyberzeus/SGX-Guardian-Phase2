@@ -298,13 +298,9 @@ jobs:
     env:
       CARGO_TARGET_DIR: target/ci-coverage
       # Tarpaulin already injects coverage instrumentation. Full test debuginfo makes
-      # every integration-test link substantially larger and can crash rust-lld with
-      # SIGBUS on the memory-constrained hosted runner.
+      # every integration-test binary substantially larger and can exhaust the hosted
+      # runner's disk while the complete suite is being linked.
       CARGO_PROFILE_TEST_DEBUG: "0"
-      # Rust 1.97's bundled rust-lld crashes with SIGBUS while linking different large
-      # Tarpaulin test binaries on hosted runners, even with one linker thread. Use the
-      # runner's GNU BFD linker for this coverage-only workload.
-      RUSTFLAGS: "-C linker=cc -C link-arg=-fuse-ld=bfd"
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -329,6 +325,9 @@ jobs:
             rust@${{ env.RUST_TOOLCHAIN }}
             cargo-tarpaulin@0.37.0
 
+      - name: Install LLVM coverage tools
+        run: rustup component add llvm-tools-preview --toolchain "$RUST_TOOLCHAIN"
+
       - name: Install pinned protoc
         run: bash .github/scripts/install-protoc.sh "$PROTOC_VERSION"
 
@@ -347,7 +346,7 @@ jobs:
         # The suite mutates shared process and environment state. Keep serialization
         # until a follow-up benchmark proves those tests have been isolated.
         run: |
-          cargo tarpaulin --out Xml -- \
+          cargo tarpaulin --engine llvm --locked --out Xml -- \
             --test-threads 1 \
             --skip run_renders_real_pre_existing_workspace_logs
 
