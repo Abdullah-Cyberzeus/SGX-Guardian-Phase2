@@ -1,4 +1,0 @@
-Backup created before requested merge
-Branch: integrated_calls_messages_pwa
-Commit: 5a668d6552f24aaae1d4d227a00d066df03bb7e1
-Note: Git refs are read-only in this environment, so a backup branch ref could not be created.
