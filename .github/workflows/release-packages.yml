@@ -13,6 +13,7 @@ concurrency:
 
 env:
   PROTOC_VERSION: "35.1"
+  NODE_VERSION: "24"
   CARGO_INCREMENTAL: "0"
   PACKAGING_IMAGE: "rust@sha256:77fac8b98f9f46062bb680b6d25d5bcaabfc400143952ebc572e924bcbedc3fa"
 
@@ -42,6 +43,19 @@ jobs:
           fetch-depth: 0
           path: release
           persist-credentials: false
+
+      - name: Install pinned Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: release/frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: release/frontend
+        run: |
+          npm ci
+          npm run build
 
       - name: Validate release provenance
         id: release
