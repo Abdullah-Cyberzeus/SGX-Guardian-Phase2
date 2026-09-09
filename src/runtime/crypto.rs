@@ -4,6 +4,7 @@ use ring::aead::{
 };
 use ring::rand::{SecureRandom, SystemRandom};
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 fn get_key_file() -> String {
@@ -29,8 +30,11 @@ fn get_or_create_key() -> Result<[u8; 32], String> {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create key directory: {}", e))?;
     }
     fs::write(get_key_file(), key).map_err(|e| format!("Failed to write key file: {}", e))?;
-    fs::set_permissions(get_key_file(), fs::Permissions::from_mode(0o600))
-        .map_err(|e| format!("Failed to set key file permissions: {}", e))?;
+    #[cfg(unix)]
+    {
+        fs::set_permissions(get_key_file(), fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("Failed to set key file permissions: {}", e))?;
+    }
     Ok(key)
 }
 

@@ -124,7 +124,7 @@ impl PaKey {
     }
 }
 
-fn atomic_write(path: &str, bytes: &[u8], mode: u32) -> Result<()> {
+fn atomic_write(path: &str, bytes: &[u8], _mode: u32) -> Result<()> {
     use std::io::Write;
 
     let tmp = format!("{}.tmp", path);
@@ -138,7 +138,7 @@ fn atomic_write(path: &str, bytes: &[u8], mode: u32) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(_mode));
     }
     Ok(())
 }

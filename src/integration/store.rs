@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+#[cfg(unix)]
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -158,7 +158,8 @@ jobs:
           key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-tests-v1-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run unit tests
-        run: cargo test --verbose
+        # Tests mutate shared process environment and filesystem paths.
+        run: cargo test --verbose -- --test-threads=1
 
       - name: Save Cargo registry
         if: steps.cargo-registry.outputs.cache-hit != 'true'
@@ -220,7 +221,8 @@ jobs:
           key: ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-tests-v1-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run workspace tests
-        run: cargo test --workspace --locked
+        # Match Linux test isolation; compilation remains parallel.
+        run: cargo test --workspace --locked -- --test-threads=1
 
   coverage:
     name: Coverage
