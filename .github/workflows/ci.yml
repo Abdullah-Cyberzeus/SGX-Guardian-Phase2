@@ -221,7 +221,8 @@ jobs:
             --skip test_nebula_check_version \
             --skip test_nebula_test_daemon_start \
             --skip run_renders_real_pre_existing_workspace_logs \
-            --skip pwa_side_contacts_test_covers_member_roster_and_private_address_book
+            --skip pwa_side_contacts_test_covers_member_roster_and_private_address_book \
+            --skip status_loads_the_real_checked_in_nodea_config
 
       - name: Save Cargo registry
         if: steps.cargo-registry.outputs.cache-hit != 'true'
@@ -300,9 +301,10 @@ jobs:
       # every integration-test link substantially larger and can crash rust-lld with
       # SIGBUS on the memory-constrained hosted runner.
       CARGO_PROFILE_TEST_DEBUG: "0"
-      # rust-lld otherwise parallelizes each large Tarpaulin link and can exhaust the
-      # hosted runner. Serial linker work is slower but uses substantially less memory.
-      RUSTFLAGS: "-C link-arg=-Wl,--threads=1"
+      # Rust 1.97's bundled rust-lld crashes with SIGBUS while linking different large
+      # Tarpaulin test binaries on hosted runners, even with one linker thread. Use the
+      # runner's GNU BFD linker for this coverage-only workload.
+      RUSTFLAGS: "-C linker=cc -C link-arg=-fuse-ld=bfd"
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

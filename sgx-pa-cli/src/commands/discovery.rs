@@ -1018,6 +1018,7 @@ exclude: []
         schedule_show().expect("schedule_show succeeds with defaults");
     }
 
+    #[cfg(unix)]
     #[test]
     fn approve_mac_fails_on_the_unwritable_state_directory() {
         // ensure_dirs() tries /etc/sgx-guardian/discovery first, which can't be created
@@ -1029,6 +1030,7 @@ exclude: []
         assert!(result.is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn schedule_set_fails_on_the_unwritable_state_directory() {
         let result = schedule_set(ScheduleSetArgs {
@@ -1042,6 +1044,7 @@ exclude: []
         assert!(result.is_err());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn scan_now_fails_on_the_unwritable_state_directory() {
         let result = super::scan_now(super::ScanArgs {
