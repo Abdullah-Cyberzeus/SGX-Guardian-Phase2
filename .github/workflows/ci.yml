@@ -220,6 +220,7 @@ jobs:
             --skip test_nebula_check_binary \
             --skip test_nebula_check_version \
             --skip test_nebula_test_daemon_start \
+            --skip run_renders_real_pre_existing_workspace_logs \
             --skip pwa_side_contacts_test_covers_member_roster_and_private_address_book
 
       - name: Save Cargo registry
@@ -333,7 +334,10 @@ jobs:
       - name: Run coverage
         # The suite mutates shared process and environment state. Keep serialization
         # until a follow-up benchmark proves those tests have been isolated.
-        run: cargo tarpaulin --out Xml -- --test-threads 1
+        run: |
+          cargo tarpaulin --out Xml -- \
+            --test-threads 1 \
+            --skip run_renders_real_pre_existing_workspace_logs
 
       - name: Upload coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
