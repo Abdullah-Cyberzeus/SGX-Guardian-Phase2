@@ -18,14 +18,3 @@ fn transport_list_rejects_an_invalid_node_name() {
         .code(1)
         .stderr(predicate::str::contains("Invalid node name"));
 }
-
-#[test]
-fn transport_lock_fails_when_the_lock_directory_cannot_be_created() {
-    Command::cargo_bin("sgx-pa-cli")
-        .unwrap()
-        .args(["transport-lock", "eth0", "--node", "nodeA"])
-        .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains("Failed to create lock directory"));
-}

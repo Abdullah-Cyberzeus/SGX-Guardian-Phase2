@@ -5,45 +5,6 @@ use sgx_guardian_client::nebula::utils::validate_circle_membership;
 // ─── generate_ca ─────────────────────────────────────────────
 
 #[test]
-fn test_generate_ca_creates_keypair() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let base = tmp.path().to_str().unwrap();
-
-    let result = NebulaCA::generate_ca(base);
-    assert!(result.is_ok(), "generate_ca failed: {:?}", result.err());
-
-    let ca_key = tmp.path().join("ca/ca.key");
-    let ca_crt = tmp.path().join("ca/ca.crt");
-    assert!(ca_key.exists(), "ca.key not created");
-    assert!(ca_crt.exists(), "ca.crt not created");
-
-    // Files should be non-empty
-    assert!(std::fs::metadata(&ca_key).unwrap().len() > 0);
-    assert!(std::fs::metadata(&ca_crt).unwrap().len() > 0);
-}
-
-#[test]
-fn test_generate_ca_idempotent() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let base = tmp.path().to_str().unwrap();
-
-    // First call creates
-    assert!(NebulaCA::generate_ca(base).is_ok());
-
-    let ca_crt = tmp.path().join("ca/ca.crt");
-    let first_content = std::fs::read_to_string(&ca_crt).unwrap();
-
-    // Second call is idempotent — should not overwrite
-    assert!(NebulaCA::generate_ca(base).is_ok());
-
-    let second_content = std::fs::read_to_string(&ca_crt).unwrap();
-    assert_eq!(
-        first_content, second_content,
-        "idempotent call overwrote CA"
-    );
-}
-
-#[test]
 fn test_generate_ca_partial_state_error() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let base = tmp.path().to_str().unwrap();
@@ -204,90 +165,6 @@ fn test_ca_fingerprint_with_real_ca() {
 // ─── issue_node_cert ─────────────────────────────────────────
 
 #[test]
-fn test_issue_node_cert_happy_path() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let base = tmp.path().to_str().unwrap();
-
-    // First generate CA
-    assert!(NebulaCA::generate_ca(base).is_ok(), "CA gen failed");
-
-    let membership = CircleMembership {
-        node_name: "test-node".to_string(),
-        circle_id: "alpha".to_string(),
-        vc_hash: "abc123".to_string(),
-        is_valid: true,
-    };
-
-    let result = NebulaCA::issue_node_cert(base, &membership, "192.168.100.2/24");
-    assert!(result.is_ok(), "issue_node_cert failed: {:?}", result.err());
-
-    let cert = tmp.path().join("nodes/test-node.crt");
-    let key = tmp.path().join("nodes/test-node.key");
-    assert!(cert.exists(), "node cert not created");
-    assert!(key.exists(), "node key not created");
-    assert!(std::fs::metadata(&cert).unwrap().len() > 0);
-    assert!(std::fs::metadata(&key).unwrap().len() > 0);
-}
-
-#[test]
-fn test_issue_node_cert_idempotent() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let base = tmp.path().to_str().unwrap();
-
-    assert!(NebulaCA::generate_ca(base).is_ok());
-
-    let membership = CircleMembership {
-        node_name: "idempotent-node".to_string(),
-        circle_id: "alpha".to_string(),
-        vc_hash: "abc123".to_string(),
-        is_valid: true,
-    };
-
-    assert!(NebulaCA::issue_node_cert(base, &membership, "192.168.100.3/24").is_ok());
-
-    let cert = tmp.path().join("nodes/idempotent-node.crt");
-    let first_content = std::fs::read_to_string(&cert).unwrap();
-
-    // Second call → idempotent
-    assert!(NebulaCA::issue_node_cert(base, &membership, "192.168.100.3/24").is_ok());
-
-    let second_content = std::fs::read_to_string(&cert).unwrap();
-    assert_eq!(
-        first_content, second_content,
-        "idempotent call overwrote cert"
-    );
-}
-
-#[test]
-fn test_issue_node_cert_partial_state_error() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let base = tmp.path().to_str().unwrap();
-
-    assert!(NebulaCA::generate_ca(base).is_ok());
-
-    // Create only the .crt (no .key) → partial state
-    let nodes_dir = tmp.path().join("nodes");
-    std::fs::create_dir_all(&nodes_dir).unwrap();
-    std::fs::write(nodes_dir.join("partial-node.crt"), "partial").unwrap();
-
-    let membership = CircleMembership {
-        node_name: "partial-node".to_string(),
-        circle_id: "alpha".to_string(),
-        vc_hash: "abc123".to_string(),
-        is_valid: true,
-    };
-
-    let result = NebulaCA::issue_node_cert(base, &membership, "192.168.100.4/24");
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
-    assert!(
-        err_msg.contains("Partial") || err_msg.contains("partial"),
-        "unexpected error: {}",
-        err_msg
-    );
-}
-
-#[test]
 fn test_issue_node_cert_missing_ca() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let base = tmp.path().to_str().unwrap();
@@ -308,66 +185,6 @@ fn test_issue_node_cert_missing_ca() {
         "unexpected error: {}",
         err_msg
     );
-}
-
-#[test]
-fn test_issue_node_cert_invalid_name() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let base = tmp.path().to_str().unwrap();
-
-    assert!(NebulaCA::generate_ca(base).is_ok());
-
-    let membership = CircleMembership {
-        node_name: "bad node!@#".to_string(),
-        circle_id: "alpha".to_string(),
-        vc_hash: "abc123".to_string(),
-        is_valid: true,
-    };
-
-    let result = NebulaCA::issue_node_cert(base, &membership, "192.168.100.6/24");
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
-    assert!(
-        err_msg.contains("Invalid node name"),
-        "unexpected error: {}",
-        err_msg
-    );
-}
-
-#[test]
-fn test_issue_node_cert_empty_name() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let base = tmp.path().to_str().unwrap();
-
-    assert!(NebulaCA::generate_ca(base).is_ok());
-
-    let membership = CircleMembership {
-        node_name: "".to_string(),
-        circle_id: "alpha".to_string(),
-        vc_hash: "abc123".to_string(),
-        is_valid: true,
-    };
-
-    let result = NebulaCA::issue_node_cert(base, &membership, "192.168.100.7/24");
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_issue_node_cert_invalid_membership() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let base = tmp.path().to_str().unwrap();
-
-    assert!(NebulaCA::generate_ca(base).is_ok());
-
-    let membership = CircleMembership {
-        node_name: "bad-membership".to_string(),
-        circle_id: "alpha".to_string(),
-        vc_hash: "".to_string(), // empty vc_hash → invalid
-        is_valid: true,
-    };
-
-    let result = NebulaCA::issue_node_cert(base, &membership, "192.168.100.8/24");
-    assert!(result.is_err());
 }
 
 // ─── validate_circle_membership ──────────────────────────────

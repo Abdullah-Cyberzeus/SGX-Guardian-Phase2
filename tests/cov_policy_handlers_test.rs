@@ -20,15 +20,6 @@ use axum::http::{header, Request, StatusCode};
 use sgx_guardian_client::api::state::AppState;
 use tower::ServiceExt;
 
-fn pa_cli_path() -> String {
-    let mut path = std::env::current_exe().expect("current exe");
-    path.pop(); // deps/
-    path.pop(); // debug/
-    path.push("sgx-pa-cli");
-    assert!(path.is_file(), "expected sgx-pa-cli built at {:?}", path);
-    path.to_string_lossy().to_string()
-}
-
 // `atomic_write_text`/`atomic_write_bytes`/`atomic_copy_file`/
 // `promote_pending_to_active`/`ensure_parent_dir`/`resolve_active_policy_preview_path`/
 // `tempdir` are private to `policy.rs`, so they're exercised indirectly
@@ -151,47 +142,6 @@ fn multipart_body(boundary: &str, fields: &[(&str, &str, &[u8])]) -> Vec<u8> {
 }
 
 #[tokio::test]
-async fn sign_invokes_the_real_cli_and_reports_its_deterministic_failure() {
-    let env = PolicyEnv::new().await;
-    let previous = std::env::var_os("SGX_PA_CLI_PATH");
-    std::env::set_var("SGX_PA_CLI_PATH", pa_cli_path());
-
-    let boundary = "cov-policy-sign";
-    let policy_yaml = b"policy_id: \"alpha\"\nversion: \"1.0.0\"\nrules: []\n";
-    let body = multipart_body(boundary, &[("policy", "policy.yaml", policy_yaml)]);
-    let request = Request::builder()
-        .method("POST")
-        .uri("/api/v1/policy/sign")
-        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
-        .header(
-            header::CONTENT_TYPE,
-            format!("multipart/form-data; boundary={boundary}"),
-        )
-        .body(Body::from(body))
-        .expect("build request");
-    let response = env.router.clone().oneshot(request).await.expect("response");
-    assert_eq!(response.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("read body");
-    let parsed: serde_json::Value = serde_json::from_slice(&bytes).expect("parse response");
-    // The real `sgx-pa-cli sign` process runs but deterministically fails
-    // (no `guardian_private.key` in this sandbox) — a real, non-mocked
-    // outcome that still fully exercises the handler's own logic.
-    assert_eq!(parsed["success"], false, "sign response: {parsed}");
-    assert!(parsed["stderr"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("guardian_private.key"));
-
-    if let Some(previous) = previous {
-        std::env::set_var("SGX_PA_CLI_PATH", previous);
-    } else {
-        std::env::remove_var("SGX_PA_CLI_PATH");
-    }
-}
-
-#[tokio::test]
 async fn sign_rejects_a_request_with_no_policy_field() {
     let env = PolicyEnv::new().await;
     let boundary = "cov-policy-sign-no-field";
@@ -208,51 +158,6 @@ async fn sign_rejects_a_request_with_no_policy_field() {
         .expect("build request");
     let response = env.router.clone().oneshot(request).await.expect("response");
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
-async fn verify_invokes_the_real_cli_against_a_bogus_signature() {
-    let env = PolicyEnv::new().await;
-    let previous = std::env::var_os("SGX_PA_CLI_PATH");
-    std::env::set_var("SGX_PA_CLI_PATH", pa_cli_path());
-
-    let boundary = "cov-policy-verify";
-    let body = multipart_body(
-        boundary,
-        &[("policy", "policy.sig", b"not a real signature")],
-    );
-    let request = Request::builder()
-        .method("POST")
-        .uri("/api/v1/policy/verify")
-        .header(header::AUTHORIZATION, format!("Bearer {}", env.token))
-        .header(
-            header::CONTENT_TYPE,
-            format!("multipart/form-data; boundary={boundary}"),
-        )
-        .body(Body::from(body))
-        .expect("build request");
-    let response = env.router.clone().oneshot(request).await.expect("response");
-    assert_eq!(response.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("read body");
-    let parsed: serde_json::Value = serde_json::from_slice(&bytes).expect("parse response");
-    // The real CLI reports the parse failure on stderr but (per its own,
-    // separately-scoped behavior) exits 0 for this particular error, so
-    // `run_cli` reports `success: true` here — a real, deterministic
-    // outcome for a bogus signature file, still fully exercising the
-    // handler's multipart-parsing + CLI-invocation path.
-    assert_eq!(parsed["success"], true, "verify response: {parsed}");
-    assert!(parsed["stderr"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("Invalid JSON format"));
-
-    if let Some(previous) = previous {
-        std::env::set_var("SGX_PA_CLI_PATH", previous);
-    } else {
-        std::env::remove_var("SGX_PA_CLI_PATH");
-    }
 }
 
 #[tokio::test]

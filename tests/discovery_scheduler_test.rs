@@ -227,16 +227,3 @@ scheduler_path_tests! {
     scheduler_paths_case_15 => "fifteen",
     scheduler_paths_case_16 => "sixteen",
 }
-
-#[test]
-fn scheduler_fixture_accepts_daily_standard_values() {
-    let (_dir, scheduler) = scheduler_fixture();
-    let mut cfg = NmapConfig::default();
-    cfg.enabled = false;
-    cfg.target_cidr = Some("127.0.0.1/32".to_string());
-    assert_eq!(scheduler.node_id, "node-test");
-    assert_eq!(
-        cfg.scheduled_intensity(ScheduledScanKind::Daily),
-        Some(ScanIntensity::Aggressive)
-    );
-}

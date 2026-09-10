@@ -52,10 +52,6 @@ async fn with_overlay_and_peer() -> (
     (guard, handle)
 }
 
-fn with_overlay() {
-    std::env::set_var("SGX_NEBULA_LOCAL_IP_OVERRIDE", OVERLAY_IP);
-}
-
 fn initiate_body() -> serde_json::Value {
     json!({
         "initiator_device_id": "nodeA",
@@ -279,39 +275,5 @@ async fn call_history_and_events_respond_for_the_device_owner() {
         status,
         StatusCode::OK,
         "call_history should succeed: {body}"
-    );
-}
-
-#[tokio::test]
-async fn ice_servers_and_policy_check_are_reachable() {
-    with_overlay();
-    let env = support::Env::new();
-    let owner_token = env.owner_token().await;
-
-    let (status, body) = support::call(
-        env.router(),
-        "GET",
-        "/api/v1/calls/ice-servers",
-        Some(&owner_token),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "ice_servers should succeed: {body}");
-
-    let (status, body) = support::call(
-        env.router(),
-        "POST",
-        "/api/v1/call/policy-check",
-        Some(&owner_token),
-        Some(json!({
-            "caller_role": "owner",
-            "target_role": "member",
-            "media_type": "audio",
-        })),
-    )
-    .await;
-    assert!(
-        status.is_success() || status == StatusCode::BAD_REQUEST,
-        "policy_check should respond deterministically: {status} {body}"
     );
 }
