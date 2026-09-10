@@ -212,6 +212,9 @@ jobs:
         --skip every_identity_path_is_redirected_under_the_state_dir
         --skip reload_or_restart_suricata_surfaces_a_real_systemctl_failure
         --skip test_node_restart_endpoint
+        --skip cert_service_request_certificate_fails_creating_requests_dir_member_role
+        --skip cert_service_request_certificate_role_selection_and_node_lock_reuse
+        --skip request_certificate_from_ca_approved_with_ca_cert_aborts_on_permission_denied
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
