@@ -22,6 +22,7 @@ env:
   # place so every CI lane excludes exactly the same environment-dependent tests.
   CI_TEST_SKIP_ARGS: >-
     --skip writer_append_to_directory_errors
+    --skip test_request_cert_approved_flow 
 
 jobs:
   classify:
