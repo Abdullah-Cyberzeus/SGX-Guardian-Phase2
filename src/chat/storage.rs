@@ -396,7 +396,47 @@ async fn read_history_file(
 }
 
 fn safe_filename(id: &str) -> String {
+    #[cfg(windows)]
+    let id = format!("conversation-{}", encode_windows_filename(id));
+
     format!("{}.jsonl", id)
+}
+
+/// Encode a conversation identifier as a Windows-safe, reversible filename.
+/// DIDs contain `:`, which Windows rejects in file names. Encoding every byte
+/// outside the portable ASCII set also prevents path separators and reserved
+/// punctuation from escaping the conversation directory.
+#[cfg(any(windows, test))]
+fn encode_windows_filename(id: &str) -> String {
+    let mut encoded = String::with_capacity(id.len());
+    for byte in id.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
+            encoded.push(char::from(byte));
+        } else {
+            use std::fmt::Write;
+            write!(&mut encoded, "%{byte:02X}").expect("writing to String cannot fail");
+        }
+    }
+    encoded
+}
+
+#[cfg(any(windows, test))]
+fn decode_windows_filename(id: &str) -> Option<String> {
+    let bytes = id.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hex = bytes.get(index + 1..index + 3)?;
+            let hex = std::str::from_utf8(hex).ok()?;
+            decoded.push(u8::from_str_radix(hex, 16).ok()?);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
 }
 
 /// Every DID currently keying a stored P2P conversation log, recovered
@@ -416,7 +456,14 @@ pub async fn list_p2p_conversation_ids() -> Vec<String> {
     while let Ok(Some(entry)) = entries.next_entry().await {
         let name = entry.file_name();
         if let Some(id) = name.to_str().and_then(|n| n.strip_suffix(".jsonl")) {
-            ids.push(id.to_string());
+            #[cfg(windows)]
+            let id = id
+                .strip_prefix("conversation-")
+                .and_then(decode_windows_filename)
+                .unwrap_or_else(|| id.to_string());
+            #[cfg(not(windows))]
+            let id = id.to_string();
+            ids.push(id);
         }
     }
     ids
@@ -439,6 +486,14 @@ mod tests {
             status: MessageStatus::Delivered,
             read_by: Vec::new(),
         }
+    }
+
+    #[test]
+    fn windows_filename_encoding_is_safe_and_reversible() {
+        let id = "did:guardian:node/B%peer";
+        let encoded = encode_windows_filename(id);
+        assert_eq!(encoded, "did%3Aguardian%3Anode%2FB%25peer");
+        assert_eq!(decode_windows_filename(&encoded).as_deref(), Some(id));
     }
 
     #[tokio::test]

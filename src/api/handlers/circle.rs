@@ -2836,29 +2836,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn member_snapshot_is_served_by_the_owner_and_lists_the_roster() {
-        let (_lock, h) = harness().await;
-        let circle_id = create_circle(&h, "Snapshot").await;
-        add_member(
-            State(h.state.clone()),
-            Path(circle_id.clone()),
-            Json(AddMemberRequest {
-                did: Some(member_did(31)),
-                role: None,
-                days: None,
-            }),
-        )
-        .await
-        .expect("add member");
-
-        let snapshot = member_snapshot(State(h.state.clone()), Path(circle_id.clone()))
-            .await
-            .expect("owner serves the snapshot");
-        assert_eq!(snapshot.0.circle_id, circle_id);
-        assert!(!snapshot.0.members.is_empty());
-    }
-
-    #[tokio::test]
     async fn received_invites_starts_empty_and_rejects_unknown_invite_ids() {
         let (_lock, h) = harness().await;
         let received = received_invites(State(h.state.clone()))

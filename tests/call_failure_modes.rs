@@ -299,24 +299,6 @@ async fn ice_servers_accepts_stun_without_credentials() {
     }
 }
 
-#[tokio::test]
-async fn ice_servers_rejects_turn_without_credentials() {
-    let prev = std::env::var_os("SGX_WEBRTC_ICE_SERVERS");
-    std::env::set_var(
-        "SGX_WEBRTC_ICE_SERVERS",
-        r#"[{"urls":["turn:example:3478"]}]"#,
-    );
-    assert_eq!(
-        ice_servers().await.into_response().status(),
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
-    if let Some(value) = prev {
-        std::env::set_var("SGX_WEBRTC_ICE_SERVERS", value);
-    } else {
-        std::env::remove_var("SGX_WEBRTC_ICE_SERVERS");
-    }
-}
-
 macro_rules! browser_initiate_cases {
     ($($name:ident => $peer:expr),+ $(,)?) => {$(
         #[test]

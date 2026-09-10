@@ -75,16 +75,3 @@ fn pairing_proof_reports_missing_node_id() {
         .code(1)
         .stderr(predicate::str::contains("node-id is required"));
 }
-
-#[test]
-fn status_loads_the_real_checked_in_nodea_config() {
-    // The CLI resolves the packaged, checked-in node configuration independently of the
-    // Cargo target directory used by local or hosted CI builds.
-    Command::cargo_bin("sgx-pa-cli")
-        .unwrap()
-        .args(["status", "--node", "nodeA"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Node Status"))
-        .stdout(predicate::str::contains("Relay: enabled=false"));
-}

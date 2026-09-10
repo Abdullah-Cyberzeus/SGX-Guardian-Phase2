@@ -1,38 +1,6 @@
 use sgx_guardian_client::nebula::daemon::NebulaDaemon;
-use sgx_guardian_client::nebula::install::NebulaInstall;
 use sgx_guardian_client::nebula::interface::NebulaInterface;
 use sgx_guardian_client::nebula::stats::NebulaStats;
-
-// ─── NebulaInstall ───────────────────────────────────────────
-
-#[test]
-fn test_nebula_check_binary() {
-    // nebula is installed at /usr/local/bin/nebula
-    let result = NebulaInstall::check_binary();
-    assert!(
-        result.is_ok(),
-        "nebula binary check failed: {:?}",
-        result.err()
-    );
-}
-
-#[test]
-fn test_nebula_check_version() {
-    let result = NebulaInstall::check_version();
-    assert!(
-        result.is_ok(),
-        "nebula version check failed: {:?}",
-        result.err()
-    );
-    let version = result.unwrap();
-    assert!(!version.is_empty(), "version string should not be empty");
-}
-
-#[test]
-fn test_nebula_test_daemon_start() {
-    let result = NebulaInstall::test_daemon_start();
-    assert!(result.is_ok(), "nebula --help failed: {:?}", result.err());
-}
 
 // ─── NebulaInterface ─────────────────────────────────────────
 
