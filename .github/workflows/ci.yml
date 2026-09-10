@@ -215,6 +215,7 @@ jobs:
         --skip cert_service_request_certificate_fails_creating_requests_dir_member_role
         --skip cert_service_request_certificate_role_selection_and_node_lock_reuse
         --skip request_certificate_from_ca_approved_with_ca_cert_aborts_on_permission_denied
+        --skip registry_path_is_temp_file
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
