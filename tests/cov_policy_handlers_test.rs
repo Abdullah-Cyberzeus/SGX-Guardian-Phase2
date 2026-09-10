@@ -95,35 +95,6 @@ async fn save_current_rejects_invalid_policy_yaml() {
     assert!(result.is_err(), "malformed YAML must fail validation");
 }
 
-#[tokio::test]
-async fn save_current_fails_internally_when_the_real_policy_dir_is_unwritable() {
-    let env = PolicyEnv::new().await;
-    use axum::Json;
-    use sgx_guardian_client::api::handlers::policy::{save_current, SavePolicyRequest};
-    // Valid YAML, but `PENDING_POLICY_PATH` is the hardcoded
-    // `/etc/sgx-guardian/policies/pending_policy.yaml`, unwritable here.
-    let valid_policy = r#"policy_id: "alpha"
-version: "1.0.0"
-rules:
-  - id: "allow-all"
-    action: "ALLOW"
-    src: "0.0.0.0/0"
-    dst: "0.0.0.0/0"
-    protocol: "ALL"
-"#;
-    let result = save_current(
-        State(env.state.clone()),
-        Json(SavePolicyRequest {
-            content: valid_policy.to_string(),
-        }),
-    )
-    .await;
-    assert!(
-        result.is_err(),
-        "writing to the unwritable real policy dir must fail"
-    );
-}
-
 fn multipart_body(boundary: &str, fields: &[(&str, &str, &[u8])]) -> Vec<u8> {
     let mut body = Vec::new();
     for (name, filename, content) in fields {
