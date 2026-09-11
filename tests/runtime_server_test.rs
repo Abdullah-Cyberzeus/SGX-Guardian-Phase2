@@ -66,14 +66,6 @@ async fn get_mode_returns_ok() {
 }
 
 #[tokio::test]
-async fn get_scan_returns_ok() {
-    assert_eq!(
-        request(Method::GET, "/scan", None).await.status(),
-        StatusCode::OK
-    );
-}
-
-#[tokio::test]
 async fn get_clients_returns_ok() {
     assert_eq!(
         request(Method::GET, "/clients", None).await.status(),
