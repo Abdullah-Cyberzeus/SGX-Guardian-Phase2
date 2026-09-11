@@ -105,27 +105,6 @@ impl ValidationResult {
     }
 }
 
-use crate::runtime::models::SavedWifi;
-
-/// Legacy wpa_supplicant settings retained for boards that do not expose a
-/// usable NetworkManager D-Bus service.
-#[derive(Debug, Clone)]
-pub struct WifiClientSettings {
-    pub interface: String,
-    pub networks: Vec<SavedWifi>,
-    pub country: String,
-}
-
-impl Default for WifiClientSettings {
-    fn default() -> Self {
-        Self {
-            interface: "wlan1".to_string(),
-            networks: Vec::new(),
-            country: "US".to_string(),
-        }
-    }
-}
-
 use serde::{Deserialize, Serialize};
 
 /// Represents a scanned Wi-Fi network.

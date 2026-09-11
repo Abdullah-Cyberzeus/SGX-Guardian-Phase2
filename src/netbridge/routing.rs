@@ -821,14 +821,18 @@ mod live_ip_tests {
     }
 
     #[test]
-    fn hotspot_uplink_is_configured_short_circuits_when_policy_routing_is_unsupported() {
+    fn hotspot_uplink_is_configured_checks_for_the_forced_route_when_policy_routing_is_unsupported()
+    {
         let _guard = policy_flag_lock();
         let previous = POLICY_ROUTING_UNSUPPORTED.load(Ordering::SeqCst);
         POLICY_ROUTING_UNSUPPORTED.store(true, Ordering::SeqCst);
-        // On a kernel without policy routing the check reports "configured" so
-        // callers stop trying to reinstall rules that can never exist — and it
-        // does so without consulting the interface at all, hence the bogus name.
-        assert!(RoutingManager::hotspot_uplink_is_configured(
+        // On a kernel without policy routing, `configure_hotspot_uplink` instead
+        // forces a metric-1 default route on the uplink interface (see
+        // `force_main_table_default`), and this check verifies that route is
+        // still present rather than trusting in-memory state alone (another
+        // process could have replaced it). A nonexistent interface can never
+        // carry such a route, so the honest answer here is false.
+        assert!(!RoutingManager::hotspot_uplink_is_configured(
             "10.42.0.0/24",
             MISSING_IFACE
         ));

@@ -1578,35 +1578,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn apply_saved_state_without_restore_flag_resets_idle() {
-        let _env_lock = async_env_lock().await;
-        let dir = TempDir::new().expect("tempdir");
-        let mut config = GuardianConfig::default();
-        config.mode = RuntimeMode::HotspotOnly; // a saved active mode...
-        config.flags.restore_on_boot = false; // ...must still be ignored here
-        write_config(&dir, &config);
-        std::env::set_var("GUARDIAN_CONFIG_FILE", dir.path().join("wifi_config.json"));
-
-        let manager = new_manager();
-        let res = manager.clone().apply_saved_state().await;
-        std::env::remove_var("GUARDIAN_CONFIG_FILE");
-
-        assert!(res.is_ok());
-        assert!(
-            manager.supervisor_task.lock().await.is_none(),
-            "restore disabled must never start a supervisor"
-        );
-        let status = manager.state_machine.get_status().await;
-        assert_eq!(status.state, SystemState::Idle);
-    }
-
-    #[tokio::test]
-    async fn apply_saved_state_off_mode_ignores_restore_flag() {
+    async fn apply_saved_state_always_boots_hotspot_even_when_saved_mode_is_off() {
+        // The hotspot is Guardian's guaranteed local access point: it must come
+        // up on every boot regardless of what mode was last saved, including an
+        // explicit Off. There is no restore_on_boot flag anymore — this is
+        // unconditional.
         let _env_lock = async_env_lock().await;
         let dir = TempDir::new().expect("tempdir");
         let mut config = GuardianConfig::default();
         config.mode = RuntimeMode::Off;
-        config.flags.restore_on_boot = true; // restore is on, but saved mode is already Off
         write_config(&dir, &config);
         std::env::set_var("GUARDIAN_CONFIG_FILE", dir.path().join("wifi_config.json"));
 
@@ -1615,9 +1595,45 @@ mod tests {
         std::env::remove_var("GUARDIAN_CONFIG_FILE");
 
         assert!(res.is_ok());
-        assert!(manager.supervisor_task.lock().await.is_none());
-        let status = manager.state_machine.get_status().await;
-        assert_eq!(status.state, SystemState::Idle);
+        let mut guard = manager.supervisor_task.lock().await;
+        assert!(
+            guard.is_some(),
+            "boot must always start a supervisor targeting HotspotOnly"
+        );
+        if let Some(task) = guard.take() {
+            task.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn config_missing_the_legacy_flags_field_still_loads() {
+        // Regression test: GuardianConfig used to require a `flags` field with
+        // no serde default. A config file saved before that field was removed
+        // (or one written by a client that no longer sends it) must still
+        // deserialize instead of aborting boot before the hotspot ever starts.
+        let _env_lock = async_env_lock().await;
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("wifi_config.json");
+        std::fs::write(
+            &path,
+            r#"{"mode":"DualWifi","hotspot":{"interface":"uap0","ssid":"","password":"","channel":6,"band":null,"client_isolation":false},"uplink":{"interface":"wlan1","networks":[]}}"#,
+        )
+        .expect("write config file without a flags field");
+        std::env::set_var("GUARDIAN_CONFIG_FILE", &path);
+
+        let manager = new_manager();
+        let res = manager.clone().apply_saved_state().await;
+        std::env::remove_var("GUARDIAN_CONFIG_FILE");
+
+        assert!(
+            res.is_ok(),
+            "config without `flags` must still load: {res:?}"
+        );
+        let mut guard = manager.supervisor_task.lock().await;
+        assert!(guard.is_some());
+        if let Some(task) = guard.take() {
+            task.abort();
+        }
     }
 
     #[tokio::test]
@@ -1645,12 +1661,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn apply_saved_state_with_restore_enabled_spawns_supervisor() {
+    async fn apply_saved_state_boots_hotspot_when_saved_mode_was_dual_wifi() {
         let _env_lock = async_env_lock().await;
         let dir = TempDir::new().expect("tempdir");
         let mut config = GuardianConfig::default();
-        config.mode = RuntimeMode::HotspotOnly;
-        config.flags.restore_on_boot = true;
+        config.mode = RuntimeMode::DualWifi;
         write_config(&dir, &config);
         std::env::set_var("GUARDIAN_CONFIG_FILE", dir.path().join("wifi_config.json"));
 
@@ -1660,12 +1675,13 @@ mod tests {
 
         assert!(res.is_ok());
 
-        // A supervisor must have been started to try to reach the saved mode;
-        // abort it immediately so it does not keep retrying past this test.
+        // A supervisor must have been started to try to reach HotspotOnly, not
+        // the saved DualWifi mode; abort it immediately so it does not keep
+        // retrying past this test.
         let mut guard = manager.supervisor_task.lock().await;
         assert!(
             guard.is_some(),
-            "restore_on_boot with a non-Off saved mode must start a supervisor"
+            "boot must always start a supervisor targeting HotspotOnly"
         );
         if let Some(task) = guard.take() {
             task.abort();
