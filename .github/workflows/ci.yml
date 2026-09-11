@@ -329,7 +329,7 @@ jobs:
         # The suite mutates shared process and environment state. Keep serialization
         # until a follow-up benchmark proves those tests have been isolated.
         # Keep the CLI built above: several handler tests invoke that real binary.
-        run: cargo tarpaulin -j 1 --engine llvm --skip-clean --locked --out Xml -- --test-threads 1 $CI_TEST_SKIP_ARGS
+        run: cargo tarpaulin --engine llvm --skip-clean --locked --out Xml -- --test-threads 1 $CI_TEST_SKIP_ARGS
 
       - name: Upload coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
