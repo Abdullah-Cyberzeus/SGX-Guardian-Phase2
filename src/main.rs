@@ -2223,6 +2223,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let ca_host = resolve_ca_ip_from_config_inner().await;
                     if let Ok(km_init) = KeyManager::load_or_generate(&node_key_path_for_init_pub) {
                         for attempt in 1..=5 {
+                            if let Err(e) = sgx_guardian_client::did::doc_distribution::pull_and_apply_aggregate(&ca_host).await {
+                                tracing::warn!(
+                                    "Boot DID doc pre-publish CA sync failed (attempt {}): {} — CA may be unreachable, publishing from local cache",
+                                    attempt,
+                                    e
+                                );
+                            }
                             if let Err(e) = refresh_and_publish_did_doc_inner(
                                 &node_for_init_pub,
                                 &km_init,
