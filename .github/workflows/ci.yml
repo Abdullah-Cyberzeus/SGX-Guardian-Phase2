@@ -120,6 +120,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CARGO_TARGET_DIR: target/ci-tests
+      # Keep test binaries small and prevent rust-lld from exhausting runner
+      # resources in its own parallel linker threads.
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      RUSTFLAGS: "-C link-arg=-Wl,--threads=1"
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -274,6 +278,9 @@ jobs:
       # every integration-test binary substantially larger and can exhaust the hosted
       # runner's disk while the complete suite is being linked.
       CARGO_PROFILE_TEST_DEBUG: "0"
+      # Cargo's -j flag does not limit LLD's internal parallelism. The hosted runner
+      # has crashed inside llvm::parallelFor while linking these large test binaries.
+      RUSTFLAGS: "-C link-arg=-Wl,--threads=1"
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
