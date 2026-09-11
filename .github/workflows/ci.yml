@@ -265,7 +265,7 @@ jobs:
       - name: Run workspace tests
         # Match Linux test isolation; compilation remains parallel.
         shell: bash
-        run: cargo test --workspace --locked -j 2 -- --test-threads=1 $CI_TEST_SKIP_ARGS $WINDOWS_TEST_SKIP_ARGS
+        run: cargo test --workspace --locked -j 28 -- --test-threads=1 $CI_TEST_SKIP_ARGS $WINDOWS_TEST_SKIP_ARGS
 
   coverage:
     name: Coverage
