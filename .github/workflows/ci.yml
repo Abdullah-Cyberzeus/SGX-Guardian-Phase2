@@ -278,9 +278,9 @@ jobs:
       # every integration-test binary substantially larger and can exhaust the hosted
       # runner's disk while the complete suite is being linked.
       CARGO_PROFILE_TEST_DEBUG: "0"
-      # Cargo's -j flag does not limit LLD's internal parallelism. The hosted runner
-      # has crashed inside llvm::parallelFor while linking these large test binaries.
-      RUSTFLAGS: "-C link-arg=-Wl,--threads=1"
+      # Rust 1.97.1's bundled LLD crashes with SIGBUS while linking instrumented test
+      # binaries, even when serialized. Use the system GNU BFD linker for coverage.
+      RUSTFLAGS: "-C linker=gcc -C link-arg=-fuse-ld=bfd"
       # Override the repository-wide single-job default without allowing coverage
       # compilation to consume every hosted-runner core at once.
       CARGO_BUILD_JOBS: "1"
