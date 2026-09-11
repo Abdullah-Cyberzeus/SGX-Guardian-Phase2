@@ -2,7 +2,6 @@ import { useState, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { PageHeader } from "../../components/PageHeader";
 import {
-  ShieldCheck,
   Clock,
   RefreshCw,
   Loader2,
@@ -15,7 +14,7 @@ import {
 } from "lucide-react";
 import { useCircles, usePeers } from "../../hooks/useApiData";
 import { useContactNames } from "../../contexts/ContactNameContext";
-import { peerService, type Peer } from "../../services/peerService";
+import { type Peer } from "../../services/peerService";
 import { toast } from "sonner";
 
 type FilterTab = "all" | "verified" | "pending" | "failed";
@@ -74,12 +73,8 @@ function StatusBadge({ status }: { status: Peer["status"] }) {
 
 function PeerCard({
   peer,
-  onAttest,
-  attesting,
 }: {
   peer: Peer;
-  onAttest: (id: string) => void;
-  attesting: boolean;
 }) {
   const { displayForDid } = useContactNames();
   const [expanded, setExpanded] = useState(false);
@@ -149,24 +144,6 @@ function PeerCard({
             <span style={{ fontSize: "var(--text-xs)", color: peer.online ? "var(--chart-2)" : "var(--muted-foreground)" }}>
               · {peer.online ? "Online" : "Offline"}
             </span>
-            <span
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: "var(--text-xs)",
-                color: "var(--muted-foreground)",
-              }}
-            >
-              ·
-            </span>
-            <span
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: "var(--text-xs)",
-                color: "var(--muted-foreground)",
-              }}
-            >
-              {peer.attestationCount} attestations
-            </span>
           </div>
         </div>
 
@@ -181,11 +158,10 @@ function PeerCard({
           {/* Details grid */}
           <div className="flex flex-col gap-2">
             {[
-              { label: "Peer ID", value: displayForDid(peer.did, peer.peerId), mono: true },
+              { label: "Peer ID", value: peer.peerId, mono: true },
               { label: "IP Address", value: peer.ip, mono: true },
               { label: "Port", value: String(peer.port), mono: true },
               { label: "Last Seen", value: new Date(peer.lastSeen).toLocaleString(), mono: false },
-              { label: "Attestations", value: String(peer.attestationCount), mono: false },
             ].map(({ label, value, mono }) => (
               <div key={label} className="flex items-center justify-between">
                 <span
@@ -215,7 +191,7 @@ function PeerCard({
           <div className="flex gap-2">
             <button
               onClick={copyPeerId}
-              className="flex-1 flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80"
+              className="w-full flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80"
               style={{
                 height: "40px",
                 backgroundColor: "var(--muted)",
@@ -231,33 +207,6 @@ function PeerCard({
               {copied ? <Check size={14} /> : <Copy size={14} />}
               {copied ? "Copied" : "Copy Peer ID"}
             </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onAttest(peer.id);
-              }}
-              disabled={attesting}
-              className="flex-1 flex items-center justify-center gap-2 rounded-lg transition-opacity active:opacity-80"
-              style={{
-                height: "40px",
-                backgroundColor: "var(--primary)",
-                color: "var(--primary-foreground)",
-                border: "none",
-                cursor: attesting ? "not-allowed" : "pointer",
-                borderRadius: "var(--radius)",
-                fontFamily: "Inter, sans-serif",
-                fontSize: "var(--text-xs)",
-                fontWeight: "var(--font-weight-semibold)",
-                opacity: attesting ? 0.7 : 1,
-              }}
-            >
-              {attesting ? (
-                <RefreshCw size={14} style={{ animation: "spin 1s linear infinite" }} />
-              ) : (
-                <ShieldCheck size={14} />
-              )}
-              {attesting ? "Attesting..." : "Attest"}
-            </button>
           </div>
         </div>
       )}
@@ -270,7 +219,6 @@ export function NW03PeersList() {
   const { data: peersData, loading, source, refetch } = usePeers();
   const { data: circlesData } = useCircles();
   const [filter, setFilter] = useState<FilterTab>("all");
-  const [attestingId, setAttestingId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const peers: Peer[] = useMemo(() => {
@@ -303,18 +251,6 @@ export function NW03PeersList() {
     if (verifiedTimestamps.length === 0) return null;
     return formatVerifiedAgo(new Date(Math.max(...verifiedTimestamps)).toISOString());
   }, [peers]);
-
-  const handleAttest = async (peerId: string) => {
-    setAttestingId(peerId);
-    try {
-      await peerService.attest(peerId);
-      toast.success("Attestation initiated", { description: `Peer ${peerId} attestation started` });
-    } catch {
-      toast.error("Attestation failed", { description: "Could not initiate attestation" });
-    } finally {
-      setTimeout(() => setAttestingId(null), 1200);
-    }
-  };
 
   const handleRefreshAll = async () => {
     setIsRefreshing(true);
@@ -495,8 +431,6 @@ export function NW03PeersList() {
               <PeerCard
                 key={peer.id}
                 peer={peer}
-                onAttest={handleAttest}
-                attesting={attestingId === peer.id}
               />
             ))
           )}

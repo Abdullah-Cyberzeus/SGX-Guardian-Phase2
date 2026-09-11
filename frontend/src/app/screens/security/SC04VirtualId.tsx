@@ -272,6 +272,7 @@ function CurrentVidCard() {
           <Fingerprint size={18} style={{ color: "var(--primary)" }} />
           <div>
             <div
+              className="inline-flex items-center gap-1.5"
               style={{
                 fontFamily: "Inter, sans-serif",
                 fontSize: "var(--text-sm)",
@@ -280,6 +281,10 @@ function CurrentVidCard() {
               }}
             >
               Current VirtualID
+              <InfoTooltip label="About VirtualID">
+                <span className="block">VirtualID is a session-bound identity fingerprint for this Guardian.</span>
+                <span className="mt-1 block">It is derived from the DID, DKP, PCR state, policy, and one-time nonces, so it changes when those inputs change.</span>
+              </InfoTooltip>
             </div>
             <div
               style={{
@@ -309,9 +314,6 @@ function CurrentVidCard() {
             <RefreshCw size={11} />
             Refresh
           </button>
-          <InfoTooltip label="About nonce refresh">
-            Nonce refresh asks Guardian for the latest one-time session values. This helps keep the Virtual ID fresh so old session data cannot be reused.
-          </InfoTooltip>
         </div>
       </div>
 

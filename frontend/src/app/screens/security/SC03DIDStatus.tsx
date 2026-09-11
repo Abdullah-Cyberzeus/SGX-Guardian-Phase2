@@ -182,7 +182,6 @@ export function SC03DIDStatus() {
   const [showRaw, setShowRaw] = useState(false);
   const [rawDoc, setRawDoc] = useState<DIDDocumentRaw | null>(null);
   const [rawDocTitle, setRawDocTitle] = useState<string>("");
-  const [rawInitialView, setRawInitialView] = useState<"structured" | "raw">("structured");
   const [loadingRaw, setLoadingRaw] = useState(false);
 
   const [verifying, setVerifying] = useState(false);
@@ -210,8 +209,6 @@ export function SC03DIDStatus() {
       const raw = await didService.getDocumentRaw();
       setRawDoc(raw);
       setRawDocTitle("Local DID Document");
-      // The "Raw" button opens straight to the Raw JSON tab.
-      setRawInitialView("raw");
       setShowRaw(true);
     } catch (err) {
       toast.error("Failed to load DID Document", {
@@ -228,8 +225,6 @@ export function SC03DIDStatus() {
       const raw = await didService.getDocumentPeer(peer.did);
       setRawDoc(raw);
       setRawDocTitle(`Peer: ${peer.node_name}`);
-      // Peer rows open the structured summary first.
-      setRawInitialView("structured");
       setShowRaw(true);
     } catch (err) {
       toast.error("Failed to load peer DID Document", {
@@ -764,7 +759,7 @@ export function SC03DIDStatus() {
       </div>
 
       {showRaw && rawDoc && (
-        <RawDocumentModal title={rawDocTitle} doc={rawDoc} initialView={rawInitialView} onClose={() => setShowRaw(false)} />
+        <RawDocumentModal title={rawDocTitle} doc={rawDoc} onClose={() => setShowRaw(false)} />
       )}
 
       {showPublish && (
@@ -931,16 +926,13 @@ function RawDocumentModal({
   title,
   doc,
   onClose,
-  initialView = "structured",
 }: {
   title: string;
   doc: DIDDocumentRaw;
   onClose: () => void;
-  initialView?: "structured" | "raw";
 }) {
   const json = JSON.stringify(doc, null, 2);
   const [copied, setCopied] = useState(false);
-  const [view, setView] = useState<"structured" | "raw">(initialView);
   const handleCopy = () => {
     navigator.clipboard.writeText(json);
     setCopied(true);
@@ -997,201 +989,160 @@ function RawDocumentModal({
           </button>
         </div>
 
-        {/* View switcher */}
-        <div className="px-5 pb-3">
-          <div className="flex p-1 rounded-lg" style={{ backgroundColor: "var(--muted)" }}>
-            {([
-              { id: "structured" as const, label: "Document", icon: FileText },
-              { id: "raw" as const, label: "Raw JSON", icon: FileJson },
-            ]).map(({ id, label, icon: Icon }) => (
-              <button
-                key={id}
-                onClick={() => setView(id)}
-                className="flex-1 flex items-center justify-center gap-1.5"
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: "6px",
-                  backgroundColor: view === id ? "var(--card)" : "transparent",
-                  color: view === id ? "var(--foreground)" : "var(--muted-foreground)",
-                  border: view === id ? "1px solid var(--border)" : "none",
-                  fontFamily: "Inter, sans-serif",
-                  fontSize: "var(--text-xs)",
-                  fontWeight: view === id ? "var(--font-weight-semibold)" : "var(--font-weight-normal)",
-                  cursor: "pointer",
-                }}
-              >
-                <Icon size={12} />
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* Body */}
         <div className="overflow-auto px-5 pb-3" style={{ flex: 1, minHeight: 0 }}>
-          {view === "structured" ? (
-            <div className="flex flex-col gap-3">
-              <DocSection icon={Fingerprint} title="Identity">
-                <DocRow label="DID" value={doc.id} monoBlock />
-                <DocRow label="Controller" value={doc.controller} monoBlock />
-                <DocRow label="Node" value={doc["sgx:nodeName"]} />
-                <DocRow label="Method Spec" value={`v${doc["sgx:methodSpecVersion"]}`} />
-                <DocRow label="Created" value={formatDocDate(doc["sgx:created"])} />
-                <DocRow label="Updated" value={formatDocDate(doc["sgx:updated"])} />
+          <div className="flex flex-col gap-3">
+            <DocSection icon={Fingerprint} title="Identity">
+              <DocRow label="DID" value={doc.id} monoBlock />
+              <DocRow label="Controller" value={doc.controller} monoBlock />
+              <DocRow label="Node" value={doc["sgx:nodeName"]} />
+              <DocRow label="Method Spec" value={`v${doc["sgx:methodSpecVersion"]}`} />
+              <DocRow label="Created" value={formatDocDate(doc["sgx:created"])} />
+              <DocRow label="Updated" value={formatDocDate(doc["sgx:updated"])} />
+            </DocSection>
+
+            {doc["@context"]?.length > 0 && (
+              <DocSection icon={Link2} title="Context" count={doc["@context"].length}>
+                <div className="flex flex-wrap gap-1.5">
+                  {doc["@context"].map((ctx, i) => (
+                    <span
+                      key={`${ctx}-${i}`}
+                      style={{
+                        padding: "3px 8px",
+                        borderRadius: "999px",
+                        backgroundColor: "var(--background)",
+                        border: "1px solid var(--border)",
+                        fontFamily: "JetBrains Mono, monospace",
+                        fontSize: "10px",
+                        color: "var(--foreground)",
+                        wordBreak: "break-all",
+                      }}
+                    >
+                      {ctx}
+                    </span>
+                  ))}
+                </div>
               </DocSection>
+            )}
 
-              {doc["@context"]?.length > 0 && (
-                <DocSection icon={Link2} title="Context" count={doc["@context"].length}>
-                  <div className="flex flex-wrap gap-1.5">
-                    {doc["@context"].map((ctx, i) => (
-                      <span
-                        key={`${ctx}-${i}`}
-                        style={{
-                          padding: "3px 8px",
-                          borderRadius: "999px",
-                          backgroundColor: "var(--background)",
-                          border: "1px solid var(--border)",
-                          fontFamily: "JetBrains Mono, monospace",
-                          fontSize: "10px",
-                          color: "var(--foreground)",
-                          wordBreak: "break-all",
-                        }}
-                      >
-                        {ctx}
-                      </span>
-                    ))}
-                  </div>
-                </DocSection>
-              )}
+            <DocSection icon={Key} title="Verification Methods" count={doc.verificationMethod?.length ?? 0}>
+              {(doc.verificationMethod ?? []).map(vm => (
+                <div
+                  key={vm.id}
+                  className="rounded-md p-2 flex flex-col gap-1"
+                  style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}
+                >
+                  <DocRow label="ID" value={vm.id} mono />
+                  <DocRow label="Type" value={vm.type} />
+                  <DocRow label="Curve" value={`${vm.publicKeyJwk.kty} / ${vm.publicKeyJwk.crv}`} />
+                  <DocRow label="Key ID" value={vm.publicKeyJwk.kid} mono />
+                </div>
+              ))}
+            </DocSection>
 
-              <DocSection icon={Key} title="Verification Methods" count={doc.verificationMethod?.length ?? 0}>
-                {(doc.verificationMethod ?? []).map(vm => (
+            {revoked.length > 0 && (
+              <DocSection icon={ShieldOff} title="Revoked Verification Methods" count={revoked.length}>
+                {revoked.map(rv => (
                   <div
-                    key={vm.id}
+                    key={rv.id}
                     className="rounded-md p-2 flex flex-col gap-1"
-                    style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}
+                    style={{
+                      backgroundColor: "color-mix(in srgb, var(--destructive) 8%, transparent)",
+                      border: "1px solid color-mix(in srgb, var(--destructive) 20%, transparent)",
+                    }}
                   >
-                    <DocRow label="ID" value={vm.id} mono />
-                    <DocRow label="Type" value={vm.type} />
-                    <DocRow label="Curve" value={`${vm.publicKeyJwk.kty} / ${vm.publicKeyJwk.crv}`} />
-                    <DocRow label="Key ID" value={vm.publicKeyJwk.kid} mono />
+                    <DocRow label="ID" value={rv.id} mono />
+                    <DocRow label="Reason" value={rv.reason} />
+                    <DocRow label="Revoked At" value={formatDocDate(rv.revokedAt)} />
                   </div>
                 ))}
               </DocSection>
+            )}
 
-              {revoked.length > 0 && (
-                <DocSection icon={ShieldOff} title="Revoked Verification Methods" count={revoked.length}>
-                  {revoked.map(rv => (
-                    <div
-                      key={rv.id}
-                      className="rounded-md p-2 flex flex-col gap-1"
-                      style={{
-                        backgroundColor: "color-mix(in srgb, var(--destructive) 8%, transparent)",
-                        border: "1px solid color-mix(in srgb, var(--destructive) 20%, transparent)",
-                      }}
-                    >
-                      <DocRow label="ID" value={rv.id} mono />
-                      <DocRow label="Reason" value={rv.reason} />
-                      <DocRow label="Revoked At" value={formatDocDate(rv.revokedAt)} />
+            {(doc.authentication?.length > 0 || doc.assertionMethod?.length > 0) && (
+              <DocSection icon={ShieldCheck} title="Key Purposes">
+                {doc.authentication?.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
+                      Authentication
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {doc.authentication.map(ref => (
+                        <span
+                          key={`auth-${ref}`}
+                          style={{
+                            padding: "3px 8px",
+                            borderRadius: "6px",
+                            backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)",
+                            border: "1px solid color-mix(in srgb, var(--primary) 22%, transparent)",
+                            color: "var(--primary)",
+                            fontFamily: "JetBrains Mono, monospace",
+                            fontSize: "10px",
+                            wordBreak: "break-all",
+                          }}
+                        >
+                          {ref}
+                        </span>
+                      ))}
                     </div>
-                  ))}
-                </DocSection>
-              )}
+                  </div>
+                )}
+                {doc.assertionMethod?.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
+                      Assertion
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {doc.assertionMethod.map(ref => (
+                        <span
+                          key={`asrt-${ref}`}
+                          style={{
+                            padding: "3px 8px",
+                            borderRadius: "6px",
+                            backgroundColor: "color-mix(in srgb, var(--chart-2) 10%, transparent)",
+                            border: "1px solid color-mix(in srgb, var(--chart-2) 22%, transparent)",
+                            color: "var(--chart-2)",
+                            fontFamily: "JetBrains Mono, monospace",
+                            fontSize: "10px",
+                            wordBreak: "break-all",
+                          }}
+                        >
+                          {ref}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </DocSection>
+            )}
 
-              {(doc.authentication?.length > 0 || doc.assertionMethod?.length > 0) && (
-                <DocSection icon={ShieldCheck} title="Key Purposes">
-                  {doc.authentication?.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
-                        Authentication
-                      </span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {doc.authentication.map(ref => (
-                          <span
-                            key={`auth-${ref}`}
-                            style={{
-                              padding: "3px 8px",
-                              borderRadius: "6px",
-                              backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)",
-                              border: "1px solid color-mix(in srgb, var(--primary) 22%, transparent)",
-                              color: "var(--primary)",
-                              fontFamily: "JetBrains Mono, monospace",
-                              fontSize: "10px",
-                              wordBreak: "break-all",
-                            }}
-                          >
-                            {ref}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {doc.assertionMethod?.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
-                        Assertion
-                      </span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {doc.assertionMethod.map(ref => (
-                          <span
-                            key={`asrt-${ref}`}
-                            style={{
-                              padding: "3px 8px",
-                              borderRadius: "6px",
-                              backgroundColor: "color-mix(in srgb, var(--chart-2) 10%, transparent)",
-                              border: "1px solid color-mix(in srgb, var(--chart-2) 22%, transparent)",
-                              color: "var(--chart-2)",
-                              fontFamily: "JetBrains Mono, monospace",
-                              fontSize: "10px",
-                              wordBreak: "break-all",
-                            }}
-                          >
-                            {ref}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </DocSection>
-              )}
+            {(doc.service?.length ?? 0) > 0 && (
+              <DocSection icon={Globe} title="Services" count={doc.service.length}>
+                {doc.service.map(svc => (
+                  <div
+                    key={svc.id}
+                    className="rounded-md p-2 flex flex-col gap-1"
+                    style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}
+                  >
+                    <DocRow label="ID" value={svc.id} mono />
+                    <DocRow label="Type" value={svc.type} />
+                    <DocRow label="Endpoint" value={svc.serviceEndpoint} mono />
+                  </div>
+                ))}
+              </DocSection>
+            )}
 
-              {(doc.service?.length ?? 0) > 0 && (
-                <DocSection icon={Globe} title="Services" count={doc.service.length}>
-                  {doc.service.map(svc => (
-                    <div
-                      key={svc.id}
-                      className="rounded-md p-2 flex flex-col gap-1"
-                      style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}
-                    >
-                      <DocRow label="ID" value={svc.id} mono />
-                      <DocRow label="Type" value={svc.type} />
-                      <DocRow label="Endpoint" value={svc.serviceEndpoint} mono />
-                    </div>
-                  ))}
-                </DocSection>
-              )}
-
-              {doc.proof && (
-                <DocSection icon={Lock} title="Proof">
-                  <DocRow label="Type" value={doc.proof.type} />
-                  <DocRow label="Cryptosuite" value={doc.proof.cryptosuite} />
-                  <DocRow label="Purpose" value={doc.proof.proofPurpose} />
-                  <DocRow label="Created" value={formatDocDate(doc.proof.created)} />
-                  <DocRow label="Verification Method" value={doc.proof.verificationMethod} monoBlock />
-                  <DocRow label="Proof Value" value={doc.proof.proofValue} monoBlock />
-                </DocSection>
-              )}
-            </div>
-          ) : (
-            <div
-              className="rounded-lg p-3"
-              style={{ backgroundColor: "var(--muted)", border: "1px solid var(--border)" }}
-            >
-              <pre style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px", color: "var(--foreground)", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>
-                {json}
-              </pre>
-            </div>
-          )}
+            {doc.proof && (
+              <DocSection icon={Lock} title="Proof">
+                <DocRow label="Type" value={doc.proof.type} />
+                <DocRow label="Cryptosuite" value={doc.proof.cryptosuite} />
+                <DocRow label="Purpose" value={doc.proof.proofPurpose} />
+                <DocRow label="Created" value={formatDocDate(doc.proof.created)} />
+                <DocRow label="Verification Method" value={doc.proof.verificationMethod} monoBlock />
+                <DocRow label="Proof Value" value={doc.proof.proofValue} monoBlock />
+              </DocSection>
+            )}
+          </div>
         </div>
 
         {/* Footer */}

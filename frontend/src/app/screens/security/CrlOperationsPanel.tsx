@@ -70,6 +70,33 @@ function displayValue(value: unknown): string {
   return String(value);
 }
 
+function fieldLabel(key: string): string {
+  if (key === "ttl") return "TTL (hops)";
+  return key.replaceAll("_", " ");
+}
+
+function FieldLabel({ fieldKey }: { fieldKey: string }) {
+  const label = fieldLabel(fieldKey);
+  if (fieldKey !== "ttl") return <>{label}</>;
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span>{label}</span>
+      <InfoTooltip label="About TTL hops">
+        <span className="block">TTL is the emergency notice relay limit, measured in hops.</span>
+        <span className="mt-1 block">Each peer re-broadcast consumes one hop; 0 means the notice is not relayed further.</span>
+      </InfoTooltip>
+    </span>
+  );
+}
+
+function displayFieldValue(key: string, value: unknown): string {
+  if (key === "ttl" && typeof value === "number") {
+    return `${value} ${value === 1 ? "hop" : "hops"}`;
+  }
+  return displayValue(value);
+}
+
 function itemTitle(item: Record<string, unknown>, fallback: string) {
   return displayValue(item.revoked_did ?? item.did ?? item.title ?? item.id ?? item.entry_id ?? fallback);
 }
@@ -85,7 +112,7 @@ function ItemCards({ data, keys, emptyTitle, emptyMessage, itemLabel }: { data: 
     const did = String(item.revoked_did ?? item.did ?? "");
     return <article key={String(item.id ?? item.entry_id ?? item.did ?? index)} className="rounded-lg border border-border bg-background/60 p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{itemLabel} {index + 1}</p><h3 className="mt-1 break-all text-sm font-semibold" title={did}>{displayForDid(did, itemTitle(item, `${itemLabel} ${index + 1}`))}</h3></div><CheckCircle2 size={17} className="shrink-0 text-primary" /></div>
-      {fields.length > 0 && <dl className="mt-3 grid gap-2">{fields.map(([key, value]) => <div key={key} className="flex items-start justify-between gap-4 border-t border-border/60 pt-2 text-xs"><dt className="shrink-0 capitalize text-muted-foreground">{key.replaceAll("_", " ")}</dt><dd className="break-all text-right font-medium">{displayValue(value)}</dd></div>)}</dl>}
+      {fields.length > 0 && <dl className="mt-3 grid gap-2">{fields.map(([key, value]) => <div key={key} className="flex items-start justify-between gap-4 border-t border-border/60 pt-2 text-xs"><dt className="shrink-0 capitalize text-muted-foreground"><FieldLabel fieldKey={key} /></dt><dd className="break-all text-right font-medium">{displayFieldValue(key, value)}</dd></div>)}</dl>}
     </article>;
   })}</div>;
 }
@@ -93,7 +120,7 @@ function ItemCards({ data, keys, emptyTitle, emptyMessage, itemLabel }: { data: 
 function Summary({ data }: { data: CrlOperationalResponse | null }) {
   if (!data) return <p className="text-sm text-muted-foreground">No status has been loaded.</p>;
   const metrics = Object.entries(data).filter(([, value]) => ["string", "number", "boolean"].includes(typeof value)).slice(0, 8);
-  return metrics.length ? <dl className="grid gap-2 sm:grid-cols-2">{metrics.map(([key, value]) => <div key={key} className="rounded-md border border-border bg-background/60 p-3"><dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{key.replaceAll("_", " ")}</dt><dd className="mt-1 break-words text-sm font-medium">{String(value)}</dd></div>)}</dl> : <pre className="max-h-64 overflow-auto rounded-md bg-background p-3 text-xs">{JSON.stringify(data, null, 2)}</pre>;
+  return metrics.length ? <dl className="grid gap-2 sm:grid-cols-2">{metrics.map(([key, value]) => <div key={key} className="rounded-md border border-border bg-background/60 p-3"><dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"><FieldLabel fieldKey={key} /></dt><dd className="mt-1 break-words text-sm font-medium">{displayFieldValue(key, value)}</dd></div>)}</dl> : <pre className="max-h-64 overflow-auto rounded-md bg-background p-3 text-xs">{JSON.stringify(data, null, 2)}</pre>;
 }
 
 function MetricsGrid({ items }: { items: Metric[] }) {
