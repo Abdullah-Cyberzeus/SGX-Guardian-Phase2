@@ -170,7 +170,7 @@ jobs:
         # Tests mutate shared process environment and filesystem paths.
         env:
           RUST_TEST_THREADS: "1"
-        run: cargo test --workspace -j 1 -- --test-threads=1 $CI_TEST_SKIP_ARGS
+        run: cargo test --workspace --locked -j 2 -- --test-threads=1 $CI_TEST_SKIP_ARGS
 
       - name: Save Cargo registry
         if: steps.cargo-registry.outputs.cache-hit != 'true'
@@ -265,7 +265,7 @@ jobs:
       - name: Run workspace tests
         # Match Linux test isolation; compilation remains parallel.
         shell: bash
-        run: cargo test --workspace --locked -- --test-threads=1 $CI_TEST_SKIP_ARGS $WINDOWS_TEST_SKIP_ARGS
+        run: cargo test --workspace --locked -j 2 -- --test-threads=1 $CI_TEST_SKIP_ARGS $WINDOWS_TEST_SKIP_ARGS
 
   coverage:
     name: Coverage
@@ -281,9 +281,17 @@ jobs:
       # Cargo's -j flag does not limit LLD's internal parallelism. The hosted runner
       # has crashed inside llvm::parallelFor while linking these large test binaries.
       RUSTFLAGS: "-C link-arg=-Wl,--threads=1"
+      # Override the repository-wide single-job default without allowing coverage
+      # compilation to consume every hosted-runner core at once.
+      CARGO_BUILD_JOBS: "2"
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Reclaim disk space for instrumented test binaries
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h /
 
       - name: Install pinned Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -329,7 +337,7 @@ jobs:
         # The suite mutates shared process and environment state. Keep serialization
         # until a follow-up benchmark proves those tests have been isolated.
         # Keep the CLI built above: several handler tests invoke that real binary.
-        run: cargo tarpaulin --engine llvm --skip-clean --locked --out Xml -- --test-threads 1 $CI_TEST_SKIP_ARGS
+        run: cargo tarpaulin --no-dead-code --engine llvm --skip-clean --locked --out Xml -- --test-threads 1 $CI_TEST_SKIP_ARGS
 
       - name: Upload coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
