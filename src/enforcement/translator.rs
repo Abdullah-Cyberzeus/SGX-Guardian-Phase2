@@ -190,9 +190,10 @@ fn is_ap_interface(iface: &str) -> bool {
     iface.starts_with("ap") || iface.starts_with("uap") || iface == "wlan2" || iface == "wlan3"
 }
 
-/// Helper to check if an interface is an uplink interface (starts with eth, or wlan0/wlan1)
+/// Helper to check if an interface is an uplink interface (Ethernet, either
+/// Wi-Fi radio, or cellular).
 fn is_uplink_interface(iface: &str) -> bool {
-    iface == "wlan0" || iface == "wlan1" || iface.starts_with("eth")
+    iface == "wlan0" || iface == "wlan1" || iface == "wwan0" || iface.starts_with("eth")
 }
 
 #[cfg(test)]

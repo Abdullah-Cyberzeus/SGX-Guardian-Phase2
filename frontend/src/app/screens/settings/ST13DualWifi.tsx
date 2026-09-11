@@ -75,10 +75,10 @@ function stateTone(state: string) {
   return { color: "var(--muted-foreground)", background: "var(--muted)" };
 }
 
-function SignalBars({ dbm }: { dbm: number }) {
-  const strength = dbm > -55 ? 4 : dbm > -65 ? 3 : dbm > -75 ? 2 : 1;
+function SignalBars({ percent }: { percent: number }) {
+  const strength = percent >= 75 ? 4 : percent >= 50 ? 3 : percent >= 25 ? 2 : 1;
   return (
-    <div className="flex h-4 items-end gap-0.5" aria-label={`${dbm} dBm`}>
+    <div className="flex h-4 items-end gap-0.5" aria-label={`${percent}% signal`}>
       {[1, 2, 3, 4].map((bar) => (
         <span
           key={bar}
@@ -119,7 +119,6 @@ export function ST13DualWifi() {
   const [band, setBand] = useState<WifiBand>("2.4GHz");
   const [channel, setChannel] = useState(6);
   const [clientIsolation, setClientIsolation] = useState(true);
-  const [restoreOnBoot, setRestoreOnBoot] = useState(true);
 
   const [networks, setNetworks] = useState<ScannedNetwork[]>([]);
   const [selectedNetworkKey, setSelectedNetworkKey] = useState<string | null>(null);
@@ -130,7 +129,7 @@ export function ST13DualWifi() {
   const [clientsLoading, setClientsLoading] = useState(false);
 
   const selectedNetwork = useMemo(
-    () => networks.find((network) => (network.bssid || network.ssid) === selectedNetworkKey) ?? null,
+    () => networks.find((network) => network.ssid === selectedNetworkKey) ?? null,
     [networks, selectedNetworkKey],
   );
   const showHotspot = selectedMode === "dual" || selectedMode === "hotspot_only";
@@ -144,7 +143,6 @@ export function ST13DualWifi() {
       setHotspotSsid(data.module1.ssid || "SGX_Hotspot");
       setChannel(data.module1.channel || 6);
       setBand(data.module1.channel >= 30 ? "5GHz" : "2.4GHz");
-      setRestoreOnBoot(data.mode !== "off" && data.mode !== "hotspot_only");
     }
   }, []);
 
@@ -196,10 +194,14 @@ export function ST13DualWifi() {
     setScanning(true);
     try {
       const response = await wifiService.scanNetworks();
-      const unique = response.networks.filter(
-        (network, index, all) => all.findIndex((item) => (item.bssid || item.ssid) === (network.bssid || network.ssid)) === index,
+      // Collapse every band/BSSID variant of the same network name down to one
+      // entry (its strongest signal) — users pick a Wi-Fi network by name, not
+      // by which physical radio/BSSID happens to answer a given scan.
+      const bySignal = [...response.networks].sort((a, b) => b.signal_percent - a.signal_percent);
+      const unique = bySignal.filter(
+        (network, index, all) => all.findIndex((item) => item.ssid === network.ssid) === index,
       );
-      setNetworks(unique.sort((a, b) => b.signal_dbm - a.signal_dbm));
+      setNetworks(unique);
       toast.success(unique.length ? `Found ${unique.length} Wi-Fi network${unique.length === 1 ? "" : "s"}` : "Scan completed; no networks found");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Wi-Fi scan failed");
@@ -228,7 +230,6 @@ export function ST13DualWifi() {
   function buildPayload(): WifiModePayload {
     return {
       mode: MODE_REQUEST[selectedMode],
-      flags: { restore_on_boot: selectedMode === "off" ? false : restoreOnBoot },
       hotspot: showHotspot
         ? {
             interface: "uap0",
@@ -241,8 +242,11 @@ export function ST13DualWifi() {
         : { interface: "uap0", ssid: "", password: "", channel: 1, band: "2.4GHz", client_isolation: false },
       uplink: {
         interface: "wlan1",
+        // SSID-only, no BSSID pin: lets NetworkManager associate with whichever
+        // AP is actually live right now instead of a specific scan-result BSSID
+        // that can go stale between scan and connect.
         networks: showUplink && selectedNetwork
-          ? [{ ssid: selectedNetwork.ssid, bssid: selectedNetwork.bssid || null, password: uplinkPassword }]
+          ? [{ ssid: selectedNetwork.ssid, bssid: null, password: uplinkPassword }]
           : [],
       },
     };
@@ -383,20 +387,14 @@ export function ST13DualWifi() {
               {networks.length === 0 ? <p className="py-6 text-center text-xs text-muted-foreground">Scan to select an upstream access point.</p> : (
                 <div className="mt-3 max-h-64 divide-y overflow-y-auto rounded-lg border">
                   {networks.map((network) => {
-                    const key = network.bssid || network.ssid;
+                    const key = network.ssid;
                     const active = key === selectedNetworkKey;
-                    return <button key={key} onClick={() => { setSelectedNetworkKey(key); setUplinkPassword(""); }} className={`flex w-full items-center gap-3 p-3 text-left transition ${active ? "bg-primary/10" : "hover:bg-muted/50"}`}><Wifi size={16} className={active ? "text-primary" : "text-muted-foreground"} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{network.ssid || "Hidden network"}</span><span className="block text-[11px] text-muted-foreground">{network.security} · {network.band} · {network.bssid}</span></span>{network.security.toLowerCase() !== "open" && <Lock size={12} className="text-muted-foreground" />}<SignalBars dbm={network.signal_dbm} /></button>;
+                    return <button key={key} onClick={() => { setSelectedNetworkKey(key); setUplinkPassword(""); }} className={`flex w-full items-center gap-3 p-3 text-left transition ${active ? "bg-primary/10" : "hover:bg-muted/50"}`}><Wifi size={16} className={active ? "text-primary" : "text-muted-foreground"} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{network.ssid || "Hidden network"}</span><span className="block text-[11px] text-muted-foreground">{network.security}</span></span>{network.security.toLowerCase() !== "open" && <Lock size={12} className="text-muted-foreground" />}<SignalBars percent={network.signal_percent} /></button>;
                   })}
                 </div>
               )}
               {selectedNetwork && selectedNetwork.security.toLowerCase() !== "open" && <div className="mt-4"><FieldLabel>Password for {selectedNetwork.ssid}</FieldLabel><div className="relative"><input className={`${inputClass} pr-11`} type={showUplinkPassword ? "text" : "password"} value={uplinkPassword} onChange={(event) => setUplinkPassword(event.target.value)} autoComplete="new-password" /><button type="button" className="absolute right-3 top-3 text-muted-foreground" onClick={() => setShowUplinkPassword((value) => !value)}>{showUplinkPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></div>}
               {modeData?.module2.saved_networks.length ? <p className="mt-3 text-xs text-muted-foreground">Saved: {modeData.module2.saved_networks.join(", ")}</p> : null}
-            </Section>
-          )}
-
-          {selectedMode !== "off" && (
-            <Section title="Persistence">
-              <label className="flex items-center justify-between gap-4"><span><span className="block text-sm font-medium">Restore on boot</span><span className="block text-xs text-muted-foreground">Reapply this network mode after Guardian restarts.</span></span><input type="checkbox" checked={restoreOnBoot} onChange={(event) => setRestoreOnBoot(event.target.checked)} className="h-4 w-4 accent-primary" /></label>
             </Section>
           )}
 
@@ -416,7 +414,7 @@ export function ST13DualWifi() {
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>Apply {MODE_OPTIONS.find((option) => option.key === selectedMode)?.label}?</AlertDialogTitle><AlertDialogDescription>This changes physical Wi-Fi routing and may interrupt access for approximately three seconds. The hotspot starts first in Dual Wi-Fi mode so local recovery remains available.</AlertDialogDescription></AlertDialogHeader>
-          <div className="rounded-lg border bg-muted/40 p-3 text-xs"><dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2"><dt className="text-muted-foreground">Mode</dt><dd className="font-medium">{MODE_REQUEST[selectedMode]}</dd>{showHotspot && <><dt className="text-muted-foreground">Hotspot</dt><dd className="font-medium">{hotspotSsid} · {band} channel {channel}</dd></>}{showUplink && <><dt className="text-muted-foreground">Uplink</dt><dd className="font-medium">{selectedNetwork?.ssid}</dd></>}<dt className="text-muted-foreground">Restore</dt><dd className="font-medium">{selectedMode !== "off" && restoreOnBoot ? "On boot" : "No"}</dd></dl></div>
+          <div className="rounded-lg border bg-muted/40 p-3 text-xs"><dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2"><dt className="text-muted-foreground">Mode</dt><dd className="font-medium">{MODE_REQUEST[selectedMode]}</dd>{showHotspot && <><dt className="text-muted-foreground">Hotspot</dt><dd className="font-medium">{hotspotSsid} · {band} channel {channel}</dd></>}{showUplink && <><dt className="text-muted-foreground">Uplink</dt><dd className="font-medium">{selectedNetwork?.ssid}</dd></>}</dl></div>
           <AlertDialogFooter><AlertDialogCancel disabled={applying}>Cancel</AlertDialogCancel><AlertDialogAction disabled={applying} onClick={(event) => { event.preventDefault(); void applyConfiguration(); }}>{selectedMode === "off" ? "Turn Wi-Fi off" : "Apply configuration"}</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

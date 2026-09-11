@@ -47,7 +47,6 @@ export interface WifiNetworkProfile {
 
 export interface WifiModePayload {
   mode: WifiModeRequest;
-  flags: { restore_on_boot: boolean };
   hotspot: {
     interface: "uap0";
     ssid: string;
@@ -71,7 +70,7 @@ export interface WifiModeApplyResponse {
 export interface ScannedNetwork {
   ssid: string;
   bssid: string;
-  signal_dbm: number;
+  signal_percent: number;
   band: WifiBand | string;
   security: string;
 }

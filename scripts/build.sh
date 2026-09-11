@@ -330,13 +330,10 @@ build_workspace() {
   rm -f \
     "${out_dir}/${DAEMON_BINARY_NAME}" \
     "${out_dir}/sgx-pa-cli" \
-    "${out_dir}/sgx-broker" \
     "${zig_out_dir}/${DAEMON_BINARY_NAME}" \
     "${zig_out_dir}/sgx-pa-cli" \
-    "${zig_out_dir}/sgx-broker" \
     "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" \
-    "${ARTIFACT_DIR}/sgx-pa-cli" \
-    "${ARTIFACT_DIR}/sgx-broker"
+    "${ARTIFACT_DIR}/sgx-pa-cli"
 
   if [[ "${CLEAN:-0}" == "1" ]]; then
     log "CLEAN=1 detected; running cargo clean..."
@@ -358,14 +355,14 @@ build_workspace() {
     set +e
     if [[ "${USE_ZIGBUILD}" == "1" ]]; then
       output="$(
-        cargo zigbuild --release --workspace --locked --target "${ZIG_TARGET}" --features secure-element 2>&1
+        cargo zigbuild --release --workspace --exclude sgx-broker --locked --target "${ZIG_TARGET}" --features secure-element 2>&1
       )"
     else
       output="$(
         CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
         CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
         CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-        cargo build --release --workspace --locked --target "${TARGET_TRIPLE}" --features secure-element 2>&1
+        cargo build --release --workspace --exclude sgx-broker --locked --target "${TARGET_TRIPLE}" --features secure-element 2>&1
       )"
     fi
     rc=$?
@@ -389,12 +386,12 @@ build_workspace() {
     if [[ "${ALLOW_UNLOCKED_FALLBACK:-0}" == "1" ]]; then
       warn "Retrying without --locked (ALLOW_UNLOCKED_FALLBACK=1)..."
       if [[ "${USE_ZIGBUILD}" == "1" ]]; then
-        cargo zigbuild --release --workspace --target "${ZIG_TARGET}" --features secure-element
+        cargo zigbuild --release --workspace --exclude sgx-broker --target "${ZIG_TARGET}" --features secure-element
       else
         CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
         CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
         CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-        cargo build --release --workspace --target "${TARGET_TRIPLE}" --features secure-element
+        cargo build --release --workspace --exclude sgx-broker --target "${TARGET_TRIPLE}" --features secure-element
       fi
       return 0
     else
@@ -410,24 +407,21 @@ collect_artifacts() {
   fi
   local daemon_src="${out_dir}/${DAEMON_BINARY_NAME}"
   local cli_src="${out_dir}/sgx-pa-cli"
-  local broker_src="${out_dir}/sgx-broker"
 
   [[ -f "${daemon_src}" ]] || die "Missing built binary: ${daemon_src}"
   [[ -f "${cli_src}" ]] || die "Missing built binary: ${cli_src}"
-  [[ -f "${broker_src}" ]] || die "Missing built binary: ${broker_src}"
 
   mkdir -p "${ARTIFACT_DIR}"
 
   cp "${daemon_src}" "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}"
   cp "${cli_src}" "${ARTIFACT_DIR}/sgx-pa-cli"
-  cp "${broker_src}" "${ARTIFACT_DIR}/sgx-broker"
 
   log "Artifacts ready"
-  ls -lh "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli" "${ARTIFACT_DIR}/sgx-broker"
-  file "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli" "${ARTIFACT_DIR}/sgx-broker"
+  ls -lh "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli"
+  file "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli"
 
   log "SHA256"
-  sha256sum "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli" "${ARTIFACT_DIR}/sgx-broker"
+  sha256sum "${ARTIFACT_DIR}/${DAEMON_BINARY_NAME}" "${ARTIFACT_DIR}/sgx-pa-cli"
 
   if need_cmd aarch64-linux-gnu-objdump; then
     log "Max GLIBC symbol version required"

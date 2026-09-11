@@ -1,16 +1,14 @@
+pub mod backend;
 pub mod bootstrap;
 pub mod config;
-pub mod dhcp_client;
 pub mod dhcp_dns;
 pub mod leases;
 pub mod nat;
+pub mod network_manager;
 pub mod process;
 pub mod routing;
 pub mod types;
-pub mod uplink_monitor;
 pub mod validator;
-pub mod wifi_client;
-pub mod wpa_config;
 
 use self::bootstrap::{BootstrapOptions, Bootstrapper};
 use self::config::ApSettings;
@@ -23,7 +21,7 @@ use self::types::NetbridgeError;
 pub struct Netbridge {
     settings: ApSettings,
     runner: Option<Arc<ProcessRunner>>,
-    dnsmasq: dhcp_dns::DnsmasqOrchestrator,
+    pub(crate) dnsmasq: dhcp_dns::DnsmasqOrchestrator,
     health_task: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -193,9 +191,7 @@ impl Drop for Netbridge {
     }
 }
 
-use crate::netbridge::types::WifiClientSettings;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 fn parse_ipv4_octets(ip: &str) -> Option<[u8; 4]> {
     let mut parts = ip.split('.');
@@ -214,12 +210,12 @@ fn shares_subnet_24(lhs: &str, rhs: &str) -> bool {
     }
 }
 
-fn hotspot_subnet_cidr(gateway_ip: &str) -> Option<String> {
+pub(crate) fn hotspot_subnet_cidr(gateway_ip: &str) -> Option<String> {
     let octets = parse_ipv4_octets(gateway_ip)?;
     Some(format!("{}.{}.{}.0/24", octets[0], octets[1], octets[2]))
 }
 
-fn select_non_conflicting_dns_settings(
+pub(crate) fn select_non_conflicting_dns_settings(
     current: &types::DnsmasqSettings,
     uplink_ipv4: &str,
 ) -> Option<types::DnsmasqSettings> {
@@ -240,25 +236,6 @@ fn select_non_conflicting_dns_settings(
             updated.dhcp_range_start = range_start.to_string();
             updated.dhcp_range_end = range_end.to_string();
             return Some(updated);
-        }
-    }
-
-    None
-}
-
-async fn get_interface_ipv4(interface: &str) -> Option<String> {
-    let output = tokio::process::Command::new("ip")
-        .args(["-4", "addr", "show", "dev", interface])
-        .output()
-        .await
-        .ok()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("inet ") {
-            let cidr = trimmed.split_whitespace().nth(1)?;
-            return Some(cidr.split('/').next()?.to_string());
         }
     }
 
@@ -325,362 +302,6 @@ async fn wait_for_ap_ready(
         "hostapd did not reach ready AP state on {} within 12s (last status: {:?})",
         interface, last_status
     )))
-}
-
-/// Uplink Orchestrator handling Station Mode (External Wi-Fi, DHCP, and Routing)
-pub struct UplinkOrchestrator {
-    wifi_client: wifi_client::WifiClientOrchestrator,
-    dhcp_client: dhcp_client::DhcpClientOrchestrator,
-    routing: routing::RoutingManager,
-    monitor: Arc<Mutex<uplink_monitor::UplinkMonitor>>,
-    monitor_task: Option<tokio::task::JoinHandle<()>>,
-}
-
-impl UplinkOrchestrator {
-    pub fn new(settings: WifiClientSettings) -> Self {
-        let interface = settings.interface.clone();
-        UplinkOrchestrator {
-            wifi_client: wifi_client::WifiClientOrchestrator::new(settings),
-            dhcp_client: dhcp_client::DhcpClientOrchestrator::new(interface.clone()),
-            routing: routing::RoutingManager::new(),
-            monitor: Arc::new(Mutex::new(uplink_monitor::UplinkMonitor::new(interface))),
-            monitor_task: None,
-        }
-    }
-
-    /// Starts the upstream flow: WiFi Connect -> DHCP -> Routing -> Monitor
-    pub async fn start(&mut self) -> Result<(), NetbridgeError> {
-        info!("Starting Uplink Orchestration flow...");
-
-        // 0. Bootstrap phase (uplink validations and dir prep)
-        let options = crate::netbridge::bootstrap::BootstrapOptions::default();
-        let bootstrapper = crate::netbridge::bootstrap::Bootstrapper::new(options);
-        if let Err(e) = bootstrapper.initialize_uplink_startup(&self.wifi_client.settings) {
-            error!("Uplink bootstrap failed: {}", e);
-            return Err(NetbridgeError::BootstrapFailed(e.to_string()));
-        }
-
-        // 1. Connect to Wi-Fi (Blocks until COMPLETED or timeout)
-        self.wifi_client.connect().await?;
-
-        // 2. Start DHCP Client to obtain IP
-        if let Err(error) = self.dhcp_client.start().await {
-            let _ = self.wifi_client.disconnect().await;
-            return Err(error);
-        }
-
-        // 2.5 Disable Wi-Fi power saving on uplink to resolve packet loss and latency spikes
-        info!(
-            "Disabling Wi-Fi power saving on interface {} to stabilize connection...",
-            &self.wifi_client.settings.interface
-        );
-        let _ = tokio::process::Command::new("iw")
-            .args([
-                "dev",
-                &self.wifi_client.settings.interface,
-                "set",
-                "power_save",
-                "off",
-            ])
-            .output()
-            .await;
-
-        // 3. Enable kernel IPv4 forwarding so AP clients can reach the uplink
-        if let Err(error) = self.routing.enable_forwarding() {
-            let _ = self.dhcp_client.stop().await;
-            let _ = self.wifi_client.disconnect().await;
-            return Err(error);
-        }
-
-        // 4. Start background uplink monitor (yielding lock between cycles)
-        let monitor_clone = Arc::clone(&self.monitor);
-        let dhcp_runner = self.dhcp_client.runner();
-        let task = tokio::spawn(async move {
-            let interval = std::time::Duration::from_secs(10);
-            loop {
-                {
-                    let mut mon = monitor_clone.lock().await;
-                    let previous_state = mon.current_state();
-                    let new_state = mon.evaluate_health().await;
-
-                    if new_state != previous_state {
-                        info!(
-                            "Uplink state changed: {:?} -> {:?}",
-                            previous_state, new_state
-                        );
-                    }
-
-                    if new_state == crate::netbridge::types::UplinkState::Disconnected
-                        || new_state == crate::netbridge::types::UplinkState::NoInternet
-                    {
-                        error!("Uplink loss detected!");
-                        mon.trigger_reconnect(dhcp_runner.clone());
-                    }
-                } // Mutex guard drops here
-                tokio::time::sleep(interval).await;
-            }
-        });
-        self.monitor_task = Some(task);
-
-        info!("Uplink successfully established and monitored.");
-        Ok(())
-    }
-
-    /// Stops the upstream flow cleanly
-    pub async fn stop(&mut self) -> Result<(), NetbridgeError> {
-        info!("Stopping Uplink Orchestration flow...");
-
-        let interface = self.wifi_client.settings.interface.clone();
-
-        // 1. Stop Monitor before it can race with teardown or renew DHCP.
-        if let Some(task) = self.monitor_task.take() {
-            task.abort();
-        }
-
-        // 2. Disable forwarding
-        let _ = self.routing.disable_forwarding();
-
-        // 3. Stop DHCP
-        let _ = self.dhcp_client.stop().await;
-
-        // 4. Disconnect Wi-Fi
-        let _ = self.wifi_client.disconnect().await;
-
-        // 5. Flush interface and bring it down to prevent blackhole routes
-        let _ = tokio::process::Command::new("ip")
-            .args(["addr", "flush", "dev", &interface])
-            .output()
-            .await;
-
-        let _ = tokio::process::Command::new("ip")
-            .args(["link", "set", "dev", &interface, "down"])
-            .output()
-            .await;
-
-        info!("Uplink stopped successfully.");
-        Ok(())
-    }
-
-    /// Exposes the current overall uplink state
-    pub async fn current_state(&self) -> crate::netbridge::types::UplinkState {
-        let mon = self.monitor.lock().await;
-        mon.current_state()
-    }
-
-    /// Provides access to the shared monitor for higher-level orchestrators
-    pub fn get_monitor(&self) -> Arc<Mutex<uplink_monitor::UplinkMonitor>> {
-        Arc::clone(&self.monitor)
-    }
-}
-
-impl Drop for UplinkOrchestrator {
-    fn drop(&mut self) {
-        if let Some(task) = self.monitor_task.take() {
-            task.abort();
-        }
-    }
-}
-
-/// Dual Wi-Fi Orchestrator (AP + Uplink + NAT/Firewall)
-/// Guarantees exact startup order and fail-closed safety.
-pub struct DualWifiOrchestrator {
-    uplink: UplinkOrchestrator,
-    ap: Netbridge,
-    nat: Arc<nat::NatManager>,
-    nat_task: Option<tokio::task::JoinHandle<()>>,
-}
-
-impl DualWifiOrchestrator {
-    pub fn new(
-        ap_settings: ApSettings,
-        dns_settings: types::DnsmasqSettings,
-        uplink_settings: WifiClientSettings,
-    ) -> Self {
-        DualWifiOrchestrator {
-            uplink: UplinkOrchestrator::new(uplink_settings),
-            ap: Netbridge::new(ap_settings, dns_settings),
-            nat: Arc::new(nat::NatManager::new()),
-            nat_task: None,
-        }
-    }
-
-    /// Starts the dual-wifi flow: Uplink -> DHCP -> Routing -> NAT -> AP -> Dnsmasq
-    pub async fn start(&mut self) -> Result<(), NetbridgeError> {
-        info!("🔵 Starting Dual Wi-Fi Orchestration (Hotspot + External Wi-Fi)...");
-
-        // 1. Access Point Phase (Ensures hotspot is always available for local management)
-        if let Err(e) = self.ap.start().await {
-            tracing::debug!("Dual-WiFi Failed at AP stage: {}", e);
-            // Fail-closed cleanup
-            let _ = self.nat.disable_nat();
-            let _ = self.uplink.stop().await;
-            return Err(e);
-        }
-
-        // 2. Uplink Phase (Connect, DHCP, Routing)
-        if let Err(e) = self.uplink.start().await {
-            tracing::debug!("Dual-WiFi Failed at Uplink stage: {}", e);
-            let _ = self.ap.stop().await;
-            return Err(e);
-        }
-
-        let in_iface_clone = self.ap.settings.interface.clone();
-        let out_iface_clone = self.uplink.wifi_client.settings.interface.clone();
-        let client_isolation = self.ap.settings.client_isolation;
-
-        if let Some(uplink_ipv4) = get_interface_ipv4(&out_iface_clone).await {
-            if let Some(updated_dns) =
-                select_non_conflicting_dns_settings(&self.ap.dnsmasq.settings, &uplink_ipv4)
-            {
-                tracing::warn!(
-                    "Hotspot subnet {} conflicts with uplink {} on {}. Restarting AP on {}.",
-                    self.ap.dnsmasq.settings.gateway_ip,
-                    uplink_ipv4,
-                    out_iface_clone,
-                    updated_dns.gateway_ip
-                );
-                if let Err(error) = self.ap.stop().await {
-                    let _ = self.uplink.stop().await;
-                    return Err(error);
-                }
-                self.ap.dnsmasq.settings = updated_dns;
-                if let Err(error) = self.ap.start().await {
-                    let _ = self.uplink.stop().await;
-                    return Err(error);
-                }
-            }
-        }
-
-        let hotspot_cidr = match hotspot_subnet_cidr(&self.ap.dnsmasq.settings.gateway_ip) {
-            Some(cidr) => cidr,
-            None => {
-                let _ = self.ap.stop().await;
-                let _ = self.uplink.stop().await;
-                return Err(NetbridgeError::ValidationFailed(format!(
-                    "invalid hotspot gateway {}",
-                    self.ap.dnsmasq.settings.gateway_ip
-                )));
-            }
-        };
-        if let Err(error) =
-            routing::RoutingManager::configure_hotspot_uplink(&hotspot_cidr, &out_iface_clone)
-        {
-            routing::RoutingManager::remove_hotspot_uplink();
-            let _ = self.ap.stop().await;
-            let _ = self.uplink.stop().await;
-            return Err(error);
-        }
-
-        if let Err(e) = self
-            .nat
-            .enable_nat(&in_iface_clone, &out_iface_clone, client_isolation)
-        {
-            routing::RoutingManager::remove_hotspot_uplink();
-            let _ = self.ap.stop().await;
-            let _ = self.uplink.stop().await;
-            return Err(NetbridgeError::ProcessExecutionFailed(format!(
-                "failed to apply hotspot NAT: {}",
-                e
-            )));
-        }
-
-        // 3. Single event-driven NAT-recovery task — subscribes to the uplink watch channel.
-        let nat_clone = Arc::clone(&self.nat);
-        let monitor = self.uplink.get_monitor();
-
-        let task = tokio::spawn(async move {
-            let interval = std::time::Duration::from_secs(5);
-            let mut was_connected = true;
-
-            loop {
-                let state = monitor.lock().await.current_state();
-                let is_connected = state == crate::netbridge::types::UplinkState::Connected;
-                let is_disconnected = state == crate::netbridge::types::UplinkState::Disconnected;
-
-                if was_connected && is_disconnected {
-                    tracing::info!(
-                        "⚠️ Physical Wi-Fi uplink disconnected. Preserving AP and NAT while Wi-Fi self-heals."
-                    );
-                } else if is_connected {
-                    if !routing::RoutingManager::hotspot_uplink_is_configured(
-                        &hotspot_cidr,
-                        &out_iface_clone,
-                    ) {
-                        if let Err(error) = routing::RoutingManager::configure_hotspot_uplink(
-                            &hotspot_cidr,
-                            &out_iface_clone,
-                        ) {
-                            tracing::warn!(
-                                "Failed to repair hotspot policy route via {}: {}",
-                                out_iface_clone,
-                                error
-                            );
-                        }
-                    }
-
-                    if !nat_clone.kernel_rules_active(&in_iface_clone, &out_iface_clone) {
-                        tracing::info!(
-                            "🌍 Restoring missing hotspot NAT/security rules via {}.",
-                            out_iface_clone
-                        );
-                        if let Err(error) = nat_clone.enable_nat(
-                            &in_iface_clone,
-                            &out_iface_clone,
-                            client_isolation,
-                        ) {
-                            tracing::warn!("Failed to re-apply NAT after recovery: {}", error);
-                            was_connected = false;
-                        } else {
-                            was_connected = true;
-                        }
-                    } else {
-                        was_connected = true;
-                    }
-                } else if was_connected && !is_connected {
-                    tracing::debug!(
-                        "Uplink state is {:?}, preserving NAT rules to allow self-healing.",
-                        state
-                    );
-                }
-                tokio::time::sleep(interval).await;
-            }
-        });
-        self.nat_task = Some(task);
-
-        info!("Dual Wi-Fi perfectly established with active NAT and Firewall isolation.");
-        Ok(())
-    }
-
-    /// Safely shuts down the entire stack in reverse order
-    pub async fn stop(&mut self) -> Result<(), NetbridgeError> {
-        info!("Stopping Dual Wi-Fi Orchestrator...");
-
-        // 1. Stop monitor before it can race with firewall teardown.
-        if let Some(task) = self.nat_task.take() {
-            task.abort();
-        }
-
-        // 2. Stop AP (dnsmasq, hostapd)
-        let _ = self.ap.stop().await;
-
-        // 3. Disable NAT / Firewall Rules (restore safety defaults)
-        let _ = self.nat.disable_nat();
-        routing::RoutingManager::remove_hotspot_uplink();
-
-        // 4. Stop Uplink (Routing, DHCP, wpa_supplicant)
-        let _ = self.uplink.stop().await;
-
-        info!("Dual Wi-Fi cleanly stopped. Network secured.");
-        Ok(())
-    }
-}
-
-impl Drop for DualWifiOrchestrator {
-    fn drop(&mut self) {
-        if let Some(task) = self.nat_task.take() {
-            task.abort();
-        }
-    }
 }
 
 #[cfg(test)]

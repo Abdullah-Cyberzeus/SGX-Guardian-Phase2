@@ -81,7 +81,6 @@ impl Bootstrapper {
     pub fn prepare_runtime_directories(&self) -> Result<(), BootstrapError> {
         let dirs = [
             self.options.runtime_dir.as_str(), // /tmp/netbridge
-            "/var/run/wpa_supplicant",         // wpa_supplicant socket dir
             "/etc/sgx-guardian",               // template config dir
         ];
 
@@ -98,8 +97,6 @@ impl Bootstrapper {
     /// Embed default templates directly into the binary so they can be recreated if missing
     const DEFAULT_HOSTAPD: &'static str =
         include_str!("../../config/hostapd/hostapd.conf.template");
-    const DEFAULT_WPA: &'static str =
-        include_str!("../../config/wpa_supplicant/wpa_supplicant.conf.template");
     const DEFAULT_DNSMASQ: &'static str =
         include_str!("../../config/dnsmasq/dnsmasq.conf.template");
 
@@ -111,10 +108,6 @@ impl Bootstrapper {
             (
                 "/etc/sgx-guardian/hostapd.conf.template",
                 Self::DEFAULT_HOSTAPD,
-            ),
-            (
-                "/etc/sgx-guardian/wpa_supplicant.conf.template",
-                Self::DEFAULT_WPA,
             ),
             (
                 "/etc/sgx-guardian/dnsmasq.conf.template",
@@ -178,35 +171,6 @@ impl Bootstrapper {
             "Configuration successfully generated at {}",
             self.options.output_config_path
         );
-
-        Ok(())
-    }
-
-    /// Validates uplink dependencies: wpa_supplicant, udhcpc, permissions, and client-mode hardware support
-    pub fn run_uplink_validations(
-        &self,
-        settings: &crate::netbridge::types::WifiClientSettings,
-    ) -> Result<(), BootstrapError> {
-        info!("Running system validations for Wi-Fi client (uplink) mode...");
-        self.validator
-            .validate_uplink_runtime_conditions(&settings.interface)?;
-        info!("All uplink system validations passed.");
-        Ok(())
-    }
-
-    /// Orchestrates the runtime preparation for the Wi-Fi uplink
-    pub fn initialize_uplink_startup(
-        &self,
-        settings: &crate::netbridge::types::WifiClientSettings,
-    ) -> Result<(), BootstrapError> {
-        // 1. Run startup validations
-        self.run_uplink_validations(settings)?;
-
-        // 2. Prepare runtime directories
-        self.prepare_runtime_directories()?;
-
-        // 3. Ensure configuration templates are present
-        self.ensure_templates_exist()?;
 
         Ok(())
     }

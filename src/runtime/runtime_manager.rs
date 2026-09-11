@@ -1,7 +1,7 @@
 use crate::netbridge::nat::NatManager;
 use crate::netbridge::routing::RoutingManager;
-use crate::netbridge::types::{ApSettings, DnsmasqSettings, WifiClientSettings};
-use crate::netbridge::{DualWifiOrchestrator, Netbridge, UplinkOrchestrator};
+use crate::netbridge::types::{ApSettings, DnsmasqSettings};
+use crate::netbridge::Netbridge;
 use crate::runtime::config_store::ConfigStore;
 use crate::runtime::errors::RuntimeError;
 use crate::runtime::models::{GuardianConfig, RuntimeMode};
@@ -15,13 +15,21 @@ use tracing::{info, warn};
 pub struct RuntimeManager {
     pub state_machine: Arc<StateMachine>,
     ap: Arc<Mutex<Option<Netbridge>>>,
-    uplink: Arc<Mutex<Option<UplinkOrchestrator>>>,
-    dual: Arc<Mutex<Option<DualWifiOrchestrator>>>,
+    /// Holds the active NetworkManager station session for ClientOnly mode.
+    nm_station_session: Arc<Mutex<Option<crate::netbridge::network_manager::StationSession>>>,
     /// Holds the NatManager for HotspotOnly mode (Ethernet uplink NAT).
     /// DualWifi mode manages its own NAT internally.
     nat: Arc<Mutex<Option<NatManager>>>,
     routing: Arc<RoutingManager>,
     supervisor_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// Recovery task for DualWifi's NetworkManager-backed uplink leg. Keeps the
+    /// legacy hostapd AP alive while only the NM station session is rebuilt.
+    dual_nm_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// Recovery task for ClientOnly's NetworkManager station session. Rebuilds
+    /// only the station session in place, without the full stop_all/cleanup/
+    /// restart cycle the generic supervisor used to do — that cycle raced with
+    /// a physically flapping radio and produced repeated E_NM_TIMEOUT.
+    client_nm_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl RuntimeManager {
@@ -29,11 +37,12 @@ impl RuntimeManager {
         RuntimeManager {
             state_machine,
             ap: Arc::new(Mutex::new(None)),
-            uplink: Arc::new(Mutex::new(None)),
-            dual: Arc::new(Mutex::new(None)),
+            nm_station_session: Arc::new(Mutex::new(None)),
             nat: Arc::new(Mutex::new(None)),
             routing: Arc::new(RoutingManager::new()),
             supervisor_task: Arc::new(Mutex::new(None)),
+            dual_nm_task: Arc::new(Mutex::new(None)),
+            client_nm_task: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -88,6 +97,40 @@ impl RuntimeManager {
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
+    }
+
+    /// Default hotspot credentials, used only when the user has never
+    /// configured a valid SSID/password. A user-configured hotspot config is
+    /// always used as-is; this never overrides it.
+    const DEFAULT_HOTSPOT_SSID: &'static str = "SGX_Hotspot";
+    const DEFAULT_HOTSPOT_PASSWORD: &'static str = "Password123!";
+
+    pub fn default_hotspot_ssid() -> &'static str {
+        Self::DEFAULT_HOTSPOT_SSID
+    }
+
+    /// Resolves the SSID/password to actually start the hotspot with. Some
+    /// REST paths (saving mode=Off or mode=ClientOnly) never validate the
+    /// hotspot password, so a saved config can carry an empty/invalid one —
+    /// that must not turn into a hard failure (and an infinite 10s retry
+    /// loop) the moment a hotspot needs to start.
+    fn effective_hotspot_credentials(config: &GuardianConfig) -> (String, String) {
+        let ssid = if config.hotspot.ssid.trim().is_empty() {
+            Self::DEFAULT_HOTSPOT_SSID.to_string()
+        } else {
+            config.hotspot.ssid.clone()
+        };
+        let password = if crate::runtime::crypto::validate_hotspot_password(
+            &config.hotspot.password,
+        )
+        .is_ok()
+        {
+            config.hotspot.password.clone()
+        } else {
+            warn!("Saved hotspot password is unset or invalid; using the default hotspot password");
+            Self::DEFAULT_HOTSPOT_PASSWORD.to_string()
+        };
+        (ssid, password)
     }
 
     fn mode_label(mode: &RuntimeMode) -> &'static str {
@@ -169,11 +212,10 @@ impl RuntimeManager {
         };
 
         info!(
-            "Loaded persisted runtime config before transition: saved_mode={}, hotspot_iface={}, uplink_iface={}, restore_on_boot={}",
+            "Loaded persisted runtime config before transition: saved_mode={}, hotspot_iface={}, uplink_iface={}",
             Self::mode_label(&config.mode),
             config.hotspot.interface,
-            config.uplink.interface,
-            config.flags.restore_on_boot
+            config.uplink.interface
         );
 
         // Off means "stop networking owned by Guardian". It must never tear down
@@ -239,25 +281,20 @@ impl RuntimeManager {
         *self.supervisor_task.lock().await = Some(task);
     }
 
-    /// Loads the saved persistent config and bootstraps the requested mode if restore_on_boot is enabled.
+    /// Every boot always brings up HotspotOnly, unconditionally — regardless of
+    /// what mode was last saved (Off, ClientOnly, DualWifi, or HotspotOnly).
+    /// The hotspot is Guardian's guaranteed local access point; boot never
+    /// restores a saved uplink or DualWifi state automatically.
     pub async fn apply_saved_state(self: Arc<Self>) -> Result<(), RuntimeError> {
         let config = ConfigStore::load()?;
         info!(
-            "Boot restore check: saved_mode={}, restore_on_boot={}",
-            Self::mode_label(&config.mode),
-            config.flags.restore_on_boot
+            "Boot restore: saved_mode={} -> boot_mode=HotspotOnly (hotspot always starts on boot)",
+            Self::mode_label(&config.mode)
         );
-        if config.flags.restore_on_boot && config.mode != RuntimeMode::Off {
-            // Reconstruct the stack so every daemon, health task, route, and NAT rule is
-            // owned by this process. Merely observing AP + Wi-Fi state can report
-            // DualActive while forwarding is absent and no recovery task exists.
-            self.supervise_transition(config.mode).await;
-        } else {
-            // A disabled restore flag means "leave the host as it is", not "turn
-            // every wireless interface off". A newly created manager is already Idle.
-            info!("Wi-Fi restore disabled; preserving existing host networking");
-            self.state_machine.reset_to_idle().await;
-        }
+        // Reconstruct the stack so every daemon, health task, route, and NAT rule is
+        // owned by this process. Merely observing AP + Wi-Fi state can report
+        // DualActive while forwarding is absent and no recovery task exists.
+        self.supervise_transition(RuntimeMode::HotspotOnly).await;
         Ok(())
     }
 
@@ -284,10 +321,11 @@ impl RuntimeManager {
             "g".to_string() // 2.4GHz
         };
 
+        let (hotspot_ssid, hotspot_password) = Self::effective_hotspot_credentials(config);
         let ap_settings = ApSettings {
             interface: config.hotspot.interface.clone(),
-            ssid: config.hotspot.ssid.clone(),
-            wpa_passphrase: Some(config.hotspot.password.clone()),
+            ssid: hotspot_ssid,
+            wpa_passphrase: Some(hotspot_password),
             channel: config.hotspot.channel,
             hw_mode,
             country_code: "US".to_string(),
@@ -298,6 +336,7 @@ impl RuntimeManager {
             interface: config.hotspot.interface.clone(),
             ..DnsmasqSettings::default()
         };
+        let hotspot_gateway_ip = dns_settings.gateway_ip.clone();
 
         let mut ap = Netbridge::new(ap_settings, dns_settings);
 
@@ -339,6 +378,26 @@ impl RuntimeManager {
                     tracing::error!("Failed to enable kernel IPv4 forwarding: {}", e);
                 }
 
+                // On boards without kernel policy-routing support, NAT/forward rules
+                // alone aren't enough — the kernel's own default route decides which
+                // interface forwarded traffic actually leaves through, and that can
+                // point elsewhere (e.g. a lower-metric cellular route). This makes the
+                // selected uplink win that decision so hotspot clients reliably get
+                // internet through it regardless of what else is active.
+                if let Some(hotspot_cidr) =
+                    crate::netbridge::hotspot_subnet_cidr(&hotspot_gateway_ip)
+                {
+                    if let Err(e) =
+                        RoutingManager::configure_hotspot_uplink(&hotspot_cidr, &uplink_iface)
+                    {
+                        tracing::warn!(
+                            "Failed to pin hotspot traffic to uplink {}: {}",
+                            uplink_iface,
+                            e
+                        );
+                    }
+                }
+
                 *self.nat.lock().await = Some(nat_manager);
             }
         } else {
@@ -367,35 +426,217 @@ impl RuntimeManager {
             .transition_to(SystemState::ClientConnecting)
             .await;
 
-        let uplink_settings = WifiClientSettings {
-            interface: config.uplink.interface.clone(),
-            networks: config.uplink.networks.clone(),
-            ..Default::default()
+        info!(
+            "Starting ClientOnly mode via NetworkManager D-Bus backend on {}...",
+            config.uplink.interface
+        );
+        let backend = match crate::netbridge::network_manager::NetworkManagerBackend::system(
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        {
+            Ok(b) => b,
+            Err(e) => {
+                self.state_machine
+                    .set_error_state(
+                        format!("NetworkManager unavailable: {}", e),
+                        Some(e.code().to_string()),
+                    )
+                    .await;
+                return Err(RuntimeError::InvalidConfig(e.to_string()));
+            }
         };
 
-        let mut uplink = UplinkOrchestrator::new(uplink_settings);
+        if config.uplink.networks.is_empty() {
+            self.state_machine
+                .set_error_state(
+                    "No saved Wi-Fi networks configured".to_string(),
+                    Some("E_WIFI_NO_SAVED_NETWORKS".to_string()),
+                )
+                .await;
+            return Err(RuntimeError::InvalidConfig("No saved networks".to_string()));
+        }
 
-        if let Err(e) = uplink.start().await {
-            let err_str = e.to_string();
-            let code = if err_str.contains("E_WIFI_WRONG_PASSWORD") {
+        let mut last_err = None;
+        let mut connected_session = None;
+
+        for (idx, network) in config.uplink.networks.iter().enumerate() {
+            info!(
+                "Attempting NetworkManager station connection to '{}' (priority {})",
+                network.ssid, idx
+            );
+            let profile = match crate::netbridge::network_manager::station_profile::StationProfileBuilder::new(
+                    &config.uplink.interface,
+                )
+                .and_then(|b| b.build(network, idx))
+                {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!(
+                            "Failed to build station profile for '{}': {}",
+                            network.ssid, e
+                        );
+                        last_err = Some(e.to_string());
+                        continue;
+                    }
+                };
+
+            match backend
+                .activate_station(&profile, std::time::Duration::from_secs(25))
+                .await
+            {
+                Ok(session) => {
+                    info!(
+                        "✅ NetworkManager connected to '{}' on {} (IP: {}, Gateway: {:?})",
+                        network.ssid,
+                        config.uplink.interface,
+                        session.addresses.join(", "),
+                        session.gateway
+                    );
+                    connected_session = Some(session);
+                    break;
+                }
+                Err(e) => {
+                    warn!(
+                        "NetworkManager station connection to '{}' failed: [{}] {}",
+                        network.ssid,
+                        e.code(),
+                        e
+                    );
+                    last_err = Some(e.to_string());
+                }
+            }
+        }
+
+        if let Some(session) = connected_session {
+            *self.nm_station_session.lock().await = Some(session);
+            self.state_machine
+                .transition_to(SystemState::ClientConnected)
+                .await;
+
+            let uplink_iface = config.uplink.interface.clone();
+            let networks = config.uplink.networks.clone();
+            let nm_session_slot = Arc::clone(&self.nm_station_session);
+            let state_machine = Arc::clone(&self.state_machine);
+
+            let task = tokio::spawn(async move {
+                let mut consecutive_failures = 0_u8;
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+                    let session_now = nm_session_slot.lock().await.clone();
+                    let Some(session_now) = session_now else {
+                        continue;
+                    };
+
+                    let viable =
+                        match crate::netbridge::network_manager::NetworkManagerBackend::system(
+                            std::time::Duration::from_secs(5),
+                        )
+                        .await
+                        {
+                            Ok(backend) => backend
+                                .station_session_is_viable(&session_now)
+                                .await
+                                .unwrap_or(false),
+                            Err(_) => false,
+                        };
+
+                    if viable {
+                        consecutive_failures = 0;
+                        continue;
+                    }
+
+                    consecutive_failures = consecutive_failures.saturating_add(1);
+                    warn!(
+                        "ClientOnly NetworkManager station health check failed ({}/3)",
+                        consecutive_failures
+                    );
+                    if consecutive_failures < 3 {
+                        continue;
+                    }
+                    consecutive_failures = 0;
+
+                    warn!(
+                        "ClientOnly uplink session lost; rebuilding NetworkManager station on {}",
+                        uplink_iface
+                    );
+                    let backend =
+                        match crate::netbridge::network_manager::NetworkManagerBackend::system(
+                            std::time::Duration::from_secs(5),
+                        )
+                        .await
+                        {
+                            Ok(b) => b,
+                            Err(e) => {
+                                warn!(
+                                    "NetworkManager unavailable during ClientOnly rebuild: {}",
+                                    e
+                                );
+                                continue;
+                            }
+                        };
+                    let _ = backend.deactivate_station(&session_now).await;
+
+                    let mut rebuilt = None;
+                    for (idx, network) in networks.iter().enumerate() {
+                        let profile = match crate::netbridge::network_manager::station_profile::StationProfileBuilder::new(
+                                &uplink_iface,
+                            )
+                            .and_then(|b| b.build(network, idx))
+                            {
+                                Ok(p) => p,
+                                Err(_) => continue,
+                            };
+                        match backend
+                            .activate_station(&profile, std::time::Duration::from_secs(25))
+                            .await
+                        {
+                            Ok(s) => {
+                                rebuilt = Some(s);
+                                break;
+                            }
+                            Err(e) => {
+                                warn!("ClientOnly reconnect to '{}' failed: {}", network.ssid, e)
+                            }
+                        }
+                    }
+
+                    match rebuilt {
+                        Some(s) => {
+                            *nm_session_slot.lock().await = Some(s);
+                            state_machine
+                                .transition_to(SystemState::ClientConnected)
+                                .await;
+                            info!("✅ ClientOnly uplink reconnected on {}", uplink_iface);
+                        }
+                        None => {
+                            warn!(
+                                    "ClientOnly uplink rebuild failed on every saved network; will retry"
+                                );
+                            *nm_session_slot.lock().await = None;
+                        }
+                    }
+                }
+            });
+            *self.client_nm_task.lock().await = Some(task);
+
+            return Ok(());
+        } else {
+            let err_msg = last_err
+                .unwrap_or_else(|| "Failed to connect to any configured Wi-Fi network".to_string());
+            let code = if err_msg.contains("E_WIFI_AUTH_FAILED") {
                 Some("E_WIFI_WRONG_PASSWORD".to_string())
-            } else if err_str.contains("E_WIFI_AP_NOT_FOUND") {
+            } else if err_msg.contains("E_WIFI_SSID_NOT_FOUND") {
                 Some("E_WIFI_AP_NOT_FOUND".to_string())
             } else {
                 None
             };
             self.state_machine
-                .set_error_state(format!("Client failed: {}", e), code)
+                .set_error_state(format!("Client failed: {}", err_msg), code)
                 .await;
-            return Err(RuntimeError::InvalidConfig(e.to_string()));
+            return Err(RuntimeError::InvalidConfig(err_msg));
         }
-
-        *self.uplink.lock().await = Some(uplink);
-        self.state_machine
-            .transition_to(SystemState::ClientConnected)
-            .await;
-
-        Ok(())
     }
 
     pub async fn start_dual_wifi_mode(&self, config: &GuardianConfig) -> Result<(), RuntimeError> {
@@ -428,52 +669,381 @@ impl RuntimeManager {
             .await;
         Self::stop_unsafe_suricata_wifi_capture().await;
 
+        self.start_dual_wifi_mode_nm(config).await
+    }
+
+    /// DualWifi with the uplink leg (`wlan1`) managed over NetworkManager D-Bus
+    /// while the hotspot leg stays on the legacy hostapd/dnsmasq path on `uap0`.
+    /// The hotspot must never go down just because the uplink needs rebuilding,
+    /// so uplink recovery is a dedicated task that only ever touches the NM
+    /// station session, routing, and NAT — never `self.ap`.
+    async fn start_dual_wifi_mode_nm(&self, config: &GuardianConfig) -> Result<(), RuntimeError> {
+        info!(
+            "Starting DualWifi via NetworkManager D-Bus uplink on {} (hotspot stays on legacy {})",
+            config.uplink.interface, config.hotspot.interface
+        );
+
         let hw_mode = if config.hotspot.channel > 14 {
-            "a".to_string() // 5GHz
+            "a".to_string()
         } else {
-            "g".to_string() // 2.4GHz
+            "g".to_string()
         };
 
+        let (hotspot_ssid, hotspot_password) = Self::effective_hotspot_credentials(config);
         let ap_settings = ApSettings {
             interface: config.hotspot.interface.clone(),
-            ssid: config.hotspot.ssid.clone(),
-            wpa_passphrase: Some(config.hotspot.password.clone()),
+            ssid: hotspot_ssid,
+            wpa_passphrase: Some(hotspot_password),
             channel: config.hotspot.channel,
             hw_mode,
             country_code: "US".to_string(),
             client_isolation: config.hotspot.client_isolation,
         };
-
         let dns_settings = DnsmasqSettings {
             interface: config.hotspot.interface.clone(),
             ..DnsmasqSettings::default()
         };
-        let uplink_settings = WifiClientSettings {
-            interface: config.uplink.interface.clone(),
-            networks: config.uplink.networks.clone(),
-            ..Default::default()
-        };
 
-        let mut dual = DualWifiOrchestrator::new(ap_settings, dns_settings, uplink_settings);
-
-        if let Err(e) = dual.start().await {
-            let err_str = e.to_string();
-            let code = if err_str.contains("E_WIFI_WRONG_PASSWORD") {
-                Some("E_WIFI_WRONG_PASSWORD".to_string())
-            } else if err_str.contains("E_WIFI_AP_NOT_FOUND") {
-                Some("E_WIFI_AP_NOT_FOUND".to_string())
-            } else if err_str.contains("hostapd") {
-                Some("E_HOSTAPD_FAIL".to_string())
-            } else {
-                None
-            };
+        let mut ap = Netbridge::new(ap_settings, dns_settings);
+        if let Err(e) = ap.start().await {
             self.state_machine
-                .set_error_state(format!("Dual WiFi failed: {}", e), code)
+                .set_error_state(
+                    format!("Dual WiFi AP failed: {}", e),
+                    Some("E_HOSTAPD_FAIL".to_string()),
+                )
                 .await;
             return Err(RuntimeError::InvalidConfig(e.to_string()));
         }
 
-        *self.dual.lock().await = Some(dual);
+        let backend = match crate::netbridge::network_manager::NetworkManagerBackend::system(
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = ap.stop().await;
+                self.state_machine
+                    .set_error_state(
+                        format!("NetworkManager unavailable: {}", e),
+                        Some(e.code().to_string()),
+                    )
+                    .await;
+                return Err(RuntimeError::InvalidConfig(e.to_string()));
+            }
+        };
+
+        if config.uplink.networks.is_empty() {
+            let _ = ap.stop().await;
+            self.state_machine
+                .set_error_state(
+                    "No saved Wi-Fi networks configured".to_string(),
+                    Some("E_WIFI_NO_SAVED_NETWORKS".to_string()),
+                )
+                .await;
+            return Err(RuntimeError::InvalidConfig("No saved networks".to_string()));
+        }
+
+        let mut last_err = None;
+        let mut connected_session = None;
+        for (idx, network) in config.uplink.networks.iter().enumerate() {
+            let profile = match crate::netbridge::network_manager::station_profile::StationProfileBuilder::new(
+                &config.uplink.interface,
+            )
+            .and_then(|b| b.build(network, idx))
+            {
+                Ok(p) => p,
+                Err(e) => {
+                    last_err = Some(e.to_string());
+                    continue;
+                }
+            };
+            match backend
+                .activate_station(&profile, std::time::Duration::from_secs(25))
+                .await
+            {
+                Ok(session) => {
+                    connected_session = Some(session);
+                    break;
+                }
+                Err(e) => {
+                    last_err = Some(format!("[{}] {}", e.code(), e));
+                }
+            }
+        }
+
+        let session = match connected_session {
+            Some(s) => s,
+            None => {
+                let _ = ap.stop().await;
+                let err_msg = last_err.unwrap_or_else(|| {
+                    "Failed to connect to any configured Wi-Fi network".to_string()
+                });
+                let code = if err_msg.contains("E_WIFI_AUTH_FAILED") {
+                    Some("E_WIFI_WRONG_PASSWORD".to_string())
+                } else if err_msg.contains("E_WIFI_SSID_NOT_FOUND") {
+                    Some("E_WIFI_AP_NOT_FOUND".to_string())
+                } else {
+                    None
+                };
+                self.state_machine
+                    .set_error_state(format!("Dual WiFi uplink failed: {}", err_msg), code)
+                    .await;
+                return Err(RuntimeError::InvalidConfig(err_msg));
+            }
+        };
+
+        // Subnet-conflict check against the address NetworkManager assigned.
+        if let Some(uplink_ipv4) = session.addresses.first().cloned() {
+            if let Some(updated_dns) = crate::netbridge::select_non_conflicting_dns_settings(
+                &ap.dnsmasq.settings,
+                &uplink_ipv4,
+            ) {
+                warn!(
+                    "Hotspot subnet {} conflicts with uplink {} on {}. Restarting AP on {}.",
+                    ap.dnsmasq.settings.gateway_ip,
+                    uplink_ipv4,
+                    config.uplink.interface,
+                    updated_dns.gateway_ip
+                );
+                if let Err(e) = ap.stop().await {
+                    let _ = backend.deactivate_station(&session).await;
+                    self.state_machine
+                        .set_error_state(format!("Dual WiFi AP restart failed: {}", e), None)
+                        .await;
+                    return Err(RuntimeError::InvalidConfig(e.to_string()));
+                }
+                ap.dnsmasq.settings = updated_dns;
+                if let Err(e) = ap.start().await {
+                    let _ = backend.deactivate_station(&session).await;
+                    self.state_machine
+                        .set_error_state(
+                            format!("Dual WiFi AP failed: {}", e),
+                            Some("E_HOSTAPD_FAIL".to_string()),
+                        )
+                        .await;
+                    return Err(RuntimeError::InvalidConfig(e.to_string()));
+                }
+            }
+        }
+
+        let hotspot_cidr =
+            match crate::netbridge::hotspot_subnet_cidr(&ap.dnsmasq.settings.gateway_ip) {
+                Some(cidr) => cidr,
+                None => {
+                    let _ = ap.stop().await;
+                    let _ = backend.deactivate_station(&session).await;
+                    self.state_machine
+                        .set_error_state(
+                            format!("invalid hotspot gateway {}", ap.dnsmasq.settings.gateway_ip),
+                            None,
+                        )
+                        .await;
+                    return Err(RuntimeError::InvalidConfig(
+                        "invalid hotspot gateway".to_string(),
+                    ));
+                }
+            };
+
+        if let Err(e) =
+            RoutingManager::configure_hotspot_uplink(&hotspot_cidr, &config.uplink.interface)
+        {
+            RoutingManager::remove_hotspot_uplink();
+            let _ = ap.stop().await;
+            let _ = backend.deactivate_station(&session).await;
+            self.state_machine
+                .set_error_state(format!("Dual WiFi routing failed: {}", e), None)
+                .await;
+            return Err(RuntimeError::InvalidConfig(e.to_string()));
+        }
+
+        if let Err(e) = self.routing.enable_forwarding() {
+            RoutingManager::remove_hotspot_uplink();
+            let _ = ap.stop().await;
+            let _ = backend.deactivate_station(&session).await;
+            self.state_machine
+                .set_error_state(format!("Dual WiFi forwarding failed: {}", e), None)
+                .await;
+            return Err(RuntimeError::InvalidConfig(e.to_string()));
+        }
+
+        let nat_manager = NatManager::new();
+        if let Err(e) = nat_manager.enable_nat(
+            &config.hotspot.interface,
+            &config.uplink.interface,
+            config.hotspot.client_isolation,
+        ) {
+            RoutingManager::remove_hotspot_uplink();
+            let _ = ap.stop().await;
+            let _ = backend.deactivate_station(&session).await;
+            self.state_machine
+                .set_error_state(format!("Dual WiFi NAT failed: {}", e), None)
+                .await;
+            return Err(RuntimeError::InvalidConfig(e.to_string()));
+        }
+
+        *self.ap.lock().await = Some(ap);
+        *self.nm_station_session.lock().await = Some(session);
+        *self.nat.lock().await = Some(nat_manager);
+
+        let hotspot_iface = config.hotspot.interface.clone();
+        let uplink_iface = config.uplink.interface.clone();
+        let client_isolation = config.hotspot.client_isolation;
+        let networks = config.uplink.networks.clone();
+        let nm_session_slot = Arc::clone(&self.nm_station_session);
+        let nat_slot = Arc::clone(&self.nat);
+        let hotspot_cidr_task = hotspot_cidr.clone();
+
+        let task = tokio::spawn(async move {
+            let mut consecutive_failures = 0_u8;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+                let session_now = nm_session_slot.lock().await.clone();
+                let Some(session_now) = session_now else {
+                    continue;
+                };
+
+                let viable = match crate::netbridge::network_manager::NetworkManagerBackend::system(
+                    std::time::Duration::from_secs(5),
+                )
+                .await
+                {
+                    Ok(backend) => backend
+                        .station_session_is_viable(&session_now)
+                        .await
+                        .unwrap_or(false),
+                    Err(_) => false,
+                };
+
+                if viable {
+                    consecutive_failures = 0;
+                    if !RoutingManager::hotspot_uplink_is_configured(
+                        &hotspot_cidr_task,
+                        &uplink_iface,
+                    ) {
+                        if let Err(e) = RoutingManager::configure_hotspot_uplink(
+                            &hotspot_cidr_task,
+                            &uplink_iface,
+                        ) {
+                            warn!(
+                                "Failed to repair DualWifi policy route via {}: {}",
+                                uplink_iface, e
+                            );
+                        }
+                    }
+                    let nat_guard = nat_slot.lock().await;
+                    if let Some(nat) = nat_guard.as_ref() {
+                        if !nat.kernel_rules_active(&hotspot_iface, &uplink_iface) {
+                            info!(
+                                "🌍 Restoring missing DualWifi NAT/security rules via {}.",
+                                uplink_iface
+                            );
+                            if let Err(e) =
+                                nat.enable_nat(&hotspot_iface, &uplink_iface, client_isolation)
+                            {
+                                warn!("Failed to reapply DualWifi NAT after recovery: {}", e);
+                            }
+                        }
+                    }
+                    drop(nat_guard);
+                    continue;
+                }
+
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                warn!(
+                    "DualWifi NetworkManager uplink health check failed ({}/3)",
+                    consecutive_failures
+                );
+                if consecutive_failures < 3 {
+                    continue;
+                }
+                consecutive_failures = 0;
+
+                warn!(
+                    "DualWifi uplink session lost; rebuilding NetworkManager station on {} while keeping the hotspot active",
+                    uplink_iface
+                );
+                let backend =
+                    match crate::netbridge::network_manager::NetworkManagerBackend::system(
+                        std::time::Duration::from_secs(5),
+                    )
+                    .await
+                    {
+                        Ok(b) => b,
+                        Err(e) => {
+                            warn!(
+                                "NetworkManager unavailable during DualWifi uplink rebuild: {}",
+                                e
+                            );
+                            continue;
+                        }
+                    };
+                let _ = backend.deactivate_station(&session_now).await;
+
+                let mut rebuilt = None;
+                for (idx, network) in networks.iter().enumerate() {
+                    let profile = match crate::netbridge::network_manager::station_profile::StationProfileBuilder::new(
+                        &uplink_iface,
+                    )
+                    .and_then(|b| b.build(network, idx))
+                    {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
+                    match backend
+                        .activate_station(&profile, std::time::Duration::from_secs(25))
+                        .await
+                    {
+                        Ok(s) => {
+                            rebuilt = Some(s);
+                            break;
+                        }
+                        Err(e) => warn!(
+                            "DualWifi uplink reconnect to '{}' failed: {}",
+                            network.ssid, e
+                        ),
+                    }
+                }
+
+                match rebuilt {
+                    Some(s) => {
+                        *nm_session_slot.lock().await = Some(s);
+                        if let Err(e) = RoutingManager::configure_hotspot_uplink(
+                            &hotspot_cidr_task,
+                            &uplink_iface,
+                        ) {
+                            warn!(
+                                "Failed to reconfigure DualWifi policy route after reconnect: {}",
+                                e
+                            );
+                        }
+                        let nat_guard = nat_slot.lock().await;
+                        if let Some(nat) = nat_guard.as_ref() {
+                            if let Err(e) =
+                                nat.enable_nat(&hotspot_iface, &uplink_iface, client_isolation)
+                            {
+                                warn!("Failed to reapply DualWifi NAT after reconnect: {}", e);
+                            }
+                        }
+                        drop(nat_guard);
+                        info!(
+                            "✅ DualWifi uplink reconnected on {} without dropping the hotspot",
+                            uplink_iface
+                        );
+                    }
+                    None => {
+                        warn!(
+                            "DualWifi uplink rebuild failed on every saved network; hotspot remains active, will retry"
+                        );
+                        *nm_session_slot.lock().await = None;
+                    }
+                }
+            }
+        });
+
+        *self.dual_nm_task.lock().await = Some(task);
+
         self.state_machine
             .transition_to(SystemState::DualActive)
             .await;
@@ -508,10 +1078,21 @@ impl RuntimeManager {
             interfaces
         );
 
-        // ProcessRunner owns and stops Guardian's hostapd/wpa_supplicant/dnsmasq
-        // children. Never use global killall here: those daemons may carry the host's
-        // management connection or provide unrelated DNS/DHCP services.
+        // ProcessRunner owns and stops Guardian's hostapd/dnsmasq children. Never
+        // use global killall here: those daemons may carry the host's management
+        // connection or provide unrelated DNS/DHCP services.
         for interface in &interfaces {
+            // The uplink interface is always NetworkManager-managed; never forcibly
+            // down/flush it here.
+            if interface == &config.uplink.interface {
+                tracing::info!(
+                    "Interface {} is managed by NetworkManager; skipping manual ip link/flush reset.",
+                    interface
+                );
+                let _ = std::fs::remove_file(format!("/var/run/wpa_supplicant/{}", interface));
+                continue;
+            }
+
             tracing::info!(
                 "Resetting Guardian-managed wireless interface: {}",
                 interface
@@ -546,18 +1127,45 @@ impl RuntimeManager {
     }
 
     pub async fn stop_all(&self) {
+        if let Some(task) = self.dual_nm_task.lock().await.take() {
+            task.abort();
+        }
+        if let Some(task) = self.client_nm_task.lock().await.take() {
+            task.abort();
+        }
+        if let Some(session) = self.nm_station_session.lock().await.take() {
+            tracing::info!(
+                "Deactivating active NetworkManager station session: {}",
+                session.profile_id
+            );
+            let mut cleaned = false;
+            if let Ok(backend) = crate::netbridge::network_manager::NetworkManagerBackend::system(
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            {
+                if let Err(e) = backend.deactivate_station(&session).await {
+                    tracing::warn!(
+                        "Failed to cleanly deactivate NetworkManager station session: {}",
+                        e
+                    );
+                } else {
+                    cleaned = true;
+                }
+            }
+            if !cleaned {
+                *self.nm_station_session.lock().await = Some(session);
+            }
+        }
         if let Some(mut ap) = self.ap.lock().await.take() {
             let _ = ap.stop().await;
         }
-        if let Some(mut uplink) = self.uplink.lock().await.take() {
-            let _ = uplink.stop().await;
-        }
-        if let Some(mut dual) = self.dual.lock().await.take() {
-            let _ = dual.stop().await;
-        }
-        // Clean up HotspotOnly NAT if it was set
+        // Clean up HotspotOnly/DualWifi(NM) NAT and policy routing if set. Removing
+        // the hotspot-uplink policy rule is a no-op when it was never configured
+        // (HotspotOnly), so this is safe to call unconditionally here.
         if let Some(nat) = self.nat.lock().await.take() {
             let _ = nat.disable_nat();
+            RoutingManager::remove_hotspot_uplink();
             let _ = self.routing.disable_forwarding();
         }
     }
@@ -609,7 +1217,8 @@ mod tests {
         let _test_lock = blocking_env_lock();
         set_selected_interface(Some("eth7".to_string()));
 
-        let config = GuardianConfig::default();
+        let mut config = GuardianConfig::default();
+        config.uplink.interface.clear();
 
         assert_eq!(
             RuntimeManager::get_uplink_interface(&config).as_deref(),

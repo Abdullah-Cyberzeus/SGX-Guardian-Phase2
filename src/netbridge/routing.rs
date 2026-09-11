@@ -4,12 +4,20 @@ use std::net::Ipv4Addr;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tracing::{error, info};
+use std::sync::Mutex;
+use tracing::{error, info, warn};
 
 const HOTSPOT_ROUTE_TABLE: &str = "200";
 const HOTSPOT_RULE_PRIORITY: &str = "22000";
 const UPLINK_SOURCE_RULE_PRIORITY: &str = "22001";
+/// Wins over any other default route this board normally carries (DHCP-assigned
+/// defaults are conventionally >=10; see board evidence of wwan0 at metric 10).
+const FORCED_DEFAULT_METRIC: &str = "1";
 static POLICY_ROUTING_UNSUPPORTED: AtomicBool = AtomicBool::new(false);
+/// Interface currently holding Guardian's forced main-table default route, used
+/// only when the kernel has no policy-routing (FIB rules) support. Tracked so
+/// `remove_hotspot_uplink` can clean up exactly the route Guardian added.
+static FORCED_DEFAULT_IFACE: Mutex<Option<String>> = Mutex::new(None);
 
 fn parse_interface_cidr(output: &str) -> Option<(Ipv4Addr, u8)> {
     output.lines().find_map(|line| {
@@ -273,10 +281,11 @@ impl RoutingManager {
             }
 
             POLICY_ROUTING_UNSUPPORTED.store(true, Ordering::SeqCst);
-            tracing::warn!(
-                "Kernel policy routing is unavailable on {}. Preserving the main routing table; NAT will follow the active egress.",
+            warn!(
+                "Kernel policy routing is unavailable on {}. Forcing it as the main-table default route instead, since forwarded traffic cannot be scoped by source without FIB rules.",
                 uplink_iface
             );
+            Self::force_main_table_default(uplink_iface, &gateway.to_string())?;
             return Ok(());
         }
 
@@ -289,9 +298,48 @@ impl RoutingManager {
         Ok(())
     }
 
+    /// Replaces the main table's default route so `uplink_iface` always wins the
+    /// kernel's routing decision, regardless of other default routes the board
+    /// carries (cellular, other Wi-Fi radio, etc.) at higher metrics. Used only
+    /// when the kernel has no policy-routing support, so per-source scoping to a
+    /// dedicated table is unavailable — this is the fallback that still lets
+    /// forwarded hotspot traffic (and the board's own traffic) reach the intended
+    /// uplink deterministically instead of racing an arbitrary competing route.
+    fn force_main_table_default(uplink_iface: &str, gateway: &str) -> Result<(), NetbridgeError> {
+        Self::run_ip(&[
+            "-4",
+            "route",
+            "replace",
+            "default",
+            "via",
+            gateway,
+            "dev",
+            uplink_iface,
+            "metric",
+            FORCED_DEFAULT_METRIC,
+        ])?;
+        if let Ok(mut forced) = FORCED_DEFAULT_IFACE.lock() {
+            *forced = Some(uplink_iface.to_string());
+        }
+        info!(
+            "Forced main-table default route: default via {} dev {} metric {}",
+            gateway, uplink_iface, FORCED_DEFAULT_METRIC
+        );
+        Ok(())
+    }
+
     pub fn hotspot_uplink_is_configured(hotspot_cidr: &str, uplink_iface: &str) -> bool {
         if POLICY_ROUTING_UNSUPPORTED.load(Ordering::SeqCst) {
-            return true;
+            let output = Command::new("ip")
+                .args(["-4", "route", "show", "default", "dev", uplink_iface])
+                .output();
+            let routes = match output {
+                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+                _ => return false,
+            };
+            return routes
+                .lines()
+                .any(|line| line.contains(&format!("metric {}", FORCED_DEFAULT_METRIC)));
         }
 
         let Some((uplink_ip, prefix)) = Self::interface_ipv4_cidr(uplink_iface) else {
@@ -357,6 +405,25 @@ impl RoutingManager {
         let _ = Command::new("ip")
             .args(["-4", "route", "flush", "table", HOTSPOT_ROUTE_TABLE])
             .output();
+
+        let forced_iface = FORCED_DEFAULT_IFACE
+            .lock()
+            .ok()
+            .and_then(|mut forced| forced.take());
+        if let Some(iface) = forced_iface {
+            let _ = Command::new("ip")
+                .args([
+                    "-4",
+                    "route",
+                    "del",
+                    "default",
+                    "dev",
+                    &iface,
+                    "metric",
+                    FORCED_DEFAULT_METRIC,
+                ])
+                .output();
+        }
     }
 
     fn is_operation_not_supported(error: &NetbridgeError) -> bool {

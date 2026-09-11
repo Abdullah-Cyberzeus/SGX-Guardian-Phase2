@@ -59,6 +59,7 @@ which = "8"
 socket2 = "0.5"
 tokio-util = { version = "0.7.18", features = ["io"] }
 fs2 = "0.4"
+zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 [build-dependencies]
 tonic-prost-build = "0.14.5"

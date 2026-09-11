@@ -10,6 +10,7 @@ use anyhow::{anyhow, Result};
 use std::net::Ipv4Addr;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use tracing::{info, warn};
 
 fn merge_with_active_policy(dynamic_rules: Vec<Rule>) -> Policy {
@@ -71,12 +72,16 @@ fn interface_network_cidr(interface: &str) -> Result<String> {
 
 pub struct NatManager {
     is_enabled: AtomicBool,
+    /// Legacy-iptables FORWARD rules this manager inserted, kept so teardown
+    /// removes exactly what was added.
+    legacy_forward_rules: Mutex<Vec<Vec<String>>>,
 }
 
 impl NatManager {
     pub fn new() -> Self {
         Self {
             is_enabled: AtomicBool::new(false),
+            legacy_forward_rules: Mutex::new(Vec::new()),
         }
     }
 }
@@ -99,17 +104,20 @@ impl NatManager {
         tracing::debug!("Generating NAT, Forwarding, and Isolation policies...");
         let hotspot_cidr = interface_network_cidr(in_iface)?;
 
-        // Cover the selected Wi-Fi uplink and the board's existing Ethernet/default
-        // egress. The target kernel has no policy-routing support, so forwarded traffic
-        // must be allowed to follow whichever route is already active without rewriting
-        // the management routing table.
+        // Cover every interface that can plausibly hold the board's default route
+        // (Ethernet, either Wi-Fi radio, cellular). The target kernel has no
+        // policy-routing support, so forwarded hotspot traffic must be allowed to
+        // follow whichever egress the kernel's main routing table is actually using
+        // right now — that can change on its own (Wi-Fi drops, cellular takes over)
+        // without Guardian restarting NAT, so all of them stay permitted rather than
+        // only the interface selected when this mode started.
         let sibling_uplink = if out_iface == "wlan0" {
             "wlan1"
         } else {
             "wlan0"
         };
         let mut uplinks: Vec<&str> = vec![out_iface];
-        for candidate in [sibling_uplink, "eth0"] {
+        for candidate in [sibling_uplink, "eth0", "wwan0"] {
             if !uplinks.contains(&candidate) {
                 uplinks.push(candidate);
             }
@@ -190,15 +198,117 @@ impl NatManager {
             return Err(anyhow!("Failed to enable NAT: {:?}", e));
         }
 
+        // Legacy iptables hooks FORWARD at the same priority as the nftables chain
+        // above but is invisible to `nft list ruleset`. Docker sets its policy to
+        // DROP, which silently discards hotspot traffic even when every nftables
+        // rule permits it. A packet must be accepted by both layers, so Guardian's
+        // nftables policy still governs what is allowed.
+        self.allow_legacy_forward(in_iface, &uplinks);
+
         self.is_enabled.store(true, Ordering::SeqCst);
         info!("✅ Network routing and Firewall rules successfully applied.");
 
         Ok(())
     }
 
+    /// True when a legacy `iptables` binary is present. Probed once: boards
+    /// without it need no compatibility rules at all.
+    fn legacy_iptables_present() -> bool {
+        static PRESENT: OnceLock<bool> = OnceLock::new();
+        *PRESENT.get_or_init(|| {
+            Command::new("iptables")
+                .arg("--version")
+                .output()
+                .map(|output| output.status.success())
+                .unwrap_or(false)
+        })
+    }
+
+    fn run_iptables(action: &[&str], spec: &[String]) -> bool {
+        let mut args: Vec<&str> = action.to_vec();
+        args.extend(spec.iter().map(|value| value.as_str()));
+        Command::new("iptables")
+            .args(&args)
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
+    fn legacy_forward_specs(in_iface: &str, uplink: &str) -> [Vec<String>; 2] {
+        [
+            vec![
+                "-i".to_owned(),
+                in_iface.to_owned(),
+                "-o".to_owned(),
+                uplink.to_owned(),
+                "-j".to_owned(),
+                "ACCEPT".to_owned(),
+            ],
+            vec![
+                "-i".to_owned(),
+                uplink.to_owned(),
+                "-o".to_owned(),
+                in_iface.to_owned(),
+                "-m".to_owned(),
+                "conntrack".to_owned(),
+                "--ctstate".to_owned(),
+                "RELATED,ESTABLISHED".to_owned(),
+                "-j".to_owned(),
+                "ACCEPT".to_owned(),
+            ],
+        ]
+    }
+
+    fn allow_legacy_forward(&self, in_iface: &str, uplinks: &[&str]) {
+        if !Self::legacy_iptables_present() {
+            return;
+        }
+
+        let mut recorded = Vec::new();
+        for uplink in uplinks {
+            for spec in Self::legacy_forward_specs(in_iface, uplink) {
+                if !Self::run_iptables(&["-C", "FORWARD"], &spec)
+                    && !Self::run_iptables(&["-I", "FORWARD", "1"], &spec)
+                {
+                    warn!(
+                        "Failed to add legacy iptables FORWARD accept for {} -> {}",
+                        in_iface, uplink
+                    );
+                    continue;
+                }
+                recorded.push(spec);
+            }
+        }
+
+        if let Ok(mut stored) = self.legacy_forward_rules.lock() {
+            *stored = recorded;
+        }
+    }
+
+    fn remove_legacy_forward(&self) {
+        let rules = self
+            .legacy_forward_rules
+            .lock()
+            .map(|mut stored| std::mem::take(&mut *stored))
+            .unwrap_or_default();
+
+        for spec in rules {
+            // Delete duplicates too, including any left by an interrupted run.
+            for _ in 0..8 {
+                if !Self::run_iptables(&["-C", "FORWARD"], &spec) {
+                    break;
+                }
+                if !Self::run_iptables(&["-D", "FORWARD"], &spec) {
+                    break;
+                }
+            }
+        }
+    }
+
     /// Removes all NAT and forwarding policies by clearing the enforcement rules.
     pub fn disable_nat(&self) -> Result<()> {
         tracing::debug!("Removing NAT and Forwarding policies...");
+        self.remove_legacy_forward();
         let result = if let Some(active_policy) = crate::policy::get_active_policy() {
             enforcement::apply_policy(&active_policy)
         } else {
@@ -254,7 +364,15 @@ impl NatManager {
             _ => return false,
         };
 
-        nat.contains("masquerade")
+        // A Docker restart rebuilds the legacy FORWARD chain and can drop Guardian's
+        // accept rule, so verify that layer too rather than only the nftables tables.
+        let legacy_ok = !Self::legacy_iptables_present()
+            || Self::legacy_forward_specs(in_iface, out_iface)
+                .iter()
+                .all(|spec| Self::run_iptables(&["-C", "FORWARD"], spec));
+
+        legacy_ok
+            && nat.contains("masquerade")
             && nat.contains(&format!("ip saddr {}", hotspot_cidr))
             && nat.contains(&format!("oifname \"{}\"", out_iface))
             && forward.contains(&format!("iifname \"{}\"", in_iface))

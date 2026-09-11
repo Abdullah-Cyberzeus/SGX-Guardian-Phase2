@@ -105,26 +105,6 @@ impl ValidationResult {
     }
 }
 
-use crate::runtime::models::SavedWifi;
-
-/// Configuration options for connecting to external WiFi (STA mode).
-#[derive(Debug, Clone)]
-pub struct WifiClientSettings {
-    pub interface: String,
-    pub networks: Vec<SavedWifi>,
-    pub country: String,
-}
-
-impl Default for WifiClientSettings {
-    fn default() -> Self {
-        WifiClientSettings {
-            interface: "wlan1".to_string(), // Typical secondary interface
-            networks: Vec::new(),
-            country: "US".to_string(),
-        }
-    }
-}
-
 use serde::{Deserialize, Serialize};
 
 /// Represents a scanned Wi-Fi network.
@@ -132,7 +112,11 @@ use serde::{Deserialize, Serialize};
 pub struct WifiNetwork {
     pub ssid: String,
     pub bssid: String,
-    pub signal_dbm: i32,
+    /// Signal quality as a 0-100 percentage, matching what NetworkManager (and
+    /// therefore nmcli/most desktop Wi-Fi UIs) actually reports. This is not a
+    /// derived dBm value — quality-to-dBm conversions vary by vendor/driver and
+    /// have no single correct formula, so the raw percentage is shown as-is.
+    pub signal_percent: u8,
     pub band: String,
     pub security: String,
 }

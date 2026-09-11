@@ -77,3 +77,32 @@ async fn test_wifi_api_get_mode() {
         "Idle"
     );
 }
+
+#[tokio::test]
+async fn test_wifi_api_scan_endpoint() {
+    let event_bus = Arc::new(EventBus::new());
+    let state_machine = Arc::new(StateMachine::new(event_bus.clone()));
+    let manager = Arc::new(RuntimeManager::new(state_machine.clone()));
+
+    let app = build_wifi_router(manager, event_bus);
+
+    let response = app
+        .oneshot(Request::builder().uri("/scan").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    // The scan endpoint always goes through NetworkManager D-Bus now. This
+    // sandbox has no system bus, so it correctly reports 503 instead of the
+    // 200 a real board with NetworkManager running would return; either way
+    // the body always carries a `networks` array.
+    assert!(matches!(
+        response.status(),
+        StatusCode::OK | StatusCode::SERVICE_UNAVAILABLE
+    ));
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body_json: Value = serde_json::from_slice(&body).unwrap();
+    assert!(body_json.get("networks").is_some());
+}
