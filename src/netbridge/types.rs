@@ -107,7 +107,8 @@ impl ValidationResult {
 
 use crate::runtime::models::SavedWifi;
 
-/// Configuration options for connecting to external WiFi (STA mode).
+/// Legacy wpa_supplicant settings retained for boards that do not expose a
+/// usable NetworkManager D-Bus service.
 #[derive(Debug, Clone)]
 pub struct WifiClientSettings {
     pub interface: String,
@@ -117,8 +118,8 @@ pub struct WifiClientSettings {
 
 impl Default for WifiClientSettings {
     fn default() -> Self {
-        WifiClientSettings {
-            interface: "wlan1".to_string(), // Typical secondary interface
+        Self {
+            interface: "wlan1".to_string(),
             networks: Vec::new(),
             country: "US".to_string(),
         }
@@ -132,6 +133,14 @@ use serde::{Deserialize, Serialize};
 pub struct WifiNetwork {
     pub ssid: String,
     pub bssid: String,
+    /// Signal quality as a 0-100 percentage, matching what NetworkManager (and
+    /// therefore nmcli/most desktop Wi-Fi UIs) actually reports. This is not a
+    /// derived dBm value — quality-to-dBm conversions vary by vendor/driver and
+    /// have no single correct formula, so the raw percentage is shown as-is.
+    #[serde(default)]
+    pub signal_percent: u8,
+    /// Raw dBm retained for legacy iw/wpa_supplicant consumers.
+    #[serde(default)]
     pub signal_dbm: i32,
     pub band: String,
     pub security: String,

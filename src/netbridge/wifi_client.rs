@@ -79,6 +79,7 @@ impl WifiClientOrchestrator {
                         ssid: current_ssid.clone(),
                         bssid: current_bssid.clone(),
                         signal_dbm: current_signal,
+                        signal_percent: ((current_signal + 100) * 2).clamp(0, 100) as u8,
                         band: current_band.clone(),
                         security: "WPA2".to_string(),
                     });
@@ -129,6 +130,7 @@ impl WifiClientOrchestrator {
                 ssid: current_ssid,
                 bssid: current_bssid,
                 signal_dbm: current_signal,
+                signal_percent: ((current_signal + 100) * 2).clamp(0, 100) as u8,
                 band: current_band,
                 security: "WPA2".to_string(),
             });

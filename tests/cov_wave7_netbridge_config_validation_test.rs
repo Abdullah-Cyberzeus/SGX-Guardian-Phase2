@@ -99,6 +99,7 @@ fn netbridge_public_states_and_wifi_network_have_stable_contracts() {
         ssid: "Cafe".into(),
         bssid: "aa:bb:cc:dd:ee:ff".into(),
         signal_dbm: -54,
+        signal_percent: 92,
         band: "5GHz".into(),
         security: "WPA2".into(),
     };

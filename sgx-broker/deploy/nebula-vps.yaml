@@ -1,0 +1,57 @@
+# VPS Nebula Configuration — Lighthouse + Relay
+# Generated for SGX Guardian Cloud Broker VPS
+#
+# Prerequisites:
+#   On Node A (Home CA), run:
+#     nebula-cert sign -name "vps-lighthouse" -ip "192.168.100.10/24" \
+#       -groups "lighthouse,relay" \
+#       -ca-crt /var/lib/sgx-guardian/nebula/ca/ca.crt \
+#       -ca-key /var/lib/sgx-guardian/nebula/ca/ca.key
+#
+#   Then copy to VPS:
+#     scp ca.crt vps-lighthouse.crt vps-lighthouse.key user@VPS_IP:/etc/nebula/
+
+pki:
+  ca: /etc/nebula/ca.crt
+  cert: /etc/nebula/vps-lighthouse.crt
+  key: /etc/nebula/vps-lighthouse.key
+
+static_host_map: {}
+
+listen:
+  host: 0.0.0.0
+  port: 4242
+
+tun:
+  dev: nebula0
+  drop_local_broadcast: false
+  drop_multicast: false
+  tx_queue: 500
+  mtu: 1300
+
+# This VPS is the public lighthouse for all nodes
+lighthouse:
+  am_lighthouse: true
+  interval: 60
+
+# This VPS also relays traffic for nodes behind strict NAT
+relay:
+  am_relay: true
+  use_relays: false
+
+logging:
+  level: info
+
+firewall:
+  conntrack:
+    tcp_timeout: 12m
+    udp_timeout: 3m
+    default_timeout: 10m
+  outbound:
+    - port: any
+      proto: any
+      host: any
+  inbound:
+    - port: any
+      proto: any
+      host: any

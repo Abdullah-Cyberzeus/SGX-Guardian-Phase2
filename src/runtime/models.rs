@@ -31,11 +31,20 @@ pub struct SavedWifi {
     pub password: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UplinkConfig {
     pub interface: String,
     #[serde(default)]
     pub networks: Vec<SavedWifi>,
+}
+
+impl Default for UplinkConfig {
+    fn default() -> Self {
+        Self {
+            interface: crate::netbridge::backend::DEFAULT_NM_UPLINK_INTERFACE.to_owned(),
+            networks: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

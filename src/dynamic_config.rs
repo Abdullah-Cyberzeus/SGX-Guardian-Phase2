@@ -51,27 +51,42 @@ fn host_from_endpoint(endpoint: &str) -> Option<String> {
 }
 
 async fn tcp_port_open(addr: &str) -> bool {
-    tokio::time::timeout(Duration::from_secs(2), TcpStream::connect(addr))
+    tokio::time::timeout(Duration::from_millis(1500), TcpStream::connect(addr))
         .await
         .map(|r| r.is_ok())
         .unwrap_or(false)
 }
 
 async fn lighthouse_runtime_reachable(
+    node_name: &str,
     overlay_ip: &str,
     physical_endpoint: &str,
     registry_port: u16,
 ) -> bool {
     let mut candidates = Vec::new();
-    if !overlay_ip.is_empty() {
-        candidates.push(format!("{}:{}", overlay_ip, registry_port));
-    }
-    if let Some(host) = host_from_endpoint(physical_endpoint) {
-        candidates.push(format!("{}:{}", host, registry_port));
+    if node_name == "vps-lighthouse" {
+        if let Some(host) = host_from_endpoint(physical_endpoint) {
+            candidates.push(format!("{}:8080", host));
+        }
+        if !overlay_ip.is_empty() {
+            candidates.push(format!("{}:8080", overlay_ip));
+        }
+    } else {
+        if !overlay_ip.is_empty() {
+            candidates.push(format!("{}:{}", overlay_ip, registry_port));
+        }
+        if let Some(host) = host_from_endpoint(physical_endpoint) {
+            candidates.push(format!("{}:{}", host, registry_port));
+        }
     }
 
-    for addr in candidates {
-        if tcp_port_open(&addr).await {
+    let futures: Vec<_> = candidates
+        .into_iter()
+        .map(|addr| async move { tcp_port_open(&addr).await })
+        .collect();
+
+    for res in futures_util::future::join_all(futures).await {
+        if res {
             return true;
         }
     }
@@ -85,34 +100,25 @@ pub async fn reachable_lighthouse_name() -> Option<String> {
     // Runtime mode: probe all lighthouse-role entries and refresh `is_active`
     // based on live reachability, then return the best reachable candidate.
     if let Ok(mut lh_reg) = LighthouseRegistry::load(LIGHTHOUSE_REGISTRY_PATH) {
-        let mut candidates = lh_reg
+        let candidates = lh_reg
             .lighthouses
             .iter()
             .filter(|l| l.is_lighthouse)
             .cloned()
             .collect::<Vec<_>>();
-        candidates.sort_by(|a, b| {
-            b.is_primary
-                .cmp(&a.is_primary)
-                .then_with(|| b.is_active.cmp(&a.is_active))
-                .then_with(|| a.node_name.cmp(&b.node_name))
-        });
 
         let old_primary = lh_reg.primary().map(|p| p.node_name.clone());
         let mut changed = false;
-        let mut reachable_name: Option<String> = None;
 
-        for lh in candidates {
+        // 1. Probe all lighthouses and update active status
+        for lh in &candidates {
             let ok = lighthouse_runtime_reachable(
+                &lh.node_name,
                 &lh.overlay_ip,
                 &lh.physical_endpoint,
                 REGISTRY_SYNC_PORT,
             )
             .await;
-
-            if ok && reachable_name.is_none() {
-                reachable_name = Some(lh.node_name.clone());
-            }
 
             if let Some(entry) = lh_reg
                 .lighthouses
@@ -124,6 +130,28 @@ pub async fn reachable_lighthouse_name() -> Option<String> {
                     changed = true;
                 }
             }
+        }
+
+        // 2. Select primary with HYSTERESIS (stick to current primary if it is still active)
+        let mut reachable_name: Option<String> = None;
+        if let Some(ref current_name) = old_primary {
+            if lh_reg
+                .lighthouses
+                .iter()
+                .any(|l| &l.node_name == current_name && l.is_active)
+            {
+                reachable_name = Some(current_name.clone());
+            }
+        }
+
+        // If current primary is inactive or absent, pick the first active lighthouse (nodeA preferred, then vps)
+        if reachable_name.is_none() {
+            reachable_name = lh_reg
+                .lighthouses
+                .iter()
+                .filter(|l| l.is_lighthouse && l.is_active)
+                .map(|l| l.node_name.clone())
+                .next();
         }
 
         if let Some(ref reachable) = reachable_name {
@@ -982,7 +1010,7 @@ mod tests {
             let _ = listener.accept().await;
         });
 
-        assert!(lighthouse_runtime_reachable("", &format!("127.0.0.1:{}", port), port).await);
+        assert!(lighthouse_runtime_reachable("", "", &format!("127.0.0.1:{}", port), port).await);
         server.await.unwrap();
 
         let closed_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -990,8 +1018,13 @@ mod tests {
         drop(closed_listener);
 
         assert!(
-            !lighthouse_runtime_reachable("", &format!("127.0.0.1:{}", closed_port), closed_port)
-                .await
+            !lighthouse_runtime_reachable(
+                "",
+                "",
+                &format!("127.0.0.1:{}", closed_port),
+                closed_port,
+            )
+            .await
         );
     }
 

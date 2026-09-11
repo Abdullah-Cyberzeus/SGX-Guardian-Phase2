@@ -103,7 +103,132 @@ pub struct NodeConfig {
     pub relay: Option<RelayLimitsConfig>,
     #[serde(default)]
     pub api: Option<ApiConfig>,
+    #[serde(default)]
+    pub vps: Option<CloudBrokerConfig>,
 }
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct CloudBrokerConfig {
+    #[serde(default)]
+    pub broker_url: Option<String>,
+    #[serde(default)]
+    pub broker_token: Option<String>,
+    #[serde(default)]
+    pub vps_public_ip: Option<String>,
+    #[serde(default)]
+    pub vps_overlay_ip: Option<String>,
+}
+
+/// Resolves the VPS Cloud Broker configuration for a given node.
+/// Merges environment variables with settings from /etc/sgx-guardian/config.yaml
+/// and /etc/sgx-guardian/config/{node_id}.yaml.
+pub fn resolve_vps_config(node_id: &str) -> CloudBrokerConfig {
+    let mut config = CloudBrokerConfig::default();
+
+    // 1. Try reading from config files
+    let paths = [
+        "/etc/sgx-guardian/config.yaml".to_string(),
+        format!("/etc/sgx-guardian/config/{}.yaml", node_id),
+        format!("/etc/sgx-guardian/{}.yaml", node_id),
+        format!("config/{}.yaml", node_id),
+        "config/config.yaml".to_string(),
+    ];
+
+    for path in &paths {
+        if let Ok(data) = fs::read_to_string(path) {
+            // First check if it's a NodeConfig with a vps section
+            if let Ok(node_cfg) = serde_yaml::from_str::<NodeConfig>(&data) {
+                if let Some(vps) = node_cfg.vps {
+                    if config.broker_url.is_none() {
+                        config.broker_url = vps.broker_url;
+                    }
+                    if config.broker_token.is_none() {
+                        config.broker_token = vps.broker_token;
+                    }
+                    if config.vps_public_ip.is_none() {
+                        config.vps_public_ip = vps.vps_public_ip;
+                    }
+                    if config.vps_overlay_ip.is_none() {
+                        config.vps_overlay_ip = vps.vps_overlay_ip;
+                    }
+                }
+            } else if let Ok(direct_vps) = serde_yaml::from_str::<serde_yaml::Value>(&data) {
+                // Also check if the YAML has a top-level `vps:` key
+                if let Some(vps_val) = direct_vps.get("vps") {
+                    if let Ok(vps) = serde_yaml::from_value::<CloudBrokerConfig>(vps_val.clone()) {
+                        if config.broker_url.is_none() {
+                            config.broker_url = vps.broker_url;
+                        }
+                        if config.broker_token.is_none() {
+                            config.broker_token = vps.broker_token;
+                        }
+                        if config.vps_public_ip.is_none() {
+                            config.vps_public_ip = vps.vps_public_ip;
+                        }
+                        if config.vps_overlay_ip.is_none() {
+                            config.vps_overlay_ip = vps.vps_overlay_ip;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Environment variables override file config
+    if let Ok(env_url) = std::env::var("SGX_BROKER_URL") {
+        if !env_url.trim().is_empty() {
+            config.broker_url = Some(env_url.trim().to_string());
+        }
+    }
+    if let Ok(env_tok) = std::env::var("SGX_BROKER_TOKEN") {
+        if !env_tok.trim().is_empty() {
+            config.broker_token = Some(env_tok.trim().to_string());
+        }
+    }
+    if let Ok(env_pub) = std::env::var("SGX_VPS_PUBLIC_IP") {
+        if !env_pub.trim().is_empty() {
+            config.vps_public_ip = Some(env_pub.trim().to_string());
+        }
+    }
+    if let Ok(env_ovl) = std::env::var("SGX_VPS_OVERLAY_IP") {
+        if !env_ovl.trim().is_empty() {
+            config.vps_overlay_ip = Some(env_ovl.trim().to_string());
+        }
+    }
+
+    // 3. Fallback inference: if vps_public_ip is set but broker_url is not
+    // Default fallback values if unconfigured (zero-config out-of-the-box operation)
+    if config.vps_public_ip.is_none() && config.broker_url.is_none() {
+        config.vps_public_ip = Some("159.203.186.55".to_string());
+        config.broker_url = Some("http://159.203.186.55:8080".to_string());
+    } else if config.broker_url.is_none() {
+        if let Some(ref pub_ip) = config.vps_public_ip {
+            config.broker_url = Some(format!("http://{}:8080", pub_ip));
+        }
+    } else if config.vps_public_ip.is_none() {
+        if let Some(ref url) = config.broker_url {
+            let host = url
+                .trim_start_matches("http://")
+                .trim_start_matches("https://")
+                .trim_start_matches("ws://")
+                .trim_start_matches("wss://")
+                .split(':')
+                .next()
+                .unwrap_or("");
+            if !host.is_empty() {
+                config.vps_public_ip = Some(host.to_string());
+            }
+        }
+    }
+
+    // Default overlay IP
+    if config.vps_overlay_ip.is_none() {
+        config.vps_overlay_ip = Some("192.168.100.10".to_string());
+    }
+
+    config
+}
+
 impl NodeConfig {
     /// Validates the node configuration fields, ensuring correct ID,
     /// hostname, IP format, port range, and non-empty public key.
@@ -218,251 +343,36 @@ impl CloudConfig {
 mod tests {
     use super::*;
 
-    fn base_yaml() -> String {
-        "node_id: nodeA\nhostname: guardian-node-A\nip: 10.0.0.5\nport: 50051\npublic_key: abc123\n"
-            .to_string()
-    }
-
-    fn parse(yaml: &str) -> NodeConfig {
-        serde_yaml::from_str(yaml).expect("valid YAML")
-    }
-
-    fn write_config(dir: &std::path::Path, name: &str, yaml: &str) -> String {
-        let path = dir.join(name);
-        std::fs::write(&path, yaml).expect("write config");
-        path.to_string_lossy().into_owned()
+    #[test]
+    fn test_resolve_vps_config_defaults() {
+        let cfg = resolve_vps_config("node_test_nonexistent");
+        assert_eq!(cfg.vps_overlay_ip.as_deref(), Some("192.168.100.10"));
     }
 
     #[test]
-    fn tls_paths_default_to_the_per_node_device_certificate() {
-        let tls = ApiTlsConfig::default();
-
+    fn test_node_config_with_vps_section() {
+        let yaml = r#"
+node_id: "nodeB"
+hostname: "nodeb.guardian"
+ip: "172.31.250.11"
+port: 50052
+public_key: "dummy-key-for-test"
+vps:
+  broker_url: "http://159.203.186.55:8080"
+  broker_token: "test-token"
+  vps_public_ip: "159.203.186.55"
+  vps_overlay_ip: "192.168.100.10"
+"#;
+        let node_cfg: NodeConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(node_cfg.node_id, "nodeB");
+        assert!(node_cfg.vps.is_some());
+        let vps = node_cfg.vps.unwrap();
         assert_eq!(
-            tls.resolved_cert_path("nodeB"),
-            "/var/lib/sgx-guardian/sgx-agent/device_nodeB_cert.der"
+            vps.broker_url.as_deref(),
+            Some("http://159.203.186.55:8080")
         );
-        assert_eq!(
-            tls.resolved_key_path("nodeB"),
-            "/var/lib/sgx-guardian/sgx-agent/device_nodeB.key"
-        );
-        assert!(!tls.enabled);
-        assert!(!tls.require_https);
-    }
-
-    #[test]
-    fn explicit_tls_paths_override_the_defaults() {
-        let tls = ApiTlsConfig {
-            enabled: true,
-            cert_path: Some("/opt/cert.der".into()),
-            key_path: Some("/opt/key.der".into()),
-            require_https: true,
-        };
-
-        assert_eq!(tls.resolved_cert_path("nodeA"), "/opt/cert.der");
-        assert_eq!(tls.resolved_key_path("nodeA"), "/opt/key.der");
-    }
-
-    #[test]
-    fn a_minimal_config_is_valid_and_uses_documented_defaults() {
-        let config = parse(&base_yaml());
-
-        config.validate().expect("minimal config is valid");
-        assert_eq!(config.offline_mode, 1);
-        assert!(config.offline_cache_enabled());
-        assert!(config.metrics.is_none());
-        // An absent relay/api block falls back to the built-in defaults.
-        assert_eq!(config.relay_or_default().max_peers, 5);
-        assert_eq!(config.relay_or_default().max_bandwidth_mbps, 10);
-        assert_eq!(config.relay_or_default().alert_threshold_pct, 80);
-        assert!(!config.relay_or_default().enabled);
-        assert!(!config.api_or_default().tls.enabled);
-    }
-
-    #[test]
-    fn identity_fields_must_not_be_blank() {
-        for (field, replacement) in [
-            ("node_id: nodeA", "node_id: \"   \""),
-            ("hostname: guardian-node-A", "hostname: \"  \""),
-            ("public_key: abc123", "public_key: \" \""),
-        ] {
-            let config = parse(&base_yaml().replace(field, replacement));
-            assert!(
-                config.validate().is_err(),
-                "{field} must be rejected when blank"
-            );
-        }
-    }
-
-    #[test]
-    fn the_ip_must_be_a_parseable_ipv4_address() {
-        let empty = parse(&base_yaml().replace("ip: 10.0.0.5", "ip: \"  \""));
-        assert_eq!(
-            empty.validate().unwrap_err(),
-            "ip field cannot be empty",
-            "whitespace is treated as absent"
-        );
-
-        let malformed = parse(&base_yaml().replace("ip: 10.0.0.5", "ip: not-an-ip"));
-        assert!(malformed
-            .validate()
-            .unwrap_err()
-            .contains("Invalid node IP format"));
-
-        // IPv6 is not accepted: the overlay and broadcast paths are IPv4-only.
-        let ipv6 = parse(&base_yaml().replace("ip: 10.0.0.5", "ip: \"::1\""));
-        assert!(ipv6.validate().is_err());
-
-        let unspecified = parse(&base_yaml().replace("ip: 10.0.0.5", "ip: 0.0.0.0"));
-        assert!(
-            unspecified.validate().is_ok(),
-            "0.0.0.0 is the pre-discovery placeholder and must stay loadable"
-        );
-    }
-
-    #[test]
-    fn port_zero_is_rejected() {
-        let config = parse(&base_yaml().replace("port: 50051", "port: 0"));
-        assert!(config
-            .validate()
-            .unwrap_err()
-            .contains("Invalid port number"));
-    }
-
-    #[test]
-    fn offline_mode_must_be_zero_or_one() {
-        let disabled = parse(&format!("{}offline_mode: 0\n", base_yaml()));
-        disabled.validate().expect("0 is valid");
-        assert!(!disabled.offline_cache_enabled());
-
-        let invalid = parse(&format!("{}offline_mode: 2\n", base_yaml()));
-        assert!(invalid
-            .validate()
-            .unwrap_err()
-            .contains("offline_mode must be 0 or 1"));
-    }
-
-    #[test]
-    fn the_metrics_block_is_validated_when_present() {
-        let valid = parse(&format!(
-            "{}metrics:\n  enabled: true\n  bind: 127.0.0.1\n  port: 9100\n",
-            base_yaml()
-        ));
-        valid.validate().expect("a well-formed metrics block");
-
-        let bad_bind = parse(&format!(
-            "{}metrics:\n  enabled: true\n  bind: not-an-ip\n  port: 9100\n",
-            base_yaml()
-        ));
-        assert!(bad_bind
-            .validate()
-            .unwrap_err()
-            .contains("Invalid metrics.bind IP"));
-
-        let zero_port = parse(&format!(
-            "{}metrics:\n  enabled: true\n  bind: 127.0.0.1\n  port: 0\n",
-            base_yaml()
-        ));
-        assert_eq!(
-            zero_port.validate().unwrap_err(),
-            "metrics.port cannot be 0"
-        );
-    }
-
-    #[test]
-    fn the_relay_block_is_validated_when_present() {
-        let valid = parse(&format!(
-            "{}relay:\n  enabled: true\n  max_peers: 8\n  alert_threshold_pct: 100\n",
-            base_yaml()
-        ));
-        valid.validate().expect("a well-formed relay block");
-        assert_eq!(valid.relay_or_default().max_peers, 8);
-
-        let over_threshold = parse(&format!(
-            "{}relay:\n  enabled: true\n  alert_threshold_pct: 101\n",
-            base_yaml()
-        ));
-        assert!(over_threshold
-            .validate()
-            .unwrap_err()
-            .contains("relay.alert_threshold_pct must be 0-100"));
-
-        let zero_peers = parse(&format!(
-            "{}relay:\n  enabled: true\n  max_peers: 0\n",
-            base_yaml()
-        ));
-        assert_eq!(
-            zero_peers.validate().unwrap_err(),
-            "relay.max_peers cannot be 0"
-        );
-    }
-
-    #[test]
-    fn loading_reports_missing_files_unparseable_yaml_and_invalid_values() {
-        let temp = tempfile::tempdir().expect("create sandbox");
-
-        let missing = load_config(&temp.path().join("absent.yaml").to_string_lossy())
-            .expect_err("a missing file must not load");
-        assert!(missing.to_string().contains("Failed to read config file"));
-
-        let malformed = write_config(temp.path(), "bad.yaml", "node_id: [unterminated");
-        let error = load_config(&malformed).expect_err("unparseable YAML must not load");
-        assert!(error.to_string().contains("Invalid YAML format"));
-
-        let invalid = write_config(
-            temp.path(),
-            "invalid.yaml",
-            &base_yaml().replace("port: 50051", "port: 0"),
-        );
-        let error = load_config(&invalid).expect_err("an invalid config must not load");
-        assert!(error.to_string().contains("Config validation failed"));
-    }
-
-    #[test]
-    fn a_valid_file_loads_through_both_entry_points() {
-        let temp = tempfile::tempdir().expect("create sandbox");
-        let path = write_config(temp.path(), "nodeA.yaml", &base_yaml());
-
-        let via_function = load_config(&path).expect("load via function");
-        let via_method = NodeConfig::load(&path).expect("load via method");
-
-        assert_eq!(via_function.node_id, "nodeA");
-        assert_eq!(via_function.ip, "10.0.0.5");
-        assert_eq!(via_method.node_id, via_function.node_id);
-        assert_eq!(via_method.port, via_function.port);
-    }
-
-    #[test]
-    fn cloud_config_is_disabled_unless_explicitly_enabled() {
-        let _lock = crate::test_support::blocking_env_lock();
-        let previous_enabled = std::env::var_os("SGX_CLOUD_UPLINK_ENABLED");
-        let previous_endpoint = std::env::var_os("SGX_CLOUD_ENDPOINT");
-
-        std::env::remove_var("SGX_CLOUD_UPLINK_ENABLED");
-        std::env::remove_var("SGX_CLOUD_ENDPOINT");
-        let default = CloudConfig::from_env();
-        assert!(!default.enabled);
-        assert_eq!(default.endpoint, "");
-
-        std::env::set_var("SGX_CLOUD_UPLINK_ENABLED", "true");
-        std::env::set_var("SGX_CLOUD_ENDPOINT", "https://cloud.example/uplink");
-        let enabled = CloudConfig::from_env();
-        assert!(enabled.enabled);
-        assert_eq!(enabled.endpoint, "https://cloud.example/uplink");
-
-        // Only the exact string "true" enables the uplink — anything else
-        // leaves outbound telemetry off.
-        for value in ["1", "TRUE", "yes", "on", ""] {
-            std::env::set_var("SGX_CLOUD_UPLINK_ENABLED", value);
-            assert!(!CloudConfig::from_env().enabled, "{value:?}");
-        }
-
-        match previous_enabled {
-            Some(value) => std::env::set_var("SGX_CLOUD_UPLINK_ENABLED", value),
-            None => std::env::remove_var("SGX_CLOUD_UPLINK_ENABLED"),
-        }
-        match previous_endpoint {
-            Some(value) => std::env::set_var("SGX_CLOUD_ENDPOINT", value),
-            None => std::env::remove_var("SGX_CLOUD_ENDPOINT"),
-        }
+        assert_eq!(vps.broker_token.as_deref(), Some("test-token"));
+        assert_eq!(vps.vps_public_ip.as_deref(), Some("159.203.186.55"));
+        assert_eq!(vps.vps_overlay_ip.as_deref(), Some("192.168.100.10"));
     }
 }

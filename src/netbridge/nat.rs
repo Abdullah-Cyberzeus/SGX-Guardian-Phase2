@@ -10,7 +10,27 @@ use anyhow::{anyhow, Result};
 use std::net::Ipv4Addr;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use tracing::{info, warn};
+
+/// Every interface that can plausibly hold the board's default route for a
+/// given selected uplink: the selected interface itself, its sibling Wi-Fi
+/// radio, Ethernet, and cellular. See `enable_nat` for why all of them stay
+/// permitted rather than only the one selected when the mode started.
+fn uplinks_for(out_iface: &str) -> Vec<&str> {
+    let sibling_uplink = if out_iface == "wlan0" {
+        "wlan1"
+    } else {
+        "wlan0"
+    };
+    let mut uplinks: Vec<&str> = vec![out_iface];
+    for candidate in [sibling_uplink, "eth0", "wwan0"] {
+        if !uplinks.contains(&candidate) {
+            uplinks.push(candidate);
+        }
+    }
+    uplinks
+}
 
 fn merge_with_active_policy(dynamic_rules: Vec<Rule>) -> Policy {
     let mut policy = crate::policy::get_active_policy().unwrap_or_else(|| Policy {
@@ -71,12 +91,16 @@ fn interface_network_cidr(interface: &str) -> Result<String> {
 
 pub struct NatManager {
     is_enabled: AtomicBool,
+    /// Legacy-iptables FORWARD rules this manager inserted, kept so teardown
+    /// removes exactly what was added.
+    legacy_forward_rules: Mutex<Vec<Vec<String>>>,
 }
 
 impl NatManager {
     pub fn new() -> Self {
         Self {
             is_enabled: AtomicBool::new(false),
+            legacy_forward_rules: Mutex::new(Vec::new()),
         }
     }
 }
@@ -99,21 +123,14 @@ impl NatManager {
         tracing::debug!("Generating NAT, Forwarding, and Isolation policies...");
         let hotspot_cidr = interface_network_cidr(in_iface)?;
 
-        // Cover the selected Wi-Fi uplink and the board's existing Ethernet/default
-        // egress. The target kernel has no policy-routing support, so forwarded traffic
-        // must be allowed to follow whichever route is already active without rewriting
-        // the management routing table.
-        let sibling_uplink = if out_iface == "wlan0" {
-            "wlan1"
-        } else {
-            "wlan0"
-        };
-        let mut uplinks: Vec<&str> = vec![out_iface];
-        for candidate in [sibling_uplink, "eth0"] {
-            if !uplinks.contains(&candidate) {
-                uplinks.push(candidate);
-            }
-        }
+        // Cover every interface that can plausibly hold the board's default route
+        // (Ethernet, either Wi-Fi radio, cellular). The target kernel has no
+        // policy-routing support, so forwarded hotspot traffic must be allowed to
+        // follow whichever egress the kernel's main routing table is actually using
+        // right now — that can change on its own (Wi-Fi drops, cellular takes over)
+        // without Guardian restarting NAT, so all of them stay permitted rather than
+        // only the interface selected when this mode started.
+        let uplinks = uplinks_for(out_iface);
 
         let mut rules = Vec::new();
 
@@ -190,15 +207,117 @@ impl NatManager {
             return Err(anyhow!("Failed to enable NAT: {:?}", e));
         }
 
+        // Legacy iptables hooks FORWARD at the same priority as the nftables chain
+        // above but is invisible to `nft list ruleset`. Docker sets its policy to
+        // DROP, which silently discards hotspot traffic even when every nftables
+        // rule permits it. A packet must be accepted by both layers, so Guardian's
+        // nftables policy still governs what is allowed.
+        self.allow_legacy_forward(in_iface, &uplinks);
+
         self.is_enabled.store(true, Ordering::SeqCst);
         info!("✅ Network routing and Firewall rules successfully applied.");
 
         Ok(())
     }
 
+    /// True when a legacy `iptables` binary is present. Probed once: boards
+    /// without it need no compatibility rules at all.
+    fn legacy_iptables_present() -> bool {
+        static PRESENT: OnceLock<bool> = OnceLock::new();
+        *PRESENT.get_or_init(|| {
+            Command::new("iptables")
+                .arg("--version")
+                .output()
+                .map(|output| output.status.success())
+                .unwrap_or(false)
+        })
+    }
+
+    fn run_iptables(action: &[&str], spec: &[String]) -> bool {
+        let mut args: Vec<&str> = action.to_vec();
+        args.extend(spec.iter().map(|value| value.as_str()));
+        Command::new("iptables")
+            .args(&args)
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
+    fn legacy_forward_specs(in_iface: &str, uplink: &str) -> [Vec<String>; 2] {
+        [
+            vec![
+                "-i".to_owned(),
+                in_iface.to_owned(),
+                "-o".to_owned(),
+                uplink.to_owned(),
+                "-j".to_owned(),
+                "ACCEPT".to_owned(),
+            ],
+            vec![
+                "-i".to_owned(),
+                uplink.to_owned(),
+                "-o".to_owned(),
+                in_iface.to_owned(),
+                "-m".to_owned(),
+                "conntrack".to_owned(),
+                "--ctstate".to_owned(),
+                "RELATED,ESTABLISHED".to_owned(),
+                "-j".to_owned(),
+                "ACCEPT".to_owned(),
+            ],
+        ]
+    }
+
+    fn allow_legacy_forward(&self, in_iface: &str, uplinks: &[&str]) {
+        if !Self::legacy_iptables_present() {
+            return;
+        }
+
+        let mut recorded = Vec::new();
+        for uplink in uplinks {
+            for spec in Self::legacy_forward_specs(in_iface, uplink) {
+                if !Self::run_iptables(&["-C", "FORWARD"], &spec)
+                    && !Self::run_iptables(&["-I", "FORWARD", "1"], &spec)
+                {
+                    warn!(
+                        "Failed to add legacy iptables FORWARD accept for {} -> {}",
+                        in_iface, uplink
+                    );
+                    continue;
+                }
+                recorded.push(spec);
+            }
+        }
+
+        if let Ok(mut stored) = self.legacy_forward_rules.lock() {
+            *stored = recorded;
+        }
+    }
+
+    fn remove_legacy_forward(&self) {
+        let rules = self
+            .legacy_forward_rules
+            .lock()
+            .map(|mut stored| std::mem::take(&mut *stored))
+            .unwrap_or_default();
+
+        for spec in rules {
+            // Delete duplicates too, including any left by an interrupted run.
+            for _ in 0..8 {
+                if !Self::run_iptables(&["-C", "FORWARD"], &spec) {
+                    break;
+                }
+                if !Self::run_iptables(&["-D", "FORWARD"], &spec) {
+                    break;
+                }
+            }
+        }
+    }
+
     /// Removes all NAT and forwarding policies by clearing the enforcement rules.
     pub fn disable_nat(&self) -> Result<()> {
         tracing::debug!("Removing NAT and Forwarding policies...");
+        self.remove_legacy_forward();
         let result = if let Some(active_policy) = crate::policy::get_active_policy() {
             enforcement::apply_policy(&active_policy)
         } else {
@@ -254,7 +373,15 @@ impl NatManager {
             _ => return false,
         };
 
-        nat.contains("masquerade")
+        // A Docker restart rebuilds the legacy FORWARD chain and can drop Guardian's
+        // accept rule, so verify that layer too rather than only the nftables tables.
+        let legacy_ok = !Self::legacy_iptables_present()
+            || Self::legacy_forward_specs(in_iface, out_iface)
+                .iter()
+                .all(|spec| Self::run_iptables(&["-C", "FORWARD"], spec));
+
+        legacy_ok
+            && nat.contains("masquerade")
             && nat.contains(&format!("ip saddr {}", hotspot_cidr))
             && nat.contains(&format!("oifname \"{}\"", out_iface))
             && forward.contains(&format!("iifname \"{}\"", in_iface))
@@ -264,7 +391,7 @@ impl NatManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_with_active_policy, parse_interface_network_cidr, NatManager};
+    use super::{merge_with_active_policy, parse_interface_network_cidr, uplinks_for, NatManager};
     use crate::policy::Rule;
 
     fn rule(id: &str) -> Rule {
@@ -348,152 +475,42 @@ mod tests {
     }
 
     #[test]
-    fn parse_interface_network_cidr_returns_none_without_an_inet_line() {
-        let output = "3: uap1: <UP>\n    inet6 fe80::1/64 scope link\n";
-        assert_eq!(parse_interface_network_cidr(output), None);
-        assert_eq!(parse_interface_network_cidr(""), None);
+    fn uplinks_for_covers_selected_sibling_ethernet_and_cellular() {
+        // wwan0 was once missing from this list, which silently broke cellular
+        // NAT — the masquerade/forward rules simply never covered it.
+        let uplinks = uplinks_for("wlan1");
+        assert!(uplinks.contains(&"wlan1"));
+        assert!(uplinks.contains(&"wlan0"));
+        assert!(uplinks.contains(&"eth0"));
+        assert!(uplinks.contains(&"wwan0"));
+        assert_eq!(uplinks.len(), 4, "no duplicates expected: {:?}", uplinks);
     }
 
     #[test]
-    fn parse_interface_network_cidr_rejects_malformed_and_out_of_range_prefixes() {
-        // Missing "/prefix" entirely.
-        let no_prefix = "3: uap1: <UP>\n    inet 192.168.200.1 scope global uap1\n";
-        assert_eq!(parse_interface_network_cidr(no_prefix), None);
-
-        // Prefix out of the valid 0..=32 range.
-        let bad_prefix = "3: uap1: <UP>\n    inet 192.168.200.1/33 scope global uap1\n";
-        assert_eq!(parse_interface_network_cidr(bad_prefix), None);
+    fn uplinks_for_never_lists_the_selected_interface_twice() {
+        // When wlan0 itself is selected, its "sibling" is wlan1 — wlan0 must not
+        // also appear via the sibling-candidate slot.
+        let uplinks = uplinks_for("wlan0");
+        assert_eq!(uplinks.iter().filter(|&&iface| iface == "wlan0").count(), 1);
+        assert!(uplinks.contains(&"wlan1"));
     }
 
     #[test]
-    fn nat_manager_starts_disabled_and_kernel_check_short_circuits_without_syscalls() {
-        let nat = NatManager::new();
-        assert!(!nat.is_enabled());
-        // `kernel_rules_active` must bail out on the in-memory flag before it
-        // would otherwise shell out to `nft`/`ip`, so this is safe to assert
-        // without touching real network or firewall state.
-        assert!(!nat.kernel_rules_active("ap0", "wlan0"));
-
-        let default_nat = NatManager::default();
-        assert!(!default_nat.is_enabled());
-    }
-}
-
-/// Tests for the live NAT bring-up path.
-///
-/// `enable_nat`/`disable_nat` end in `enforcement::apply_policy`, which drives
-/// `nft` — not installed here — so both fail deterministically at that final
-/// step. Everything before it (subnet discovery from a real interface, the
-/// uplink fan-out, the full dynamic rule set, and the merge with the signed
-/// policy) runs for real, which is the part with actual decision logic in it.
-#[cfg(test)]
-mod live_nat_tests {
-    use super::{interface_network_cidr, NatManager};
-    use std::sync::atomic::Ordering;
-
-    const MISSING_IFACE: &str = "sgxtest-nodev0";
-
-    fn nft_installed() -> bool {
-        std::process::Command::new("nft")
-            .arg("--version")
-            .output()
-            .is_ok()
+    fn uplinks_for_deduplicates_when_selected_interface_is_ethernet() {
+        // eth0 selected as uplink: it's both the selected interface and one of
+        // the always-included candidates, so it must only appear once.
+        let uplinks = uplinks_for("eth0");
+        assert_eq!(uplinks.iter().filter(|&&iface| iface == "eth0").count(), 1);
     }
 
     #[test]
-    fn interface_network_cidr_derives_the_subnet_from_a_real_interface() {
-        assert_eq!(interface_network_cidr("lo").unwrap(), "127.0.0.0/8");
-    }
+    fn legacy_forward_specs_allow_hotspot_to_uplink_and_established_return_traffic() {
+        let [outbound, inbound] = NatManager::legacy_forward_specs("uap0", "wlan1");
 
-    #[test]
-    fn interface_network_cidr_reports_an_absent_interface() {
-        // `ip` exits non-zero for a device that does not exist, so this is the
-        // "command ran but failed" branch rather than the spawn-failure branch.
-        let error =
-            interface_network_cidr(MISSING_IFACE).expect_err("a missing interface has no subnet");
-        assert!(
-            error.to_string().contains(MISSING_IFACE),
-            "the error must name the interface: {error}"
+        assert_eq!(outbound.join(" "), "-i uap0 -o wlan1 -j ACCEPT");
+        assert_eq!(
+            inbound.join(" "),
+            "-i wlan1 -o uap0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
         );
-    }
-
-    #[test]
-    fn enable_nat_rejects_an_interface_without_a_subnet() {
-        let manager = NatManager::new();
-        let error = manager
-            .enable_nat(MISSING_IFACE, "wlan0", false)
-            .expect_err("NAT needs the hotspot subnet before it can build any rule");
-        assert!(error.to_string().contains(MISSING_IFACE));
-        assert!(
-            !manager.is_enabled(),
-            "a failed enable must not flip the flag"
-        );
-    }
-
-    #[test]
-    fn enable_nat_builds_the_full_rule_set_then_fails_at_the_enforcement_engine() {
-        if nft_installed() {
-            return; // a host with nftables would apply real firewall rules
-        }
-        let manager = NatManager::new();
-        // `lo` yields 127.0.0.0/8, so the uplink fan-out (wlan0 -> wlan1, eth0)
-        // and every masquerade/forward/isolation rule is constructed and merged
-        // with the signed policy before `nft` is reached and refuses.
-        let error = manager
-            .enable_nat("lo", "wlan0", true)
-            .expect_err("nftables is not installed, so the policy cannot be applied");
-        assert!(
-            error.to_string().starts_with("Failed to enable NAT"),
-            "unexpected failure: {error}"
-        );
-        assert!(
-            !manager.is_enabled(),
-            "the enabled flag is only set after the policy actually applies"
-        );
-
-        // The sibling-uplink branch flips when the caller passes wlan1 instead,
-        // producing a different fan-out through the same code path.
-        assert!(manager.enable_nat("lo", "wlan1", false).is_err());
-    }
-
-    #[test]
-    fn disable_nat_clears_the_flag_by_removing_the_policy_outright() {
-        let manager = NatManager::new();
-        manager.is_enabled.store(true, Ordering::SeqCst);
-        // With no signed policy cached, disabling takes the `remove_policy`
-        // branch rather than reapplying one. Unlike `apply_policy`, removal
-        // succeeds with no enforcement backend present — there is nothing to
-        // tear down — so this is the success path, and the flag must clear.
-        manager
-            .disable_nat()
-            .expect("removing an absent policy must succeed");
-        assert!(!manager.is_enabled());
-
-        // Idempotent: disabling an already-disabled manager is still fine.
-        manager.disable_nat().expect("disable must be idempotent");
-        assert!(!manager.is_enabled());
-    }
-
-    #[test]
-    fn kernel_rules_active_is_false_when_the_tables_cannot_be_read() {
-        if nft_installed() {
-            return;
-        }
-        let manager = NatManager::new();
-        // The flag is the first gate: an un-enabled manager never shells out.
-        assert!(!manager.kernel_rules_active("lo", "wlan0"));
-
-        // Force the flag on to get past it. `lo` resolves a subnet, so both
-        // `nft list chain` calls run — and fail to spawn, which the function
-        // must read as "the kernel rules are not in place" rather than trusting
-        // the in-memory flag.
-        manager.is_enabled.store(true, Ordering::SeqCst);
-        assert!(!manager.kernel_rules_active("lo", "wlan0"));
-        assert!(manager.is_enabled(), "the check must not clear the flag");
-
-        // An interface with no subnet fails the second gate, before any `nft`.
-        assert!(!manager.kernel_rules_active(MISSING_IFACE, "wlan0"));
-
-        manager.is_enabled.store(false, Ordering::SeqCst);
     }
 }

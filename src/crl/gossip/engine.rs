@@ -97,10 +97,17 @@ pub fn parse_nebula_endpoint(endpoint: &str) -> Option<String> {
 /// `SGXNebulaMesh` overlay endpoint. Revoked peers are excluded in BOTH
 /// directions (never dialed here; inbound rejected in `handle_inbound`).
 pub fn active_gossip_peers(self_did: &str) -> Vec<GossipPeer> {
-    let docs = match crate::did::doc_persistence::list_peer_docs() {
+    let mut docs = match crate::did::doc_persistence::list_peer_docs() {
         Ok(docs) => docs,
-        Err(_) => return Vec::new(),
+        Err(_) => Vec::new(),
     };
+    if let Ok(agg_docs) = crate::did::doc_persistence::load_ca_aggregate() {
+        for doc in agg_docs {
+            if !docs.iter().any(|d| d.id == doc.id) {
+                docs.push(doc);
+            }
+        }
+    }
     let mut peers = Vec::new();
     for doc in docs {
         if doc.id == self_did {
@@ -418,7 +425,22 @@ pub async fn listener_task(node_id: String, resolver: Resolver, config: GossipCo
                 tokio::spawn(async move {
                     if let Err(reason) = handle_inbound(stream, &node_id, &resolver, &config).await
                     {
-                        tracing::warn!("CRL-GOSSIP inbound from {} failed: {}", peer_addr, reason);
+                        if reason == protocol::PEER_CLOSED_BEFORE_MESSAGE {
+                            // The offline synchronizer uses a connect-only
+                            // reachability probe before selecting peers. It is
+                            // not a failed gossip exchange and should not
+                            // generate an operator-facing warning.
+                            tracing::debug!(
+                                "CRL-GOSSIP reachability probe from {} completed",
+                                peer_addr
+                            );
+                        } else {
+                            tracing::warn!(
+                                "CRL-GOSSIP inbound from {} failed: {}",
+                                peer_addr,
+                                reason
+                            );
+                        }
                     }
                 });
             }

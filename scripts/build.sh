@@ -341,9 +341,9 @@ build_workspace() {
   fi
 
   if [[ "${USE_ZIGBUILD}" == "1" ]]; then
-    log "Building BOTH binaries for ${ZIG_TARGET} with cargo-zigbuild (release)..."
+    log "Building ALL binaries for ${ZIG_TARGET} with cargo-zigbuild (release)..."
   else
-    log "Building BOTH binaries for ${TARGET_TRIPLE} (release)..."
+    log "Building ALL binaries for ${TARGET_TRIPLE} (release)..."
   fi
 
   local attempt=1
@@ -355,14 +355,14 @@ build_workspace() {
     set +e
     if [[ "${USE_ZIGBUILD}" == "1" ]]; then
       output="$(
-        cargo zigbuild --release --workspace --locked --target "${ZIG_TARGET}" --features secure-element 2>&1
+        cargo zigbuild --release --workspace --exclude sgx-broker --locked --target "${ZIG_TARGET}" --features secure-element 2>&1
       )"
     else
       output="$(
         CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
         CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
         CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-        cargo build --release --workspace --locked --target "${TARGET_TRIPLE}" --features secure-element 2>&1
+        cargo build --release --workspace --exclude sgx-broker --locked --target "${TARGET_TRIPLE}" --features secure-element 2>&1
       )"
     fi
     rc=$?
@@ -386,12 +386,12 @@ build_workspace() {
     if [[ "${ALLOW_UNLOCKED_FALLBACK:-0}" == "1" ]]; then
       warn "Retrying without --locked (ALLOW_UNLOCKED_FALLBACK=1)..."
       if [[ "${USE_ZIGBUILD}" == "1" ]]; then
-        cargo zigbuild --release --workspace --target "${ZIG_TARGET}" --features secure-element
+        cargo zigbuild --release --workspace --exclude sgx-broker --target "${ZIG_TARGET}" --features secure-element
       else
         CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
         CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
         CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-        cargo build --release --workspace --target "${TARGET_TRIPLE}" --features secure-element
+        cargo build --release --workspace --exclude sgx-broker --target "${TARGET_TRIPLE}" --features secure-element
       fi
       return 0
     else

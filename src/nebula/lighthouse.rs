@@ -364,23 +364,33 @@ impl LighthouseRegistry {
             }
 
             // Runtime lighthouse detection:
-            // 1) overlay -> registry sync port
-            // 2) LAN host (from physical_endpoint) -> registry sync port
-            // 3) legacy direct endpoint probe
+            // 1) For vps-lighthouse: probe broker HTTP port (8080)
+            // 2) For edge nodes: overlay -> registry sync port, LAN host -> registry sync port, legacy probe
             let mut tcp_ok = false;
             let registry_port = crate::nebula::registry_sync::REGISTRY_SYNC_PORT;
-            if !overlay_ip.is_empty() {
-                let overlay_probe = format!("{}:{}", overlay_ip, registry_port);
-                tcp_ok = tcp_open(&overlay_probe, timeout_secs).await;
-            }
-            if !tcp_ok {
+            if node == "vps-lighthouse" {
                 if let Some(host) = host_from_endpoint(&endpoint) {
-                    let lan_probe = format!("{}:{}", host, registry_port);
-                    tcp_ok = tcp_open(&lan_probe, timeout_secs).await;
+                    let vps_probe = format!("{}:8080", host);
+                    tcp_ok = tcp_open(&vps_probe, timeout_secs).await;
                 }
-            }
-            if !tcp_ok {
-                tcp_ok = tcp_open(&endpoint, timeout_secs).await;
+                if !tcp_ok && !overlay_ip.is_empty() {
+                    let vps_overlay_probe = format!("{}:8080", overlay_ip);
+                    tcp_ok = tcp_open(&vps_overlay_probe, timeout_secs).await;
+                }
+            } else {
+                if !overlay_ip.is_empty() {
+                    let overlay_probe = format!("{}:{}", overlay_ip, registry_port);
+                    tcp_ok = tcp_open(&overlay_probe, timeout_secs).await;
+                }
+                if !tcp_ok {
+                    if let Some(host) = host_from_endpoint(&endpoint) {
+                        let lan_probe = format!("{}:{}", host, registry_port);
+                        tcp_ok = tcp_open(&lan_probe, timeout_secs).await;
+                    }
+                }
+                if !tcp_ok {
+                    tcp_ok = tcp_open(&endpoint, timeout_secs).await;
+                }
             }
 
             // Keep activity status in sync for lighthouse and relay-role nodes.

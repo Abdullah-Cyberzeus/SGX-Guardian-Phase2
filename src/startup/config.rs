@@ -48,6 +48,7 @@ pub fn default_node_config(node_id: &str) -> NodeConfig {
         metrics: None,
         relay: None,
         api: None,
+        vps: None,
     }
 }
 

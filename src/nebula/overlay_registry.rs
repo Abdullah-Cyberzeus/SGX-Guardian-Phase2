@@ -486,19 +486,59 @@ mod tests {
     }
 
     #[test]
+    fn test_authoritative_assignment_rejects_duplicate_ip_for_different_node() {
+        let mut reg = make_registry();
+        reg.set_ip("nodeB", "192.168.100.2/24").unwrap();
+        let err = reg.set_ip("nodeC", "192.168.100.2/24").unwrap_err();
+        assert!(err.contains("IP conflict"));
+        assert_eq!(reg.get_ip("nodeB"), Some("192.168.100.2"));
+        assert!(!reg.is_allocated("nodeC"));
+    }
+
+    #[test]
+    fn test_authoritative_assignment_rejects_invalid_network_values() {
+        let mut reg = make_registry();
+        for invalid in [
+            "192.168.101.2/24",
+            "192.168.100.2/16",
+            "192.168.100.0/24",
+            "192.168.100.255/24",
+            "not-an-ip/24",
+            "192.168.100.2",
+        ] {
+            assert!(reg.set_ip("nodeB", invalid).is_err(), "{invalid}");
+        }
+        assert!(!reg.is_allocated("nodeB"));
+    }
+
+    #[test]
+    fn test_owner_ip_is_immutable_on_authoritative_sync() {
+        let mut reg = make_registry();
+        assert!(reg.set_ip("nodeA", "192.168.100.2/24").is_err());
+        assert_eq!(reg.get_ip_cidr("nodeA"), Some("192.168.100.1/24"));
+    }
+
+    #[test]
+    fn test_corrupted_registry_fails_to_load_without_creating_allocations() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let path = tmp_dir.path().join("broken.json");
+        fs::write(&path, "not-json").unwrap();
+        assert!(OverlayRegistry::load(path.to_str().unwrap()).is_err());
+    }
+
+    #[test]
     fn test_no_ip_conflict_after_reload() {
         let mut reg = make_registry();
         reg.assign_ip("nodeB").unwrap();
         reg.assign_ip("nodeC").unwrap();
 
-        let tmp = "/tmp/test_registry_conflict.json";
-        reg.save(tmp).unwrap();
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let tmp = tmp_dir.path().join("registry.json");
+        reg.save(tmp.to_str().unwrap()).unwrap();
 
-        let mut reg2 = OverlayRegistry::load(tmp).unwrap();
+        let mut reg2 = OverlayRegistry::load(tmp.to_str().unwrap()).unwrap();
         let ip_d = reg2.assign_ip("nodeD").unwrap();
         assert_eq!(ip_d, "192.168.100.4/24"); // .2 and .3 already taken
-
-        let _ = fs::remove_file(tmp);
     }
 
     #[test]
@@ -555,16 +595,15 @@ mod tests {
         reg.assign_ip("nodeB").unwrap();
         reg.assign_ip("nodeC").unwrap();
 
-        let tmp = "/tmp/test_registry_roundtrip.json";
-        reg.save(tmp).unwrap();
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let tmp = tmp_dir.path().join("registry.json");
+        reg.save(tmp.to_str().unwrap()).unwrap();
 
-        let loaded = OverlayRegistry::load(tmp).unwrap();
+        let loaded = OverlayRegistry::load(tmp.to_str().unwrap()).unwrap();
         assert_eq!(loaded.get_ip("nodeA"), Some("192.168.100.1"));
         assert_eq!(loaded.get_ip("nodeB"), Some("192.168.100.2"));
         assert_eq!(loaded.get_ip("nodeC"), Some("192.168.100.3"));
         assert_eq!(loaded.next_host, 4);
-
-        let _ = fs::remove_file(tmp);
     }
 
     #[test]

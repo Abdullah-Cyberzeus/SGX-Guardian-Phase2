@@ -222,6 +222,28 @@ fn ensure_nodea_relay_entries(
         true,
     );
     relay_reg.mark_active("nodeA");
+
+    // Also ensure VPS Cloud Lighthouse is preserved if configured
+    let vps_cfg = crate::config_loader::resolve_vps_config("nodeA");
+    if let Some(vps_pub_ip) = vps_cfg.vps_public_ip {
+        if !vps_pub_ip.trim().is_empty() {
+            let vps_ovl_ip = vps_cfg
+                .vps_overlay_ip
+                .unwrap_or_else(|| "192.168.100.10".to_string());
+            let vps_endpoint = format!("{}:4242", vps_pub_ip.trim());
+            lh_reg.upsert_node("vps-lighthouse", &vps_ovl_ip, &vps_endpoint, true, true);
+            lh_reg.mark_active("vps-lighthouse");
+            relay_reg.add_relay(
+                "vps-lighthouse",
+                &vps_ovl_ip,
+                &vps_endpoint,
+                100,
+                100_000_000,
+                true,
+            );
+            relay_reg.mark_active("vps-lighthouse");
+        }
+    }
 }
 
 #[tonic::async_trait]

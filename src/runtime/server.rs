@@ -1,3 +1,4 @@
+use crate::netbridge::backend::NetworkBackend;
 use crate::runtime::config_store::ConfigStore;
 use crate::runtime::event_bus::EventBus;
 use crate::runtime::models::GuardianConfig;
@@ -128,21 +129,44 @@ async fn set_mode(
         .into_response()
 }
 
-async fn scan_networks() -> impl IntoResponse {
-    let settings = crate::netbridge::types::WifiClientSettings {
-        interface: "wlan0".to_string(),
-        ..Default::default()
+async fn scan_networks() -> axum::response::Response {
+    let config = ConfigStore::load().unwrap_or_default();
+    let uplink_iface = if !config.uplink.interface.is_empty() {
+        config.uplink.interface
+    } else {
+        crate::netbridge::backend::DEFAULT_NM_UPLINK_INTERFACE.to_string()
     };
-    let orchestrator = crate::netbridge::wifi_client::WifiClientOrchestrator::new(settings);
 
-    let networks = orchestrator.scan_networks().unwrap_or_else(|e| {
-        tracing::warn!("Network scan failed: {}", e);
-        Vec::new()
-    });
-
-    Json(json!({
-        "networks": networks
-    }))
+    let result = match crate::netbridge::network_manager::NetworkManagerBackend::system(
+        std::time::Duration::from_secs(5),
+    )
+    .await
+    {
+        Ok(backend) => backend.scan(&uplink_iface).await,
+        Err(error) => Err(error),
+    };
+    match result {
+        Ok(mut networks) => {
+            // Never list Guardian's own hotspot as a connectable upstream network —
+            // the uplink radio can physically hear the AP radio's beacon on some
+            // boards, but this is our own broadcast, not a real upstream option.
+            let own_hotspot_ssid = if config.hotspot.ssid.trim().is_empty() {
+                RuntimeManager::default_hotspot_ssid().to_string()
+            } else {
+                config.hotspot.ssid.clone()
+            };
+            networks.retain(|network| network.ssid != own_hotspot_ssid);
+            Json(json!({ "networks": networks })).into_response()
+        }
+        Err(error) => (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "networks": [],
+                "error": { "code": error.code(), "message": error.to_string() }
+            })),
+        )
+            .into_response(),
+    }
 }
 
 async fn get_connected_clients() -> impl IntoResponse {

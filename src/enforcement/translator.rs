@@ -190,9 +190,10 @@ fn is_ap_interface(iface: &str) -> bool {
     iface.starts_with("ap") || iface.starts_with("uap") || iface == "wlan2" || iface == "wlan3"
 }
 
-/// Helper to check if an interface is an uplink interface (starts with eth, or wlan0/wlan1)
+/// Helper to check if an interface is an uplink interface (Ethernet, either
+/// Wi-Fi radio, or cellular).
 fn is_uplink_interface(iface: &str) -> bool {
-    iface == "wlan0" || iface == "wlan1" || iface.starts_with("eth")
+    iface == "wlan0" || iface == "wlan1" || iface == "wwan0" || iface.starts_with("eth")
 }
 
 #[cfg(test)]
@@ -304,5 +305,25 @@ mod tests {
         assert_eq!(enf_rule.src_ip, None);
         assert_eq!(enf_rule.dst_ip, None);
         assert_eq!(enf_rule.ports.as_ref().unwrap().start, 80);
+    }
+
+    #[test]
+    fn test_translate_masquerade_recognizes_wwan0_as_an_interface() {
+        // wwan0 was once missing from the uplink allowlist here, which made the
+        // translator treat it as a raw string instead of an interface name (no
+        // out_interface set) — silently breaking cellular NAT. Pinned so that
+        // fix can't regress silently.
+        let policy = dummy_policy(vec![Rule {
+            id: "1".to_string(),
+            action: "masquerade".to_string(),
+            src: "192.168.200.0/24".to_string(),
+            dst: "wwan0".to_string(),
+            protocol: "any".to_string(),
+            port: None,
+        }]);
+
+        let translated = translate(&policy).unwrap();
+        assert_eq!(translated.nat.len(), 1);
+        assert_eq!(translated.nat[0].out_interface.as_deref(), Some("wwan0"));
     }
 }

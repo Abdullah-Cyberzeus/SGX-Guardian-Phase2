@@ -71,7 +71,7 @@ pub fn validate_policy(policy: &Policy) -> Result<()> {
             // Masquerade MUST egress via the uplink (e.g. wlan1, wlan0, eth0)
             if !is_uplink_interface(&dst) {
                 return Err(anyhow!(
-                    "rule '{}' (masquerade) must specify an uplink interface ('wlan1', 'wlan0', or 'eth0') as destination",
+                    "rule '{}' (masquerade) must specify an uplink interface ('wlan1', 'wlan0', 'wwan0', or 'eth0') as destination",
                     rule.id
                 ));
             }
@@ -168,9 +168,11 @@ fn is_ap_interface(iface: &str) -> bool {
     iface.starts_with("ap") || iface.starts_with("uap") || iface == "wlan2" || iface == "wlan3"
 }
 
-/// Helper to check if an interface is an uplink interface (starts with eth, or wlan0/wlan1)
+/// Helper to check if an interface is an uplink interface (Ethernet, either
+/// Wi-Fi radio, or cellular) — any interface that can plausibly carry the
+/// board's default route.
 fn is_uplink_interface(iface: &str) -> bool {
-    iface == "wlan0" || iface == "wlan1" || iface.starts_with("eth")
+    iface == "wlan0" || iface == "wlan1" || iface == "wwan0" || iface.starts_with("eth")
 }
 
 #[cfg(test)]
@@ -281,5 +283,21 @@ mod tests {
             port: None,
         }]);
         assert!(validate_policy(&policy).is_err());
+    }
+
+    #[test]
+    fn test_masquerade_accepts_wwan0_as_cellular_uplink() {
+        // wwan0 was once missing from the uplink allowlist, which silently broke
+        // cellular NAT: a masquerade rule targeting wwan0 was rejected here before
+        // it ever reached nftables. Pinned so that fix can't regress silently.
+        let policy = dummy_policy(vec![Rule {
+            id: "1".to_string(),
+            action: "masquerade".to_string(),
+            src: "ap0".to_string(),
+            dst: "wwan0".to_string(),
+            protocol: "any".to_string(),
+            port: None,
+        }]);
+        assert!(validate_policy(&policy).is_ok());
     }
 }

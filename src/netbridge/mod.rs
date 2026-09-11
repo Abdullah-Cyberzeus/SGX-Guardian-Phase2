@@ -1,9 +1,11 @@
+pub mod backend;
 pub mod bootstrap;
 pub mod config;
 pub mod dhcp_client;
 pub mod dhcp_dns;
 pub mod leases;
 pub mod nat;
+pub mod network_manager;
 pub mod process;
 pub mod routing;
 pub mod types;
@@ -23,7 +25,7 @@ use self::types::NetbridgeError;
 pub struct Netbridge {
     settings: ApSettings,
     runner: Option<Arc<ProcessRunner>>,
-    dnsmasq: dhcp_dns::DnsmasqOrchestrator,
+    pub(crate) dnsmasq: dhcp_dns::DnsmasqOrchestrator,
     health_task: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -214,12 +216,12 @@ fn shares_subnet_24(lhs: &str, rhs: &str) -> bool {
     }
 }
 
-fn hotspot_subnet_cidr(gateway_ip: &str) -> Option<String> {
+pub(crate) fn hotspot_subnet_cidr(gateway_ip: &str) -> Option<String> {
     let octets = parse_ipv4_octets(gateway_ip)?;
     Some(format!("{}.{}.{}.0/24", octets[0], octets[1], octets[2]))
 }
 
-fn select_non_conflicting_dns_settings(
+pub(crate) fn select_non_conflicting_dns_settings(
     current: &types::DnsmasqSettings,
     uplink_ipv4: &str,
 ) -> Option<types::DnsmasqSettings> {

@@ -1011,6 +1011,16 @@ fn resolve_ca_host() -> Option<String> {
         .ok()
         .filter(|host| !host.trim().is_empty() && host != "0.0.0.0")
         .or_else(|| {
+            if std::path::Path::new("/var/lib/sgx-guardian/nebula/ca/ca.crt").exists() {
+                if let Ok(reg) = crate::nebula::overlay_registry::OverlayRegistry::load(
+                    crate::nebula::registry_sync::REGISTRY_PATH,
+                ) {
+                    if let Some(owner_ip) = reg.get_ip("nodeA") {
+                        return Some(owner_ip.to_string());
+                    }
+                }
+                return Some("192.168.100.1".to_string());
+            }
             for path in [
                 PathBuf::from("/etc/sgx-guardian/config/nodeA.yaml"),
                 PathBuf::from("/etc/sgx-guardian/nodeA.yaml"),
