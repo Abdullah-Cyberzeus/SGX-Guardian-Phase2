@@ -284,4 +284,20 @@ mod tests {
         }]);
         assert!(validate_policy(&policy).is_err());
     }
+
+    #[test]
+    fn test_masquerade_accepts_wwan0_as_cellular_uplink() {
+        // wwan0 was once missing from the uplink allowlist, which silently broke
+        // cellular NAT: a masquerade rule targeting wwan0 was rejected here before
+        // it ever reached nftables. Pinned so that fix can't regress silently.
+        let policy = dummy_policy(vec![Rule {
+            id: "1".to_string(),
+            action: "masquerade".to_string(),
+            src: "ap0".to_string(),
+            dst: "wwan0".to_string(),
+            protocol: "any".to_string(),
+            port: None,
+        }]);
+        assert!(validate_policy(&policy).is_ok());
+    }
 }

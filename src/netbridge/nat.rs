@@ -13,6 +13,25 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tracing::{info, warn};
 
+/// Every interface that can plausibly hold the board's default route for a
+/// given selected uplink: the selected interface itself, its sibling Wi-Fi
+/// radio, Ethernet, and cellular. See `enable_nat` for why all of them stay
+/// permitted rather than only the one selected when the mode started.
+fn uplinks_for(out_iface: &str) -> Vec<&str> {
+    let sibling_uplink = if out_iface == "wlan0" {
+        "wlan1"
+    } else {
+        "wlan0"
+    };
+    let mut uplinks: Vec<&str> = vec![out_iface];
+    for candidate in [sibling_uplink, "eth0", "wwan0"] {
+        if !uplinks.contains(&candidate) {
+            uplinks.push(candidate);
+        }
+    }
+    uplinks
+}
+
 fn merge_with_active_policy(dynamic_rules: Vec<Rule>) -> Policy {
     let mut policy = crate::policy::get_active_policy().unwrap_or_else(|| Policy {
         policy_id: "netbridge_dynamic_nat".to_string(),
@@ -111,17 +130,7 @@ impl NatManager {
         // right now — that can change on its own (Wi-Fi drops, cellular takes over)
         // without Guardian restarting NAT, so all of them stay permitted rather than
         // only the interface selected when this mode started.
-        let sibling_uplink = if out_iface == "wlan0" {
-            "wlan1"
-        } else {
-            "wlan0"
-        };
-        let mut uplinks: Vec<&str> = vec![out_iface];
-        for candidate in [sibling_uplink, "eth0", "wwan0"] {
-            if !uplinks.contains(&candidate) {
-                uplinks.push(candidate);
-            }
-        }
+        let uplinks = uplinks_for(out_iface);
 
         let mut rules = Vec::new();
 
@@ -382,7 +391,7 @@ impl NatManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_with_active_policy, parse_interface_network_cidr};
+    use super::{merge_with_active_policy, parse_interface_network_cidr, uplinks_for, NatManager};
     use crate::policy::Rule;
 
     fn rule(id: &str) -> Rule {
@@ -414,6 +423,46 @@ mod tests {
         assert_eq!(
             parse_interface_network_cidr(output).as_deref(),
             Some("192.168.200.0/24")
+        );
+    }
+
+    #[test]
+    fn uplinks_for_covers_selected_sibling_ethernet_and_cellular() {
+        // wwan0 was once missing from this list, which silently broke cellular
+        // NAT — the masquerade/forward rules simply never covered it.
+        let uplinks = uplinks_for("wlan1");
+        assert!(uplinks.contains(&"wlan1"));
+        assert!(uplinks.contains(&"wlan0"));
+        assert!(uplinks.contains(&"eth0"));
+        assert!(uplinks.contains(&"wwan0"));
+        assert_eq!(uplinks.len(), 4, "no duplicates expected: {:?}", uplinks);
+    }
+
+    #[test]
+    fn uplinks_for_never_lists_the_selected_interface_twice() {
+        // When wlan0 itself is selected, its "sibling" is wlan1 — wlan0 must not
+        // also appear via the sibling-candidate slot.
+        let uplinks = uplinks_for("wlan0");
+        assert_eq!(uplinks.iter().filter(|&&iface| iface == "wlan0").count(), 1);
+        assert!(uplinks.contains(&"wlan1"));
+    }
+
+    #[test]
+    fn uplinks_for_deduplicates_when_selected_interface_is_ethernet() {
+        // eth0 selected as uplink: it's both the selected interface and one of
+        // the always-included candidates, so it must only appear once.
+        let uplinks = uplinks_for("eth0");
+        assert_eq!(uplinks.iter().filter(|&&iface| iface == "eth0").count(), 1);
+    }
+
+    #[test]
+    fn legacy_forward_specs_allow_hotspot_to_uplink_and_established_return_traffic() {
+        let [outbound, inbound] = NatManager::legacy_forward_specs("uap0", "wlan1");
+
+        assert_eq!(outbound.join(" "), "-i uap0 -o wlan1 -j ACCEPT");
+        assert_eq!(
+            inbound.join(" "),
+            "-i wlan1 -o uap0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
         );
     }
 }

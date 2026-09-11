@@ -95,3 +95,124 @@ fn test_dnsmasq_generator() {
     assert!(content.contains("dhcp-option=3,192.168.200.1"));
     assert!(content.contains("local=/test.local/"));
 }
+
+// The tests below hit `replace_variables` directly (no filesystem involved) —
+// these are the exact validation branches that produced a real boot failure:
+// a saved hotspot config with an empty/invalid password made hostapd config
+// generation fail every 10s forever with no fallback. Pinning these here
+// prevents that regressing silently again.
+
+#[test]
+fn rejects_passphrase_shorter_than_8_characters() {
+    let generator = ConfigGenerator::new();
+    let settings = ApSettings {
+        wpa_passphrase: Some("short1!".to_string()), // 7 chars
+        ..Default::default()
+    };
+
+    let error = generator
+        .replace_variables("wpa_passphrase={WPA_PASSPHRASE}", &settings)
+        .unwrap_err();
+    assert!(error.to_string().contains("8-63 characters"));
+}
+
+#[test]
+fn rejects_passphrase_longer_than_63_characters() {
+    let generator = ConfigGenerator::new();
+    let settings = ApSettings {
+        wpa_passphrase: Some("a".repeat(64)),
+        ..Default::default()
+    };
+
+    let error = generator
+        .replace_variables("wpa_passphrase={WPA_PASSPHRASE}", &settings)
+        .unwrap_err();
+    assert!(error.to_string().contains("8-63 characters"));
+}
+
+#[test]
+fn accepts_passphrase_at_the_8_and_63_character_boundaries() {
+    let generator = ConfigGenerator::new();
+
+    let min_settings = ApSettings {
+        wpa_passphrase: Some("a".repeat(8)),
+        ..Default::default()
+    };
+    assert!(generator
+        .replace_variables("{WPA_PASSPHRASE}", &min_settings)
+        .is_ok());
+
+    let max_settings = ApSettings {
+        wpa_passphrase: Some("a".repeat(63)),
+        ..Default::default()
+    };
+    assert!(generator
+        .replace_variables("{WPA_PASSPHRASE}", &max_settings)
+        .is_ok());
+}
+
+#[test]
+fn rejects_passphrase_containing_newlines() {
+    let generator = ConfigGenerator::new();
+    let settings = ApSettings {
+        wpa_passphrase: Some("Secret1!\nrogue=line".to_string()),
+        ..Default::default()
+    };
+
+    let error = generator
+        .replace_variables("{WPA_PASSPHRASE}", &settings)
+        .unwrap_err();
+    assert!(error.to_string().contains("newlines"));
+}
+
+#[test]
+fn rejects_ssid_longer_than_32_bytes() {
+    let generator = ConfigGenerator::new();
+    let settings = ApSettings {
+        ssid: "a".repeat(33),
+        ..Default::default()
+    };
+
+    let error = generator
+        .replace_variables("ssid={SSID}", &settings)
+        .unwrap_err();
+    assert!(error.to_string().contains("32 bytes"));
+}
+
+#[test]
+fn accepts_ssid_at_the_32_byte_boundary() {
+    let generator = ConfigGenerator::new();
+    let settings = ApSettings {
+        ssid: "a".repeat(32),
+        ..Default::default()
+    };
+
+    assert!(generator
+        .replace_variables("ssid={SSID}", &settings)
+        .is_ok());
+}
+
+#[test]
+fn rejects_ssid_containing_newlines_or_carriage_returns() {
+    let generator = ConfigGenerator::new();
+
+    let with_newline = ApSettings {
+        ssid: "Evil\nSSID".to_string(),
+        ..Default::default()
+    };
+    assert!(generator
+        .replace_variables("ssid={SSID}", &with_newline)
+        .unwrap_err()
+        .to_string()
+        .contains("newlines"));
+
+    let with_carriage_return = ApSettings {
+        ssid: "Evil\rSSID".to_string(),
+        ..Default::default()
+    };
+    assert!(generator
+        .replace_variables("ssid={SSID}", &with_carriage_return)
+        .unwrap_err()
+        .to_string()
+        .contains("newlines"));
+}

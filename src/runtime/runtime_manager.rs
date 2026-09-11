@@ -1188,6 +1188,61 @@ mod tests {
     use crate::test_support::blocking_env_lock;
 
     #[test]
+    fn effective_hotspot_credentials_passes_through_a_valid_configured_hotspot() {
+        let mut config = GuardianConfig::default();
+        config.hotspot.ssid = "MyOwnHotspot".to_string();
+        config.hotspot.password = "CorrectHorse1!".to_string();
+
+        let (ssid, password) = RuntimeManager::effective_hotspot_credentials(&config);
+        assert_eq!(ssid, "MyOwnHotspot");
+        assert_eq!(password, "CorrectHorse1!");
+    }
+
+    #[test]
+    fn effective_hotspot_credentials_falls_back_to_default_ssid_when_unset() {
+        let mut config = GuardianConfig::default();
+        config.hotspot.ssid = String::new();
+        config.hotspot.password = "CorrectHorse1!".to_string();
+
+        let (ssid, _password) = RuntimeManager::effective_hotspot_credentials(&config);
+        assert_eq!(ssid, RuntimeManager::default_hotspot_ssid());
+    }
+
+    #[test]
+    fn effective_hotspot_credentials_falls_back_to_default_ssid_when_only_whitespace() {
+        let mut config = GuardianConfig::default();
+        config.hotspot.ssid = "   ".to_string();
+
+        let (ssid, _password) = RuntimeManager::effective_hotspot_credentials(&config);
+        assert_eq!(ssid, RuntimeManager::default_hotspot_ssid());
+    }
+
+    #[test]
+    fn effective_hotspot_credentials_falls_back_to_default_password_when_empty() {
+        // This is the exact scenario that produced a real boot failure: saving
+        // mode=Off or mode=ClientOnly never validates the hotspot password, so
+        // a saved config can carry an empty one — starting the hotspot must not
+        // hard-fail and retry forever when that happens.
+        let mut config = GuardianConfig::default();
+        config.hotspot.ssid = "MyOwnHotspot".to_string();
+        config.hotspot.password = String::new();
+
+        let (_ssid, password) = RuntimeManager::effective_hotspot_credentials(&config);
+        assert_eq!(password, "Password123!");
+        crate::runtime::crypto::validate_hotspot_password(&password)
+            .expect("the default password must itself pass validation");
+    }
+
+    #[test]
+    fn effective_hotspot_credentials_falls_back_to_default_password_when_too_short() {
+        let mut config = GuardianConfig::default();
+        config.hotspot.password = "short1!".to_string(); // 7 chars, fails validation
+
+        let (_ssid, password) = RuntimeManager::effective_hotspot_credentials(&config);
+        assert_eq!(password, "Password123!");
+    }
+
+    #[test]
     fn detects_suricata_wifi_capture_references() {
         assert!(RuntimeManager::references_wifi_capture(
             "ExecStart=/opt/suricata/bin/suricata -i wlan0"
