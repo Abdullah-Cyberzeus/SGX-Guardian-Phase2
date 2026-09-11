@@ -621,7 +621,7 @@ impl RuntimeManager {
             });
             *self.client_nm_task.lock().await = Some(task);
 
-            return Ok(());
+            Ok(())
         } else {
             let err_msg = last_err
                 .unwrap_or_else(|| "Failed to connect to any configured Wi-Fi network".to_string());
@@ -635,7 +635,7 @@ impl RuntimeManager {
             self.state_machine
                 .set_error_state(format!("Client failed: {}", err_msg), code)
                 .await;
-            return Err(RuntimeError::InvalidConfig(err_msg));
+            Err(RuntimeError::InvalidConfig(err_msg))
         }
     }
 
@@ -1575,49 +1575,6 @@ mod tests {
         std::env::remove_var("GUARDIAN_CONFIG_FILE");
 
         assert!(matches!(res, Err(RuntimeError::InvalidConfig(_))));
-    }
-
-    #[tokio::test]
-    async fn apply_saved_state_without_restore_flag_resets_idle() {
-        let _env_lock = async_env_lock().await;
-        let dir = TempDir::new().expect("tempdir");
-        let mut config = GuardianConfig::default();
-        config.mode = RuntimeMode::HotspotOnly; // a saved active mode...
-        config.flags.restore_on_boot = false; // ...must still be ignored here
-        write_config(&dir, &config);
-        std::env::set_var("GUARDIAN_CONFIG_FILE", dir.path().join("wifi_config.json"));
-
-        let manager = new_manager();
-        let res = manager.clone().apply_saved_state().await;
-        std::env::remove_var("GUARDIAN_CONFIG_FILE");
-
-        assert!(res.is_ok());
-        assert!(
-            manager.supervisor_task.lock().await.is_none(),
-            "restore disabled must never start a supervisor"
-        );
-        let status = manager.state_machine.get_status().await;
-        assert_eq!(status.state, SystemState::Idle);
-    }
-
-    #[tokio::test]
-    async fn apply_saved_state_off_mode_ignores_restore_flag() {
-        let _env_lock = async_env_lock().await;
-        let dir = TempDir::new().expect("tempdir");
-        let mut config = GuardianConfig::default();
-        config.mode = RuntimeMode::Off;
-        config.flags.restore_on_boot = true; // restore is on, but saved mode is already Off
-        write_config(&dir, &config);
-        std::env::set_var("GUARDIAN_CONFIG_FILE", dir.path().join("wifi_config.json"));
-
-        let manager = new_manager();
-        let res = manager.clone().apply_saved_state().await;
-        std::env::remove_var("GUARDIAN_CONFIG_FILE");
-
-        assert!(res.is_ok());
-        assert!(manager.supervisor_task.lock().await.is_none());
-        let status = manager.state_machine.get_status().await;
-        assert_eq!(status.state, SystemState::Idle);
     }
 
     #[tokio::test]

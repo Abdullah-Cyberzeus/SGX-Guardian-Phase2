@@ -30,6 +30,12 @@ struct AppStateInner {
     pub start_time: Instant,
 }
 
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AppState {
     pub fn new() -> Self {
         Self {

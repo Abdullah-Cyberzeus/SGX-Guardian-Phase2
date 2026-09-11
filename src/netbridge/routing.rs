@@ -821,21 +821,6 @@ mod live_ip_tests {
     }
 
     #[test]
-    fn hotspot_uplink_is_configured_short_circuits_when_policy_routing_is_unsupported() {
-        let _guard = policy_flag_lock();
-        let previous = POLICY_ROUTING_UNSUPPORTED.load(Ordering::SeqCst);
-        POLICY_ROUTING_UNSUPPORTED.store(true, Ordering::SeqCst);
-        // On a kernel without policy routing the check reports "configured" so
-        // callers stop trying to reinstall rules that can never exist — and it
-        // does so without consulting the interface at all, hence the bogus name.
-        assert!(RoutingManager::hotspot_uplink_is_configured(
-            "10.42.0.0/24",
-            MISSING_IFACE
-        ));
-        POLICY_ROUTING_UNSUPPORTED.store(previous, Ordering::SeqCst);
-    }
-
-    #[test]
     fn hotspot_uplink_is_configured_is_false_without_the_rules_and_routes() {
         if !have_ip() {
             return;

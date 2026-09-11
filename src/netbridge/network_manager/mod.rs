@@ -493,12 +493,13 @@ impl NetworkManagerBackend {
             return Ok(());
         }
 
-        if let Err(_) = timeout(
+        if timeout(
             self.call_timeout,
             manager.call::<_, _, ()>("DeactivateConnection", &(active_path.clone(),)),
         )
         .await
         .map_err(|_| NetworkBackendError::Timeout)?
+        .is_err()
         {
             // The call can fail simply because the connection disappeared between
             // our check above and the call itself; re-check before giving up.
@@ -1054,7 +1055,7 @@ pub fn map_device_state_reason(dev_state: u32, dev_reason: u32) -> Option<Networ
         // NM_DEVICE_STATE_REASON_NO_SECRETS (7), NM_DEVICE_STATE_REASON_SUPPLICANT_DISCONNECT (8),
         // NM_DEVICE_STATE_REASON_SUPPLICANT_CONFIG_FAILED (9),
         // NM_DEVICE_STATE_REASON_SUPPLICANT_FAILED (10).
-        7 | 8 | 9 | 10 => Some(NetworkBackendError::AuthenticationFailed(format!(
+        7..=10 => Some(NetworkBackendError::AuthenticationFailed(format!(
             "Wi-Fi authentication failed (device state {dev_state}, reason {dev_reason})"
         ))),
         // NM_DEVICE_STATE_REASON_SSID_NOT_FOUND (53)

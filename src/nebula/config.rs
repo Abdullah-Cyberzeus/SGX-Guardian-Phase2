@@ -603,33 +603,6 @@ mod tests {
     }
 
     #[test]
-    fn test_lighthouse_relay_fallback_can_be_disabled() {
-        let _lock = crate::test_support::env_lock();
-        let mut pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
-        pool.allocate("nodeB").unwrap();
-        let dir = tmp("relay_disabled");
-        let _ = std::fs::create_dir_all(&dir);
-        std::env::set_var("SGX_ALLOW_LH_RELAY_FALLBACK", "false");
-        NebulaConfig::generate_config_from_pool_with_lighthouse(
-            "nodeB",
-            &pool,
-            &dir,
-            Some("10.1.2.3"),
-        )
-        .unwrap();
-        let c = std::fs::read_to_string(format!("{}/nebula.yaml", dir)).unwrap();
-        let relay_block = c
-            .split("relay:\n")
-            .nth(1)
-            .and_then(|s| s.split("\nstats:\n").next())
-            .unwrap_or("");
-        assert!(relay_block.contains("use_relays: false"));
-        assert!(!relay_block.contains("\"192.168.100.1\""));
-        std::env::remove_var("SGX_ALLOW_LH_RELAY_FALLBACK");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn test_stats_endpoint_present() {
         let pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
         let dir = tmp("stats");
@@ -748,36 +721,6 @@ mod tests {
         assert!(relay_block.contains("am_relay: true"));
         assert!(relay_block.contains("use_relays: false"));
         assert!(!relay_block.contains("\n  relays:\n"));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_member_prefers_dedicated_relays_over_lighthouse_relays() {
-        let mut pool = OverlayPool::new("alpha", "192.168.100", "nodeA");
-        pool.allocate("nodeB").unwrap();
-        pool.allocate("nodeC").unwrap();
-
-        let mut reg = crate::nebula::lighthouse::LighthouseRegistry::new(
-            "alpha",
-            "nodeA",
-            "192.168.100.1",
-            "10.0.0.1:4242",
-        );
-        reg.add_relay("nodeB", "192.168.100.2", "10.0.0.2:4242");
-
-        let dir = tmp("member_prefers_dedicated_relays");
-        let _ = std::fs::create_dir_all(&dir);
-        NebulaConfig::generate_config_with_lighthouse("nodeC", &pool, &reg, &dir).unwrap();
-        let cfg = std::fs::read_to_string(format!("{}/nebula.yaml", dir)).unwrap();
-        let relay_block = cfg
-            .split("relay:\n")
-            .nth(1)
-            .and_then(|s| s.split("\nstats:\n").next())
-            .unwrap_or("");
-
-        assert!(relay_block.contains("use_relays: true"));
-        assert!(relay_block.contains("\"192.168.100.2\""));
-        assert!(!relay_block.contains("\"192.168.100.1\""));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

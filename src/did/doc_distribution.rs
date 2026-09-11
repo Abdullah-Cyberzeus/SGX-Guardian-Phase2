@@ -65,7 +65,7 @@ pub async fn pull_and_apply_aggregate(ca_host: &str) -> Result<Vec<String>, DidE
 /// Verify and cache a signed CA DID-document snapshot already obtained over
 /// another authenticated/bootstrap transport (for example the VPS broker).
 pub fn apply_aggregate_json(raw: &str) -> Result<Vec<String>, DidError> {
-    let docs: Vec<DidDocument> = serde_json::from_str(&raw)?;
+    let docs: Vec<DidDocument> = serde_json::from_str(raw)?;
     let mut updated_dids = Vec::new();
     for doc in docs {
         let floor = local_floor_version(&doc);

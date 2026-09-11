@@ -3152,41 +3152,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn refresh_runtime_virtual_id_session(node_id: &str) -> anyhow::Result<()> {
-    let pcr_snapshot = read_runtime_virtual_id_pcr_snapshot(node_id);
-    sgx_guardian_client::virtual_id::observe_runtime_virtual_id(
-        sgx_guardian_client::virtual_id::RuntimeVirtualIdInputs {
-            node: node_id.to_string(),
-            state_path: None,
-            did: sgx_guardian_client::did::DidRecord::load(
-                sgx_guardian_client::did::DEFAULT_DID_PATH,
-            )
-            .map(|record| record.did)
-            .unwrap_or_default(),
-            dkp_pubkey_der: std::fs::read("/var/lib/sgx-guardian/keys/dkp_pub.der")
-                .unwrap_or_default(),
-            dkp_version: sgx_guardian_client::secure_element::pcr::read_dkp_key_version(),
-            pcr_values: pcr_snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.pcr_values.clone())
-                .unwrap_or_default(),
-            pcr_digest: pcr_snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.composite_digest.clone())
-                .unwrap_or_default(),
-            policy_digest: sgx_guardian_client::policy::load_effective_policy_material().digest_hex,
-        },
-    )?;
-    Ok(())
-}
-
-fn read_runtime_virtual_id_pcr_snapshot(
-    node_id: &str,
-) -> Option<sgx_guardian_client::secure_element::pcr::PcrSnapshot> {
-    let path = format!("/var/lib/sgx-guardian/pcr/{}_current.json", node_id);
-    sgx_guardian_client::secure_element::pcr::PcrSnapshot::load(&path).ok()
-}
-
 async fn refresh_and_publish_did_doc(
     node_id: &str,
     km: &sgx_guardian_client::key_manager::KeyManager,
@@ -3455,11 +3420,13 @@ async fn discover_lan_node_a(
             // 1. Explicit env var override
             if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
                 let trimmed = env_ip.trim();
-                if !trimmed.is_empty() && trimmed != "0.0.0.0" && trimmed != "127.0.0.1" {
-                    if is_lan_ca_reachable(trimmed).await {
-                        println!("✅ Found Node A at {} via SGX_LIGHTHOUSE_IP", trimmed);
-                        return Some(trimmed.to_string());
-                    }
+                if !trimmed.is_empty()
+                    && trimmed != "0.0.0.0"
+                    && trimmed != "127.0.0.1"
+                    && is_lan_ca_reachable(trimmed).await
+                {
+                    println!("✅ Found Node A at {} via SGX_LIGHTHOUSE_IP", trimmed);
+                    return Some(trimmed.to_string());
                 }
             }
 
@@ -3471,11 +3438,13 @@ async fn discover_lan_node_a(
             ] {
                 if let Ok(cfg) = sgx_guardian_client::config_loader::load_config(path) {
                     let ip = cfg.ip.trim();
-                    if !ip.is_empty() && ip != "0.0.0.0" && ip != "127.0.0.1" {
-                        if is_lan_ca_reachable(ip).await {
-                            println!("✅ Found Node A at {} via {}", ip, path);
-                            return Some(ip.to_string());
-                        }
+                    if !ip.is_empty()
+                        && ip != "0.0.0.0"
+                        && ip != "127.0.0.1"
+                        && is_lan_ca_reachable(ip).await
+                    {
+                        println!("✅ Found Node A at {} via {}", ip, path);
+                        return Some(ip.to_string());
                     }
                 }
             }

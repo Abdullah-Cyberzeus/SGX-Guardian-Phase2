@@ -269,21 +269,20 @@ impl P2PDiscovery {
                 // 3. Scan SGX_LIGHTHOUSE_IP for nodeA if this node is not nodeA
                 if node_id_cfg != "nodeA" {
                     if let Ok(lh_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
-                        if crate::dynamic_config::is_routable_ip(&lh_ip) {
-                            if peer_is_reachable(&lh_ip, 50151).await
-                                || peer_is_reachable(&lh_ip, 50051).await
-                            {
-                                let full_addr = format!("{}:50051", lh_ip);
-                                let now = std::time::Instant::now();
-                                let should_send = match last_sent.get(&full_addr) {
-                                    Some(last) => now.duration_since(*last).as_secs() >= 30,
-                                    None => true,
-                                };
-                                if should_send {
-                                    last_sent.insert(full_addr.clone(), now);
-                                    let queue_entry = format!("nodeA|{}", full_addr);
-                                    let _ = tx_clone_cfg.send(queue_entry).await;
-                                }
+                        if crate::dynamic_config::is_routable_ip(&lh_ip)
+                            && (peer_is_reachable(&lh_ip, 50151).await
+                                || peer_is_reachable(&lh_ip, 50051).await)
+                        {
+                            let full_addr = format!("{}:50051", lh_ip);
+                            let now = std::time::Instant::now();
+                            let should_send = match last_sent.get(&full_addr) {
+                                Some(last) => now.duration_since(*last).as_secs() >= 30,
+                                None => true,
+                            };
+                            if should_send {
+                                last_sent.insert(full_addr.clone(), now);
+                                let queue_entry = format!("nodeA|{}", full_addr);
+                                let _ = tx_clone_cfg.send(queue_entry).await;
                             }
                         }
                     }
