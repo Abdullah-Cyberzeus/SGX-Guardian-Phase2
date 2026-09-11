@@ -283,7 +283,7 @@ jobs:
       RUSTFLAGS: "-C link-arg=-Wl,--threads=1"
       # Override the repository-wide single-job default without allowing coverage
       # compilation to consume every hosted-runner core at once.
-      CARGO_BUILD_JOBS: "2"
+      CARGO_BUILD_JOBS: "1"
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
