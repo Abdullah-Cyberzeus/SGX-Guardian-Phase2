@@ -12,7 +12,7 @@ pub async fn send_ping(
     from_id: String,
     identity: tonic::transport::Identity,
     ca_cert: tonic::transport::Certificate,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     log_audit(
         &from_id,
         AuditCategory::Network,
@@ -27,6 +27,11 @@ pub async fn send_ping(
         Some("50053") => "nodeC",
         _ => "unknown-peer",
     };
+
+    // Task3 D2: this mTLS gRPC ping is real peer heartbeat traffic.
+    // Classification only; Task2 trust and Task3 route safety remain unchanged.
+    crate::task3_network_ai::notify_task3_message("heartbeat", &peer_label);
+
     let endpoint = Channel::from_shared(format!("https://{}", addr))?.tls_config(
         ClientTlsConfig::new()
             .identity(identity.clone())

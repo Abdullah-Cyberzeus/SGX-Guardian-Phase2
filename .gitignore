@@ -42,3 +42,7 @@ crates/sgx-anomaly-engine/data/virtual_shift/06_SIGNED_POLICY_ALERTS/
 crates/sgx-anomaly-engine/data/virtual_shift/07_POLICY_DELIVERY_RECEIPTS/
 crates/sgx-anomaly-engine/data/virtual_shift/08_MEMBER_POLICY_VERIFICATION/
 crates/sgx-anomaly-engine/data/virtual_shift/guardian_keys/
+
+# Local development backup files
+*.bak
+*.d2bak

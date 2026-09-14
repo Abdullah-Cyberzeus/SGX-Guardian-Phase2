@@ -123,49 +123,47 @@ impl RelayRegistry {
 
     pub async fn health_check_all(&mut self, timeout_secs: u64) {
         let relay_nodes = self.relays.keys().cloned().collect::<Vec<_>>();
+
         for node in relay_nodes {
-            let endpoint = self
+            let overlay_ip = self
                 .relays
                 .get(&node)
-                .map(|r| r.physical_endpoint.clone())
+                .map(|r| r.overlay_ip.clone())
                 .unwrap_or_default();
-            if endpoint.is_empty() {
+
+            if overlay_ip.is_empty() {
                 self.mark_inactive(&node);
                 continue;
             }
-            let tcp_ok = tokio::time::timeout(
-                Duration::from_secs(timeout_secs),
-                TcpStream::connect(&endpoint),
-            )
-            .await
-            .map(|r| r.is_ok())
-            .unwrap_or(false);
 
-            // Probe overlay reachability explicitly through nebula0 to avoid
-            // false positives from default-route ICMP behavior.
-            let ping_ok = if !tcp_ok {
-                let ip = self
-                    .relays
-                    .get(&node)
-                    .map(|r| r.overlay_ip.clone())
-                    .unwrap_or_default();
-
-                if !ip.is_empty() {
-                    std::process::Command::new("ping")
-                        .args(["-c", "1", "-W", "1", "-I", "nebula0", &ip])
-                        .output()
-                        .map(|o| o.status.success())
-                        .unwrap_or(false)
-                } else {
-                    false
+            // D13 relay liveness must prove that the remote relay node is
+            // actually reachable. A UDP connect/send to the physical Nebula
+            // endpoint is not a liveness test: UDP may report success even
+            // when the remote node is offline.
+            //
+            // Probe the relay through its Nebula overlay address instead.
+            // Port 8443 is the Guardian runtime listener. Only a TCP
+            // handshake is required; no HTTP request or bearer token is
+            // needed for this liveness check.
+            let ip = match overlay_ip.parse::<std::net::IpAddr>() {
+                Ok(ip) => ip,
+                Err(_) => {
+                    self.mark_inactive(&node);
+                    continue;
                 }
-            } else {
-                false
             };
 
-            let ok = tcp_ok || ping_ok;
+            let probe_addr = std::net::SocketAddr::new(ip, 8443);
 
-            if ok {
+            let tcp_ok = tokio::time::timeout(
+                Duration::from_secs(timeout_secs),
+                TcpStream::connect(probe_addr),
+            )
+            .await
+            .map(|result| result.is_ok())
+            .unwrap_or(false);
+
+            if tcp_ok {
                 self.mark_active(&node);
             } else {
                 self.mark_inactive(&node);

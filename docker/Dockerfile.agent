@@ -57,8 +57,28 @@ COPY --from=frontend-builder /src/frontend/dist /src/frontend/dist
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     cargo build --release --workspace --locked --features tpm && \
+    cargo build --release --locked \
+        -p sgx-anomaly-engine \
+        --example run_task3_network_optimizer_demo \
+        --example run_task3_multi_relay_balancing_demo \
+        --example run_task3_sensitive_route_handoff_demo \
+        --example run_task3_d12_lifecycle_proof_demo \
+        --example run_task3_d2_classifier_demo \
+        --example run_task3_d4_eligibility_demo \
+        --example run_task3_d5_history_reload_demo \
+        --example run_task3_d9_reward_demo \
+        --example run_task3_d10_safety_demo && \
     mkdir -p /out && \
-    cp target/release/sgx_guardian_client target/release/sgx-pa-cli /out/
+    cp target/release/sgx_guardian_client target/release/sgx-pa-cli /out/ && \
+    cp target/release/examples/run_task3_network_optimizer_demo /out/ && \
+    cp target/release/examples/run_task3_multi_relay_balancing_demo /out/ && \
+    cp target/release/examples/run_task3_sensitive_route_handoff_demo /out/ && \
+    cp target/release/examples/run_task3_d12_lifecycle_proof_demo /out/ && \
+    cp target/release/examples/run_task3_d2_classifier_demo /out/ && \
+    cp target/release/examples/run_task3_d4_eligibility_demo /out/ && \
+    cp target/release/examples/run_task3_d5_history_reload_demo /out/ && \
+    cp target/release/examples/run_task3_d9_reward_demo /out/ && \
+    cp target/release/examples/run_task3_d10_safety_demo /out/
 
 # =============================================================================
 # Nebula is fetched per-TARGETARCH (not vendored) so the same Dockerfile is
@@ -130,8 +150,27 @@ RUN chmod 0755 /usr/local/bin/nebula /usr/local/bin/nebula-cert
 # Keep canonical binary names so existing workflows and logs stay familiar.
 COPY --from=builder /out/sgx_guardian_client /usr/local/bin/sgx_guardian_client
 COPY --from=builder /out/sgx-pa-cli /usr/local/bin/sgx-pa-cli
+COPY --from=builder /out/run_task3_network_optimizer_demo /usr/local/bin/run_task3_network_optimizer_demo
+COPY --from=builder /out/run_task3_multi_relay_balancing_demo /usr/local/bin/run_task3_multi_relay_balancing_demo
+COPY --from=builder /out/run_task3_sensitive_route_handoff_demo /usr/local/bin/run_task3_sensitive_route_handoff_demo
+COPY --from=builder /out/run_task3_d12_lifecycle_proof_demo /usr/local/bin/run_task3_d12_lifecycle_proof_demo
+COPY --from=builder /out/run_task3_d2_classifier_demo /usr/local/bin/run_task3_d2_classifier_demo
+COPY --from=builder /out/run_task3_d4_eligibility_demo /usr/local/bin/run_task3_d4_eligibility_demo
+COPY --from=builder /out/run_task3_d5_history_reload_demo /usr/local/bin/run_task3_d5_history_reload_demo
+COPY --from=builder /out/run_task3_d9_reward_demo /usr/local/bin/run_task3_d9_reward_demo
+COPY --from=builder /out/run_task3_d10_safety_demo /usr/local/bin/run_task3_d10_safety_demo
 COPY docker/entrypoint.sh /usr/local/bin/sgx-entrypoint
-RUN chmod 0755 /usr/local/bin/sgx-entrypoint
+RUN chmod 0755 \
+    /usr/local/bin/sgx-entrypoint \
+    /usr/local/bin/run_task3_network_optimizer_demo \
+    /usr/local/bin/run_task3_multi_relay_balancing_demo \
+    /usr/local/bin/run_task3_sensitive_route_handoff_demo \
+    /usr/local/bin/run_task3_d12_lifecycle_proof_demo \
+    /usr/local/bin/run_task3_d2_classifier_demo \
+    /usr/local/bin/run_task3_d4_eligibility_demo \
+    /usr/local/bin/run_task3_d5_history_reload_demo \
+    /usr/local/bin/run_task3_d9_reward_demo \
+    /usr/local/bin/run_task3_d10_safety_demo
 
 VOLUME ["/etc/sgx-guardian", "/var/lib/sgx-guardian", "/var/log/sgx-guardian"]
 

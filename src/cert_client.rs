@@ -410,6 +410,22 @@ pub async fn request_certificate_from_ca(
                         AuditAction::Succeeded,
                         "CA-signed certificate received via gRPC",
                     );
+
+                    // D13: keep CA-authoritative overlay/lighthouse/relay
+                    // registries synchronized after certificate bootstrap.
+                    //
+                    // Certificate enrollment remains one-shot, while registry
+                    // synchronization continues in a detached background task.
+                    spawn_registry_refresh_task(
+                        node_id.clone(),
+                        current_ca_addr.clone(),
+                        overlay_ip.clone(),
+                        public_key_pem.clone(),
+                        wants_lh,
+                        wants_relay,
+                        pairing_proof.clone(),
+                    );
+
                     return;
                 }
 
@@ -455,6 +471,101 @@ pub async fn request_certificate_from_ca(
 
         tokio::time::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS)).await;
     }
+}
+
+fn spawn_registry_refresh_task(
+    node_id: String,
+    ca_addr: String,
+    overlay_ip: String,
+    public_key_pem: String,
+    wants_lh: bool,
+    wants_relay: bool,
+    pairing_proof: Option<String>,
+) {
+    tokio::spawn(async move {
+        const REGISTRY_REFRESH_INTERVAL_SECS: u64 = 30;
+
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(
+                REGISTRY_REFRESH_INTERVAL_SECS,
+            ))
+            .await;
+
+            match try_request(
+                &node_id,
+                &ca_addr,
+                &overlay_ip,
+                &public_key_pem,
+                wants_lh,
+                wants_relay,
+                pairing_proof.as_deref(),
+            )
+            .await
+            {
+                Ok(resp) if resp.status == "approved" => {
+                    if !resp.overlay_registry_json.is_empty() {
+                        let path = "/var/lib/sgx-guardian/nebula/overlay_registry.json";
+                        match registry_sync::apply_overlay_snapshot(
+                            &resp.overlay_registry_json,
+                            path,
+                        ) {
+                            Ok(_) => println!("📋 Overlay registry refreshed from CA"),
+                            Err(e) => {
+                                eprintln!("⚠️ Overlay registry refresh rejected: {}", e)
+                            }
+                        }
+                    }
+
+                    if !resp.lighthouse_registry_json.is_empty() {
+                        let path = "/var/lib/sgx-guardian/nebula/lighthouse_registry.json";
+                        match registry_sync::apply_lighthouse_snapshot(
+                            &resp.lighthouse_registry_json,
+                            path,
+                        ) {
+                            Ok(_) => println!("📋 Lighthouse registry refreshed from CA"),
+                            Err(e) => {
+                                eprintln!("⚠️ Lighthouse registry refresh rejected: {}", e)
+                            }
+                        }
+                    }
+
+                    if !resp.relay_registry_json.is_empty() {
+                        let path = "/var/lib/sgx-guardian/nebula/relay_registry.json";
+                        match registry_sync::apply_relay_snapshot(&resp.relay_registry_json, path) {
+                            Ok(_) => println!("📋 Relay registry refreshed from CA"),
+                            Err(e) => {
+                                eprintln!("⚠️ Relay registry refresh rejected: {}", e)
+                            }
+                        }
+                    }
+
+                    sync_role_marker(
+                        "/var/lib/sgx-guardian/nebula/am_lighthouse",
+                        resp.assigned_lighthouse,
+                    );
+
+                    sync_role_marker("/var/lib/sgx-guardian/nebula/am_relay", resp.assigned_relay);
+
+                    if resp.assigned_relay {
+                        if let Err(e) = set_relay_enabled_in_node_config(&node_id) {
+                            eprintln!("⚠️ Failed to refresh relay role in node config: {}", e);
+                        }
+                    }
+                }
+
+                Ok(resp) => {
+                    eprintln!(
+                        "⚠️ Registry refresh from CA returned status '{}' for {}",
+                        resp.status, node_id
+                    );
+                }
+
+                Err(e) => {
+                    eprintln!("⚠️ Registry refresh from CA failed for {}: {}", node_id, e);
+                }
+            }
+        }
+    });
 }
 
 /// Single gRPC attempt to the CA (PLAINTEXT — bootstrap phase, no TLS yet).

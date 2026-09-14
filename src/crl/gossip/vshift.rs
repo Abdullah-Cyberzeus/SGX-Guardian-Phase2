@@ -19,9 +19,9 @@ use serde::{Deserialize, Serialize};
 use sgx_anomaly_engine::virtual_shift::{
     AttestationConnector, AttestationConnectorResponse, AttestationRequest, IdentityRotationResult,
     IdentityRotationStatus, MemberAlertVerifier, MemberIdentityRotator, MemberPolicyApplier,
-    MemberPolicyApplyResult, ReAttestationResult, ReAttestationService, VShiftAlert,
-    VerificationStatus, VS15_GOSSIP, VS16_MEMBER_VERIFICATION, VS17_MEMBER_POLICY_STATE,
-    VS18_MEMBER_IDENTITY_STATE,
+    MemberPolicyApplyResult, ReAttestationResult, ReAttestationService, RoutingTrustSummary,
+    RoutingTrustSummaryWriter, VShiftAlert, VerificationStatus, VS15_GOSSIP,
+    VS16_MEMBER_VERIFICATION, VS17_MEMBER_POLICY_STATE, VS18_MEMBER_IDENTITY_STATE,
 };
 use std::{
     collections::BTreeSet,
@@ -617,6 +617,8 @@ async fn send_to_peer(
         alert_pb: alert.encode()?,
     };
 
+    let target_peer = peer_label(peer);
+    crate::task3_network_ai::notify_task3_message("VSHIFT_ALERT", &target_peer);
     protocol::write_json_line(&mut write_half, &message)
         .await
         .context("write VSHIFT gossip message")?;
@@ -811,13 +813,9 @@ fn process_inbound(
     }
 
     // VS17 policy apply -> VS18 identity rotation -> forced re-attestation.
+    // Each real transition republishes Task2's routing trust handoff for Task3.
     if first_delivery && verification_status == "verified_not_applied" {
-        let _ = apply_verified_member_alert(node_id, &alert, received_at_ms)?;
-        let rotation = rotate_member_identity_after_apply(node_id, &alert, received_at_ms)?;
-
-        if rotation.status == IdentityRotationStatus::RotatedReAttestationRequired {
-            let _ = complete_member_reattestation(node_id, &alert, received_at_ms)?;
-        }
+        let _lifecycle = apply_verified_vshift_lifecycle(node_id, &alert, received_at_ms)?;
     }
 
     append_receive_event(node_id, message, &alert, received_at_ms, !first_delivery)
@@ -835,41 +833,100 @@ pub fn verify_and_apply_local_vshift_alert(
 
     let verification_status = verify_member_alert(node_id, alert, processed_at_ms)?;
 
-    let (policy_apply, identity_rotation, re_attestation) = if verification_status
-        == "verified_not_applied"
-    {
-        let policy_apply = apply_verified_member_alert(node_id, alert, processed_at_ms)?;
-        let identity_rotation =
-            rotate_member_identity_after_apply(node_id, alert, processed_at_ms)?;
-
-        let re_attestation =
-            if identity_rotation.status == IdentityRotationStatus::RotatedReAttestationRequired {
-                Some(complete_member_reattestation(
-                    node_id,
-                    alert,
-                    processed_at_ms,
-                )?)
-            } else {
-                None
-            };
-
-        (Some(policy_apply), Some(identity_rotation), re_attestation)
+    let lifecycle = if verification_status == "verified_not_applied" {
+        Some(apply_verified_vshift_lifecycle(
+            node_id,
+            alert,
+            processed_at_ms,
+        )?)
     } else {
-        (None, None, None)
+        None
     };
 
-    let replay_apply_suppressed = policy_apply.is_none();
+    let replay_apply_suppressed = lifecycle.is_none();
 
     Ok(serde_json::json!({
         "schema_version": 1,
         "member_id": node_id,
         "alert_id": &alert.alert_id,
         "verification_status": verification_status,
-        "policy_apply": policy_apply,
-        "identity_rotation": identity_rotation,
-        "re_attestation": re_attestation,
+        "policy_apply": lifecycle.as_ref().map(|value| &value.policy_apply),
+        "identity_rotation": lifecycle.as_ref().map(|value| &value.identity_rotation),
+        "re_attestation": lifecycle.as_ref().and_then(|value| value.re_attestation.as_ref()),
+        "routing_trust_after_policy_apply": lifecycle.as_ref().map(|value| &value.routing_trust_after_policy_apply),
+        "routing_trust_after_identity_rotation": lifecycle.as_ref().map(|value| &value.routing_trust_after_identity_rotation),
+        "routing_trust_after_re_attestation": lifecycle.as_ref().and_then(|value| value.routing_trust_after_re_attestation.as_ref()),
         "replay_apply_suppressed": replay_apply_suppressed
     }))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct VerifiedVShiftLifecycleResult {
+    policy_apply: MemberPolicyApplyResult,
+    routing_trust_after_policy_apply: RoutingTrustSummary,
+    identity_rotation: IdentityRotationResult,
+    routing_trust_after_identity_rotation: RoutingTrustSummary,
+    re_attestation: Option<ReAttestationResult>,
+    routing_trust_after_re_attestation: Option<RoutingTrustSummary>,
+}
+
+fn apply_verified_vshift_lifecycle(
+    node_id: &str,
+    alert: &VShiftAlert,
+    transition_at_ms: u64,
+) -> Result<VerifiedVShiftLifecycleResult, String> {
+    let policy_apply = apply_verified_member_alert(node_id, alert, transition_at_ms)?;
+    let routing_trust_after_policy_apply =
+        publish_task3_routing_trust_summary(node_id, transition_at_ms)?;
+    crate::attestation_service::publish_task2_peer_routing_trust_summaries_or_log(
+        "Virtual Shift policy apply",
+    );
+
+    let identity_rotation = rotate_member_identity_after_apply(node_id, alert, transition_at_ms)?;
+    let routing_trust_after_identity_rotation =
+        publish_task3_routing_trust_summary(node_id, transition_at_ms)?;
+    crate::attestation_service::publish_task2_peer_routing_trust_summaries_or_log(
+        "Virtual Shift identity rotation",
+    );
+
+    let (re_attestation, routing_trust_after_re_attestation) =
+        if identity_rotation.status == IdentityRotationStatus::RotatedReAttestationRequired {
+            let result = complete_member_reattestation(node_id, alert, transition_at_ms)?;
+            let summary = publish_task3_routing_trust_summary(node_id, transition_at_ms)?;
+            crate::attestation_service::publish_task2_peer_routing_trust_summaries_or_log(
+                "Virtual Shift re-attestation",
+            );
+            (Some(result), Some(summary))
+        } else {
+            (None, None)
+        };
+
+    Ok(VerifiedVShiftLifecycleResult {
+        policy_apply,
+        routing_trust_after_policy_apply,
+        identity_rotation,
+        routing_trust_after_identity_rotation,
+        re_attestation,
+        routing_trust_after_re_attestation,
+    })
+}
+
+fn publish_task3_routing_trust_summary(
+    node_id: &str,
+    updated_at_ms: u64,
+) -> Result<RoutingTrustSummary, String> {
+    let root = virtual_shift_root();
+    let writer = RoutingTrustSummaryWriter::new(
+        root.join(VS17_MEMBER_POLICY_STATE),
+        root.join(VS18_MEMBER_IDENTITY_STATE),
+        root.join(VS17_MEMBER_POLICY_STATE),
+    );
+
+    writer
+        .write_for_member(node_id, updated_at_ms)
+        .map_err(|error| {
+            format!("Task2→Task3 routing trust summary publish failed for {node_id}: {error}")
+        })
 }
 
 fn apply_verified_member_alert(
@@ -1210,4 +1267,71 @@ fn now_ms() -> Result<u64> {
     Ok(u64::try_from(
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sgx_anomaly_engine::virtual_shift::RoutingTrustStatus;
+
+    fn temp_state_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "sgx-vshift-task3-trust-{}-{}",
+            name,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        root
+    }
+
+    #[tokio::test]
+    async fn publishes_task3_routing_trust_summary_under_vs17_member_state() {
+        let _guard = crate::test_utils::TEST_ENV_LOCK.lock().await;
+        let previous = std::env::var("SGX_THREAT_STATE_DIR").ok();
+        let state_root = temp_state_root("path");
+        std::env::set_var("SGX_THREAT_STATE_DIR", &state_root);
+
+        let summary = publish_task3_routing_trust_summary("member-alpha", 1234).unwrap();
+        let summary_path = state_root
+            .join("virtual_shift")
+            .join(VS17_MEMBER_POLICY_STATE)
+            .join("member-alpha")
+            .join("routing_trust_summary.json");
+
+        assert!(summary_path.exists());
+        assert_eq!(summary.node_id, "member-alpha");
+        assert_eq!(summary.updated_at_ms, 1234);
+        assert_eq!(summary.trust_status, RoutingTrustStatus::Unknown);
+        assert!(!summary.routing_allowed);
+
+        match previous {
+            Some(value) => std::env::set_var("SGX_THREAT_STATE_DIR", value),
+            None => std::env::remove_var("SGX_THREAT_STATE_DIR"),
+        }
+        let _ = std::fs::remove_dir_all(state_root);
+    }
+
+    #[tokio::test]
+    async fn routing_trust_publish_fails_closed_for_unsafe_member_id() {
+        let _guard = crate::test_utils::TEST_ENV_LOCK.lock().await;
+        let previous = std::env::var("SGX_THREAT_STATE_DIR").ok();
+        let state_root = temp_state_root("unsafe");
+        std::env::set_var("SGX_THREAT_STATE_DIR", &state_root);
+
+        let error = publish_task3_routing_trust_summary("../member", 1234)
+            .expect_err("unsafe member id must fail closed");
+
+        assert!(error.contains("routing trust summary publish failed"));
+        assert!(!state_root
+            .join("virtual_shift")
+            .join(VS17_MEMBER_POLICY_STATE)
+            .join("..")
+            .exists());
+
+        match previous {
+            Some(value) => std::env::set_var("SGX_THREAT_STATE_DIR", value),
+            None => std::env::remove_var("SGX_THREAT_STATE_DIR"),
+        }
+        let _ = std::fs::remove_dir_all(state_root);
+    }
 }

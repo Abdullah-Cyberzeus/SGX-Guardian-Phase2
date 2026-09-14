@@ -6,6 +6,7 @@
 use crate::nebula::lighthouse::LighthouseRegistry;
 use crate::nebula::overlay_registry::OverlayRegistry;
 use crate::nebula::relay_registry::RelayRegistry;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -19,6 +20,8 @@ pub const REGISTRY_PATH: &str = "/var/lib/sgx-guardian/nebula/overlay_registry.j
 pub const LIGHTHOUSE_REGISTRY_PATH: &str = "/var/lib/sgx-guardian/nebula/lighthouse_registry.json";
 pub const RELAY_REGISTRY_PATH: &str = "/var/lib/sgx-guardian/nebula/relay_registry.json";
 pub const CACHE_PATH: &str = "/var/lib/sgx-guardian/nebula/local_ip_cache.json";
+pub const RELAY_TELEMETRY_DIR: &str = "/var/lib/sgx-guardian/nebula/relay_telemetry";
+const RELAY_TELEMETRY_MAX_AGE_MS: u64 = 120_000;
 
 pub type SharedRegistry = Arc<RwLock<OverlayRegistry>>;
 fn is_ca_node() -> bool {
@@ -29,7 +32,7 @@ fn is_ca_node() -> bool {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RegistryRequest {
-    pub action: String, // "assign" | "query" | "list" | "snapshot" | "snapshot_lh" | "snapshot_relay" | "publish_did_doc" | "snapshot_did_doc" | "status_list_snapshot"
+    pub action: String, // "assign" | "query" | "list" | "snapshot" | "snapshot_lh" | "snapshot_relay" | "publish_did_doc" | "snapshot_did_doc" | "status_list_snapshot" | "publish_relay_stats" | "snapshot_relay_telemetry"
     pub node_name: String,
     pub pubkey_prefix: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -38,6 +41,8 @@ pub struct RegistryRequest {
     pub did_query: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_list_body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_stats_json: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -55,6 +60,28 @@ pub struct RegistryResponse {
     pub status_list_body: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayTelemetryRecord {
+    pub node_id: String,
+    pub current_mbps: f64,
+    pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_peers: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_bytes_relayed: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_tunnels: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_tunnels: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayTelemetrySnapshot {
+    pub schema_version: String,
+    pub generated_at_ms: u64,
+    pub relays: HashMap<String, RelayTelemetryRecord>,
+}
+
 // ── Directory bootstrap ───────────────────────────────────────
 
 /// Ensure all required nebula directories exist.
@@ -65,6 +92,7 @@ pub fn ensure_dirs() -> Result<(), String> {
         "/var/lib/sgx-guardian/nebula",
         "/var/lib/sgx-guardian/nebula/ca",
         "/var/lib/sgx-guardian/nebula/nodes",
+        RELAY_TELEMETRY_DIR,
     ] {
         std::fs::create_dir_all(dir).map_err(|e| format!("Cannot create {}: {}", dir, e))?;
     }
@@ -214,6 +242,179 @@ pub fn apply_relay_snapshot(raw: &str, path: &str) -> Result<(), String> {
     atomic_write(path, &normalized)
 }
 
+fn now_millis() -> u64 {
+    Utc::now().timestamp_millis().max(0) as u64
+}
+
+fn is_safe_node_id(node_id: &str) -> bool {
+    !node_id.trim().is_empty()
+        && node_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+}
+
+fn parse_updated_at_ms(value: &serde_json::Value) -> Result<u64, String> {
+    if let Some(ms) = value.get("updated_at_ms").and_then(|value| value.as_u64()) {
+        return Ok(ms);
+    }
+
+    let updated_at = value
+        .get("updated_at")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "relay telemetry missing updated_at".to_string())?;
+    let parsed = DateTime::parse_from_rfc3339(updated_at)
+        .map_err(|e| format!("invalid relay telemetry updated_at: {}", e))?;
+    Ok(parsed.timestamp_millis().max(0) as u64)
+}
+
+fn validate_relay_telemetry(
+    raw: &str,
+    expected_node: Option<&str>,
+    relay_registry_path: Option<&str>,
+) -> Result<RelayTelemetryRecord, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw).map_err(|e| format!("invalid relay telemetry JSON: {}", e))?;
+    let node_id = value
+        .get("node_id")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "relay telemetry missing node_id".to_string())?
+        .trim()
+        .to_string();
+
+    if !is_safe_node_id(&node_id) {
+        return Err("relay telemetry node_id is not path-safe".to_string());
+    }
+    if let Some(expected) = expected_node {
+        if node_id != expected {
+            return Err(format!(
+                "relay telemetry node binding mismatch: request={} payload={}",
+                expected, node_id
+            ));
+        }
+    }
+
+    if let Some(path) = relay_registry_path {
+        let registry = RelayRegistry::load(path)
+            .map_err(|e| format!("relay registry unavailable for telemetry validation: {}", e))?;
+        if !registry.relays.contains_key(&node_id) {
+            return Err(format!(
+                "relay telemetry rejected for non-relay node {}",
+                node_id
+            ));
+        }
+    }
+
+    let current_mbps = value
+        .get("current_mbps")
+        .and_then(|value| value.as_f64())
+        .ok_or_else(|| "relay telemetry missing current_mbps".to_string())?;
+    if !current_mbps.is_finite() || current_mbps.is_sign_negative() {
+        return Err("relay telemetry current_mbps must be finite and non-negative".to_string());
+    }
+
+    let updated_at_ms = parse_updated_at_ms(&value)?;
+    let age_ms = now_millis().saturating_sub(updated_at_ms);
+    if age_ms > RELAY_TELEMETRY_MAX_AGE_MS {
+        return Err(format!("relay telemetry stale: age_ms={}", age_ms));
+    }
+
+    Ok(RelayTelemetryRecord {
+        node_id,
+        current_mbps,
+        updated_at: DateTime::<Utc>::from_timestamp_millis(updated_at_ms as i64)
+            .unwrap_or_else(Utc::now)
+            .to_rfc3339(),
+        active_peers: value
+            .get("active_peers")
+            .and_then(|value| value.as_u64())
+            .map(|value| value.min(u32::MAX as u64) as u32),
+        total_bytes_relayed: value
+            .get("total_bytes_relayed")
+            .and_then(|value| value.as_u64()),
+        direct_tunnels: value
+            .get("direct_tunnels")
+            .and_then(|value| value.as_u64())
+            .map(|value| value.min(u32::MAX as u64) as u32),
+        relay_tunnels: value
+            .get("relay_tunnels")
+            .and_then(|value| value.as_u64())
+            .map(|value| value.min(u32::MAX as u64) as u32),
+    })
+}
+
+fn relay_telemetry_path(root: &str, node_id: &str) -> Result<String, String> {
+    if !is_safe_node_id(node_id) {
+        return Err("unsafe relay telemetry node id".to_string());
+    }
+    Ok(format!("{}/{}.json", root.trim_end_matches('/'), node_id))
+}
+
+pub fn store_relay_telemetry(raw: &str, expected_node: &str, root: &str) -> Result<(), String> {
+    let record = validate_relay_telemetry(raw, Some(expected_node), Some(RELAY_REGISTRY_PATH))?;
+    let path = relay_telemetry_path(root, &record.node_id)?;
+    let normalized =
+        serde_json::to_string_pretty(&record).map_err(|e| format!("serialize telemetry: {}", e))?;
+    atomic_write(&path, &normalized)
+}
+
+pub fn apply_relay_telemetry_snapshot(raw: &str, root: &str) -> Result<usize, String> {
+    let value = parse_snapshot_payload(raw)?;
+    let snapshot: RelayTelemetrySnapshot = serde_json::from_value(value)
+        .map_err(|e| format!("invalid relay telemetry snapshot schema: {}", e))?;
+    if snapshot.schema_version != "sgx-nebula-relay-telemetry-snapshot-v1" {
+        return Err("unsupported relay telemetry snapshot schema".to_string());
+    }
+
+    let mut applied = 0usize;
+    for (node_id, record) in snapshot.relays {
+        if node_id != record.node_id {
+            return Err(format!(
+                "relay telemetry snapshot key mismatch: key={} payload={}",
+                node_id, record.node_id
+            ));
+        }
+        let normalized =
+            serde_json::to_string(&record).map_err(|e| format!("serialize telemetry: {}", e))?;
+        let validated = validate_relay_telemetry(&normalized, Some(&node_id), None)?;
+        let path = relay_telemetry_path(root, &validated.node_id)?;
+        let pretty = serde_json::to_string_pretty(&validated)
+            .map_err(|e| format!("serialize telemetry: {}", e))?;
+        atomic_write(&path, &pretty)?;
+        applied += 1;
+    }
+    Ok(applied)
+}
+
+fn export_relay_telemetry_snapshot(root: &str) -> Result<String, String> {
+    let mut relays = HashMap::new();
+    let dir = Path::new(root);
+    if dir.exists() {
+        for entry in std::fs::read_dir(dir).map_err(|e| format!("read {}: {}", root, e))? {
+            let entry = entry.map_err(|e| format!("read telemetry entry: {}", e))?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let raw =
+                std::fs::read_to_string(&path).map_err(|e| format!("read {:?}: {}", path, e))?;
+            match validate_relay_telemetry(&raw, None, None) {
+                Ok(record) => {
+                    relays.insert(record.node_id.clone(), record);
+                }
+                Err(e) => {
+                    eprintln!("⚠️ Relay telemetry snapshot skipped {:?}: {}", path, e);
+                }
+            }
+        }
+    }
+    let snapshot = RelayTelemetrySnapshot {
+        schema_version: "sgx-nebula-relay-telemetry-snapshot-v1".to_string(),
+        generated_at_ms: now_millis(),
+        relays,
+    };
+    serde_json::to_string(&snapshot).map_err(|e| format!("serialize telemetry snapshot: {}", e))
+}
+
 async fn handle_registry_connection(
     stream: TcpStream,
     registry: SharedRegistry,
@@ -257,6 +458,7 @@ async fn handle_registry_connection(
     if request.action == "snapshot"
         || request.action == "snapshot_lh"
         || request.action == "snapshot_relay"
+        || request.action == "snapshot_relay_telemetry"
         || request.action == "status_list_snapshot"
     {
         // ✅ Only CA serves registry snapshots
@@ -270,6 +472,29 @@ async fn handle_registry_connection(
             json.push('\n');
             writer.write_all(json.as_bytes()).await?;
             return Ok(());
+        }
+
+        if request.action == "snapshot_relay_telemetry" {
+            match export_relay_telemetry_snapshot(RELAY_TELEMETRY_DIR) {
+                Ok(mut content) => {
+                    if !content.ends_with('\n') {
+                        content.push('\n');
+                    }
+                    writer.write_all(content.as_bytes()).await?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    let resp = RegistryResponse {
+                        success: false,
+                        error: Some(e),
+                        ..Default::default()
+                    };
+                    let mut json = serde_json::to_string(&resp)?;
+                    json.push('\n');
+                    writer.write_all(json.as_bytes()).await?;
+                    return Ok(());
+                }
+            }
         }
 
         let path = if request.action == "snapshot_lh" {
@@ -429,6 +654,39 @@ async fn handle_registry_connection(
             }
         }
 
+        "publish_relay_stats" => {
+            if !is_ca_node() {
+                RegistryResponse {
+                    success: false,
+                    error: Some("Only CA can ingest relay telemetry".into()),
+                    ..Default::default()
+                }
+            } else {
+                match request.relay_stats_json.as_deref() {
+                    Some(payload) => match store_relay_telemetry(
+                        payload,
+                        request.node_name.trim(),
+                        RELAY_TELEMETRY_DIR,
+                    ) {
+                        Ok(()) => RegistryResponse {
+                            success: true,
+                            ..Default::default()
+                        },
+                        Err(e) => RegistryResponse {
+                            success: false,
+                            error: Some(format!("relay telemetry reject: {}", e)),
+                            ..Default::default()
+                        },
+                    },
+                    None => RegistryResponse {
+                        success: false,
+                        error: Some("missing relay_stats_json".into()),
+                        ..Default::default()
+                    },
+                }
+            }
+        }
+
         "snapshot_did_doc" => {
             if !is_ca_node() {
                 RegistryResponse {
@@ -532,6 +790,7 @@ pub async fn request_ip_from_ca(
         did_doc_json: None,
         did_query: None,
         status_list_body: None,
+        relay_stats_json: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| format!("Serialize: {}", e))?;
@@ -586,6 +845,7 @@ pub async fn query_ip_from_ca(node_name: &str, ca_host: &str) -> Result<(String,
         did_doc_json: None,
         did_query: None,
         status_list_body: None,
+        relay_stats_json: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| format!("Serialize: {}", e))?;
@@ -637,6 +897,7 @@ pub async fn pull_registry_snapshot_from_ca(ca_host: &str) -> Result<String, Str
         did_doc_json: None,
         did_query: None,
         status_list_body: None,
+        relay_stats_json: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
@@ -673,6 +934,7 @@ pub async fn pull_lighthouse_snapshot_from_ca(ca_host: &str) -> Result<String, S
         did_doc_json: None,
         did_query: None,
         status_list_body: None,
+        relay_stats_json: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
@@ -709,6 +971,93 @@ pub async fn pull_relay_snapshot_from_ca(ca_host: &str) -> Result<String, String
         did_doc_json: None,
         did_query: None,
         status_list_body: None,
+        relay_stats_json: None,
+    };
+
+    let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+    json.push('\n');
+
+    let (reader, mut writer) = stream.into_split();
+    writer
+        .write_all(json.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut buf_reader = BufReader::new(reader);
+    let mut response_line = String::new();
+    buf_reader
+        .read_line(&mut response_line)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(response_line)
+}
+
+pub async fn publish_relay_stats_to_ca(
+    ca_host: &str,
+    node_name: &str,
+    relay_stats_json: &str,
+) -> Result<(), String> {
+    let addr = format!("{}:{}", ca_host, REGISTRY_SYNC_PORT);
+
+    let stream = tokio::time::timeout(std::time::Duration::from_secs(5), TcpStream::connect(&addr))
+        .await
+        .map_err(|_| "timeout".to_string())?
+        .map_err(|e| format!("connect: {}", e))?;
+
+    let request = RegistryRequest {
+        action: "publish_relay_stats".to_string(),
+        node_name: node_name.to_string(),
+        pubkey_prefix: None,
+        did_doc_json: None,
+        did_query: None,
+        status_list_body: None,
+        relay_stats_json: Some(relay_stats_json.to_string()),
+    };
+
+    let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+    json.push('\n');
+
+    let (reader, mut writer) = stream.into_split();
+    writer
+        .write_all(json.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut buf_reader = BufReader::new(reader);
+    let mut response_line = String::new();
+    buf_reader
+        .read_line(&mut response_line)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let response: RegistryResponse =
+        serde_json::from_str(response_line.trim()).map_err(|e| e.to_string())?;
+    if response.success {
+        Ok(())
+    } else {
+        Err(response
+            .error
+            .unwrap_or_else(|| "Unknown error".to_string()))
+    }
+}
+
+pub async fn pull_relay_telemetry_snapshot_from_ca(ca_host: &str) -> Result<String, String> {
+    let addr = format!("{}:{}", ca_host, REGISTRY_SYNC_PORT);
+
+    let stream = tokio::time::timeout(std::time::Duration::from_secs(5), TcpStream::connect(&addr))
+        .await
+        .map_err(|_| "timeout".to_string())?
+        .map_err(|e| format!("connect: {}", e))?;
+
+    let request = RegistryRequest {
+        action: "snapshot_relay_telemetry".to_string(),
+        node_name: String::new(),
+        pubkey_prefix: None,
+        did_doc_json: None,
+        did_query: None,
+        status_list_body: None,
+        relay_stats_json: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
@@ -745,6 +1094,7 @@ pub async fn pull_status_list_snapshot_from_ca(ca_host: &str) -> Result<Registry
         did_doc_json: None,
         did_query: None,
         status_list_body: None,
+        relay_stats_json: None,
     };
 
     let mut json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
@@ -939,5 +1289,99 @@ mod tests {
 
         let saved = RelayRegistry::load(path.to_str().expect("path")).expect("load snapshot");
         assert!(saved.relays.contains_key("nodeA"));
+    }
+
+    #[test]
+    fn relay_telemetry_snapshot_writes_per_node_files() {
+        let td = TempDir::new().expect("tempdir");
+        let mut relays = HashMap::new();
+        relays.insert(
+            "nodeB".to_string(),
+            RelayTelemetryRecord {
+                node_id: "nodeB".to_string(),
+                current_mbps: 25.0,
+                updated_at: Utc::now().to_rfc3339(),
+                active_peers: Some(2),
+                total_bytes_relayed: Some(2048),
+                direct_tunnels: Some(1),
+                relay_tunnels: Some(3),
+            },
+        );
+        let snapshot = RelayTelemetrySnapshot {
+            schema_version: "sgx-nebula-relay-telemetry-snapshot-v1".to_string(),
+            generated_at_ms: now_millis(),
+            relays,
+        };
+        let raw = serde_json::to_string(&snapshot).expect("serialize snapshot");
+
+        let applied = apply_relay_telemetry_snapshot(&raw, td.path().to_str().expect("temp path"))
+            .expect("apply telemetry snapshot");
+
+        assert_eq!(applied, 1);
+        let saved = std::fs::read_to_string(td.path().join("nodeB.json")).expect("telemetry file");
+        let value: serde_json::Value = serde_json::from_str(&saved).expect("telemetry json");
+        assert_eq!(value["node_id"], "nodeB");
+        assert_eq!(value["current_mbps"], 25.0);
+    }
+
+    #[test]
+    fn relay_telemetry_snapshot_rejects_mismatched_node_binding() {
+        let td = TempDir::new().expect("tempdir");
+        let mut relays = HashMap::new();
+        relays.insert(
+            "nodeB".to_string(),
+            RelayTelemetryRecord {
+                node_id: "nodeC".to_string(),
+                current_mbps: 25.0,
+                updated_at: Utc::now().to_rfc3339(),
+                active_peers: None,
+                total_bytes_relayed: None,
+                direct_tunnels: None,
+                relay_tunnels: None,
+            },
+        );
+        let snapshot = RelayTelemetrySnapshot {
+            schema_version: "sgx-nebula-relay-telemetry-snapshot-v1".to_string(),
+            generated_at_ms: now_millis(),
+            relays,
+        };
+        let raw = serde_json::to_string(&snapshot).expect("serialize snapshot");
+
+        let err = apply_relay_telemetry_snapshot(&raw, td.path().to_str().expect("temp path"))
+            .expect_err("mismatched telemetry must fail closed");
+
+        assert!(err.contains("key mismatch"));
+        assert!(!td.path().join("nodeB.json").exists());
+    }
+
+    #[test]
+    fn relay_telemetry_snapshot_rejects_stale_records() {
+        let td = TempDir::new().expect("tempdir");
+        let stale = Utc::now() - chrono::Duration::seconds(300);
+        let mut relays = HashMap::new();
+        relays.insert(
+            "nodeB".to_string(),
+            RelayTelemetryRecord {
+                node_id: "nodeB".to_string(),
+                current_mbps: 25.0,
+                updated_at: stale.to_rfc3339(),
+                active_peers: None,
+                total_bytes_relayed: None,
+                direct_tunnels: None,
+                relay_tunnels: None,
+            },
+        );
+        let snapshot = RelayTelemetrySnapshot {
+            schema_version: "sgx-nebula-relay-telemetry-snapshot-v1".to_string(),
+            generated_at_ms: now_millis(),
+            relays,
+        };
+        let raw = serde_json::to_string(&snapshot).expect("serialize snapshot");
+
+        let err = apply_relay_telemetry_snapshot(&raw, td.path().to_str().expect("temp path"))
+            .expect_err("stale telemetry must fail closed");
+
+        assert!(err.contains("stale"));
+        assert!(!td.path().join("nodeB.json").exists());
     }
 }

@@ -10,6 +10,7 @@ pub mod edge_acceptance;
 pub mod engine;
 pub mod features;
 pub mod model;
+pub mod network_ai;
 pub mod policy;
 pub mod policy_candidate;
 pub mod port_detection;

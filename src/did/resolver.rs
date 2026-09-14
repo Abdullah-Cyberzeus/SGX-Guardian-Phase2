@@ -236,6 +236,7 @@ impl Resolver {
             did_doc_json: None,
             did_query: Some(did.as_str().to_string()),
             status_list_body: None,
+            relay_stats_json: None,
         };
 
         let response = tokio::time::timeout(

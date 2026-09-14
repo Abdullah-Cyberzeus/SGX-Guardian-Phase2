@@ -52,6 +52,7 @@ pub mod secure_element;
 pub mod server;
 pub mod storage;
 pub mod task1_ai;
+pub mod task3_network_ai;
 pub mod telemetry;
 pub mod threat;
 pub mod tls;

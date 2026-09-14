@@ -32,6 +32,7 @@ pub async fn pull_status_list_verified(
         did_doc_json: None,
         did_query: None,
         status_list_body: None,
+        relay_stats_json: None,
     };
     let response = tokio::time::timeout(
         Duration::from_secs(5),

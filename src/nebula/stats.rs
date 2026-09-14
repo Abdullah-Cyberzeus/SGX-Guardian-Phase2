@@ -4,6 +4,7 @@
 // ============================================================
 
 use once_cell::sync::Lazy;
+use std::fs;
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -36,21 +37,44 @@ impl NebulaStats {
             .await
             .map_err(|e| e.to_string())?;
 
+        // Prometheus remains the source for tunnel/peer metadata.
         let mut stats = Self::parse_prometheus(&body)?;
+
+        // Nebula 1.10.3 does not expose reliable relay byte counters through
+        // the metrics endpoint in this deployment. Use the real Nebula TUN
+        // interface counters for production overlay utilization instead.
+        let rx_bytes = Self::read_interface_counter("nebula0", "rx_bytes")?;
+        let tx_bytes = Self::read_interface_counter("nebula0", "tx_bytes")?;
+        let overlay_bytes = rx_bytes.saturating_add(tx_bytes);
+
+        stats.total_bytes_relayed = overlay_bytes;
 
         let now = Instant::now();
         if let Ok(mut guard) = LAST_SAMPLE.lock() {
             if let Some((last_ts, last_bytes)) = *guard {
                 let elapsed = now.duration_since(last_ts).as_secs_f64();
-                if elapsed > 0.0 && stats.total_bytes_relayed >= last_bytes {
-                    let delta_bytes = stats.total_bytes_relayed - last_bytes;
+
+                if elapsed > 0.0 && overlay_bytes >= last_bytes {
+                    let delta_bytes = overlay_bytes - last_bytes;
                     stats.current_mbps = (delta_bytes as f64 * 8.0) / (elapsed * 1_000_000.0);
                 }
             }
-            *guard = Some((now, stats.total_bytes_relayed));
+
+            *guard = Some((now, overlay_bytes));
         }
 
         Ok(stats)
+    }
+
+    fn read_interface_counter(interface: &str, counter: &str) -> Result<u64, String> {
+        let path = format!("/sys/class/net/{}/statistics/{}", interface, counter);
+
+        let raw =
+            fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {}", path, e))?;
+
+        raw.trim()
+            .parse::<u64>()
+            .map_err(|e| format!("invalid counter in {}: {}", path, e))
     }
 
     pub fn parse_prometheus(text: &str) -> Result<RelayStats, String> {

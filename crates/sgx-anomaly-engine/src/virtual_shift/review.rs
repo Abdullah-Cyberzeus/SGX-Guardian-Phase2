@@ -352,6 +352,32 @@ impl ReviewQueue {
             .parent()
             .expect("review record has a parent directory")
             .join("owner_decision_audit.json");
+        let approval_only_sensitive_route = record
+            .proposal
+            .get("task1_ai_remediation_plan")
+            .and_then(|value| value.get("actions"))
+            .and_then(serde_json::Value::as_array)
+            .map(|actions| {
+                actions.iter().any(|action| {
+                    action
+                        .get("action_type")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("review_sensitive_route_change")
+                })
+            })
+            .unwrap_or(false);
+
+        let policy_mutation_allowed =
+            record.status == ReviewStatus::Approved && !approval_only_sensitive_route;
+
+        let policy_mutation_blocked_reason = if record.status == ReviewStatus::Rejected {
+            Some("owner rejected AI recommendation before policy build/sign/broadcast")
+        } else if approval_only_sensitive_route {
+            Some("sensitive-route review is approval-only; no Virtual Shift policy mutation is performed")
+        } else {
+            None
+        };
+
         let audit = serde_json::json!({
             "schema_version": 1,
             "record_type": "task2_owner_decision_audit",
@@ -363,12 +389,8 @@ impl ReviewQueue {
             "decision_actor": decision.reviewer_id,
             "decision_timestamp_ms": decision.decided_at_ms,
             "reason": decision.reason,
-            "policy_mutation_allowed": record.status == ReviewStatus::Approved,
-            "policy_mutation_blocked_reason": if record.status == ReviewStatus::Rejected {
-                Some("owner rejected AI recommendation before policy build/sign/broadcast")
-            } else {
-                None
-            },
+            "policy_mutation_allowed": policy_mutation_allowed,
+            "policy_mutation_blocked_reason": policy_mutation_blocked_reason,
             "ai_justification": record
                 .proposal
                 .get("vs3")

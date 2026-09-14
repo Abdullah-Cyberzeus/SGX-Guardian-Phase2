@@ -470,6 +470,11 @@ pub async fn revoke(
     // guaranteed to reach peers even if connectivity is currently down.
     crate::crl::offline::queue_pending(&state.node_id, &entry);
 
+    // D4: CRL is a Task2 trust authority. Publish the updated per-peer
+    // routing authorization immediately so Task3 fails closed without
+    // waiting for the next periodic attestation cycle.
+    crate::attestation_service::publish_task2_peer_routing_trust_summaries_or_log("CRL revocation");
+
     // Feed the alert-rules engine. issue_revocation() itself runs inside the
     // separate sgx-pa-cli subprocess (see run_owned_cli_with_env above), so a
     // publish() there would be lost with that process — this in-daemon handler
@@ -531,6 +536,10 @@ pub async fn unrevoke(
         AuditAction::Updated,
         &format!("CRL entry unrevoked: {}", body.did),
     );
+
+    // D4 recovery path: refresh Task2 routing authorization immediately
+    // after the CRL state is cleared.
+    crate::attestation_service::publish_task2_peer_routing_trust_summaries_or_log("CRL unrevoke");
 
     Ok(Json(UnrevokeCrlResponse {
         status: "success".to_string(),

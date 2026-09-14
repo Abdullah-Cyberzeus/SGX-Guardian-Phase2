@@ -27,9 +27,11 @@ const CONNECT_RETRY_DELAY_MS: u64 = 1000;
 const MAX_TRUSTED_PEER_AGE_HOURS: i64 = 24;
 const ATTEST_ATTEMPT_THROTTLE_SECS: u64 = 30;
 const MAX_ATTEST_EVIDENCE_BYTES: u32 = 256 * 1024;
+const TASK2_PEER_ROUTING_TRUST_REFRESH_SECS: u64 = 60;
 static LIGHTHOUSE_WARNING_PRINTED: AtomicBool = AtomicBool::new(false);
 static OVERLAY_WAIT_LOGGED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static LAST_ATTEST_REQUEST_LOGGED: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+static TASK2_PEER_ROUTING_TRUST_REFRESH_STARTED: OnceLock<()> = OnceLock::new();
 pub static VID_CACHE: once_cell::sync::OnceCell<crate::virtual_id_cache::VirtualIdCache> =
     once_cell::sync::OnceCell::new();
 pub static REATTEST_TX: once_cell::sync::OnceCell<mpsc::UnboundedSender<String>> =
@@ -228,6 +230,22 @@ fn prune_stale_trusted_peers() {
             remove_trusted_peer(&peer.peer_id);
         }
     }
+    publish_task2_peer_routing_trust_summaries_or_log("attestation health sweep");
+}
+
+fn spawn_task2_peer_routing_trust_refresh_loop() {
+    if TASK2_PEER_ROUTING_TRUST_REFRESH_STARTED.set(()).is_err() {
+        return;
+    }
+    tokio::spawn(async {
+        let mut tick =
+            tokio::time::interval(Duration::from_secs(TASK2_PEER_ROUTING_TRUST_REFRESH_SECS));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            publish_task2_peer_routing_trust_summaries_or_log("periodic attestation trust refresh");
+        }
+    });
 }
 
 /// Signer warm-up burst. SE050/TPM signing latency rises after long idle
@@ -316,6 +334,8 @@ use std::fs;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TrustedPeer {
     peer_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    node_id: Option<String>,
     ip: String,
     status: String,
     /// Legacy field. Equal to `last_attested_at` after Fix 3. Retained for
@@ -350,6 +370,8 @@ struct TrustedPeer {
 #[derive(Serialize, Deserialize)]
 pub struct LastAttestation {
     pub peer_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
     pub policy_digest: String,
     pub result: String,
     pub timestamp: String,
@@ -392,7 +414,9 @@ struct StableDkpState {
 }
 
 fn log_dir_primary() -> PathBuf {
-    PathBuf::from("/var/log/sgx-guardian")
+    std::env::var("SGX_GUARDIAN_LOG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/var/log/sgx-guardian"))
 }
 
 fn log_dir_fallback() -> PathBuf {
@@ -451,6 +475,431 @@ fn write_string(path: &Path, contents: &str) {
 
 fn read_to_string_first(paths: [&Path; 2]) -> std::io::Result<String> {
     fs::read_to_string(paths[0]).or_else(|_| fs::read_to_string(paths[1]))
+}
+
+fn virtual_shift_state_root() -> PathBuf {
+    std::env::var("SGX_THREAT_STATE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/var/lib/sgx-guardian/threat"))
+        .join("virtual_shift")
+}
+
+fn task2_peer_routing_trust_root() -> PathBuf {
+    std::env::var("SGX_TASK2_PEER_TRUST_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            virtual_shift_state_root()
+                .join(sgx_anomaly_engine::virtual_shift::VS17_MEMBER_POLICY_STATE)
+        })
+}
+
+fn safe_peer_summary_component(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed == "."
+        || trimmed == ".."
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains(':')
+    {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn trusted_peer_route_node_id(peer: &TrustedPeer) -> Option<String> {
+    peer.node_id
+        .as_deref()
+        .and_then(safe_peer_summary_component)
+        .or_else(|| safe_peer_summary_component(&peer.peer_id))
+}
+
+fn last_attestation_route_node_id(record: &LastAttestation) -> Option<String> {
+    record
+        .node_id
+        .as_deref()
+        .and_then(safe_peer_summary_component)
+        .or_else(|| safe_peer_summary_component(&record.peer_id))
+}
+
+fn unix_time_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn timestamp_is_fresh(timestamp: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
+    DateTime::parse_from_rfc3339(timestamp)
+        .map(|seen| {
+            now.signed_duration_since(seen.with_timezone(&Utc))
+                .num_seconds()
+                <= (MAX_TRUSTED_PEER_AGE_HOURS * 3600)
+        })
+        .unwrap_or(false)
+}
+
+fn load_last_attestation_records() -> Vec<LastAttestation> {
+    let (primary_dir, fallback_dir) = current_log_dirs();
+    let (primary_file, fallback_file) = last_attestation_paths(&primary_dir, &fallback_dir);
+    let Ok(text) = read_to_string_first([primary_file.as_path(), fallback_file.as_path()]) else {
+        return Vec::new();
+    };
+    if let Ok(record) = serde_json::from_str::<LastAttestation>(&text) {
+        return vec![record];
+    }
+    serde_json::from_str::<Vec<LastAttestation>>(&text).unwrap_or_default()
+}
+
+fn value_mentions_peer(value: &serde_json::Value, needles: &[String]) -> bool {
+    match value {
+        serde_json::Value::String(text) => {
+            let lower = text.to_lowercase();
+            needles
+                .iter()
+                .any(|needle| lower.contains(&needle.to_lowercase()))
+        }
+        serde_json::Value::Array(items) => {
+            items.iter().any(|item| value_mentions_peer(item, needles))
+        }
+        serde_json::Value::Object(map) => {
+            map.values().any(|item| value_mentions_peer(item, needles))
+        }
+        _ => false,
+    }
+}
+
+fn collect_task2_policy_restrictions(peer: &PeerRoutingTrustEvidence) -> Vec<String> {
+    let mut restrictions = Vec::new();
+    let policy_root = virtual_shift_state_root()
+        .join(sgx_anomaly_engine::virtual_shift::VS17_MEMBER_POLICY_STATE);
+    let Ok(entries) = fs::read_dir(&policy_root) else {
+        return restrictions;
+    };
+
+    let needles: Vec<String> = [
+        Some(peer.node_id.as_str()),
+        Some(peer.peer_id.as_str()),
+        peer.did.as_deref(),
+        peer.virtual_id.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|value| !value.trim().is_empty())
+    .map(str::to_string)
+    .collect();
+
+    for entry in entries.flatten() {
+        let active_path = entry.path().join("active_policy.json");
+        let Ok(text) = fs::read_to_string(&active_path) else {
+            continue;
+        };
+        let Ok(policy) = serde_json::from_str::<serde_json::Value>(&text) else {
+            restrictions.push(format!(
+                "Invalid Task2 active policy at {}",
+                active_path.display()
+            ));
+            continue;
+        };
+        let policy_mentions_peer = value_mentions_peer(&policy, &needles);
+        let Some(rules) = policy.get("rules").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for rule in rules {
+            let action = rule
+                .get("action")
+                .or_else(|| rule.get("action_type"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_lowercase();
+            let restrictive = action.contains("deny")
+                || action.contains("quarantine")
+                || action.contains("block")
+                || action.contains("revoke");
+            if restrictive && (policy_mentions_peer || value_mentions_peer(rule, &needles)) {
+                restrictions.push(format!(
+                    "{} via {}",
+                    serde_json::to_string(rule).unwrap_or_else(|_| action.clone()),
+                    active_path.display()
+                ));
+            }
+        }
+    }
+    restrictions.sort();
+    restrictions.dedup();
+    restrictions
+}
+
+#[derive(Debug, Clone)]
+struct PeerRoutingTrustEvidence {
+    node_id: String,
+    peer_id: String,
+    did: Option<String>,
+    virtual_id: Option<String>,
+    trusted_status: Option<String>,
+    last_result: Option<String>,
+    last_attested_at: Option<String>,
+    policy_digest: Option<String>,
+    trusted_peer_source: Option<String>,
+    last_attestation_source: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct PeerRoutingTrustSummary {
+    schema_version: u32,
+    purpose: String,
+    node_id: String,
+    trust_status: String,
+    routing_allowed: bool,
+    routing_guidance: String,
+    policy_status: String,
+    active_policy_id: Option<String>,
+    active_policy_version: Option<u64>,
+    applicable_members: Vec<String>,
+    policy_restrictions: Vec<String>,
+    last_alert_id: Option<String>,
+    attestation_state: String,
+    updated_at_ms: u64,
+    sources: serde_json::Value,
+}
+
+fn load_peer_routing_trust_evidence() -> Vec<PeerRoutingTrustEvidence> {
+    let local_node = current_node_name("nodeX");
+    let (primary_dir, fallback_dir) = current_log_dirs();
+    let (primary_peers, fallback_peers) =
+        trusted_peer_node_paths(&local_node, &primary_dir, &fallback_dir);
+    let trusted_source = read_to_string_first([primary_peers.as_path(), fallback_peers.as_path()])
+        .ok()
+        .and_then(|text| serde_json::from_str::<Vec<TrustedPeer>>(&text).ok())
+        .unwrap_or_default();
+    let attestations = load_last_attestation_records();
+
+    let mut by_node: HashMap<String, PeerRoutingTrustEvidence> = HashMap::new();
+    for peer in trusted_source {
+        let Some(node_id) = trusted_peer_route_node_id(&peer) else {
+            eprintln!(
+                "⚠️ Task2 peer routing trust skipped unsafe peer label {}",
+                peer.peer_id
+            );
+            continue;
+        };
+        by_node.insert(
+            node_id.clone(),
+            PeerRoutingTrustEvidence {
+                node_id,
+                peer_id: peer.peer_id,
+                did: peer.did,
+                virtual_id: peer.virtual_id,
+                trusted_status: Some(peer.status),
+                last_result: None,
+                last_attested_at: peer.last_attested_at.or(Some(peer.timestamp)),
+                policy_digest: peer.policy_digest,
+                trusted_peer_source: Some(
+                    read_to_string_first([primary_peers.as_path(), fallback_peers.as_path()])
+                        .map(|_| {
+                            if primary_peers.is_file() {
+                                primary_peers.display().to_string()
+                            } else {
+                                fallback_peers.display().to_string()
+                            }
+                        })
+                        .unwrap_or_else(|_| fallback_peers.display().to_string()),
+                ),
+                last_attestation_source: None,
+            },
+        );
+    }
+
+    let (primary_last, fallback_last) = last_attestation_paths(&primary_dir, &fallback_dir);
+    let last_source = if primary_last.is_file() {
+        primary_last.display().to_string()
+    } else {
+        fallback_last.display().to_string()
+    };
+    for record in attestations {
+        let Some(node_id) = last_attestation_route_node_id(&record) else {
+            continue;
+        };
+        let entry = by_node
+            .entry(node_id.clone())
+            .or_insert_with(|| PeerRoutingTrustEvidence {
+                node_id,
+                peer_id: record.peer_id.clone(),
+                did: record.peer_did.clone(),
+                virtual_id: record.virtual_id.clone(),
+                trusted_status: None,
+                last_result: None,
+                last_attested_at: None,
+                policy_digest: None,
+                trusted_peer_source: None,
+                last_attestation_source: None,
+            });
+        entry.last_result = Some(record.result);
+        entry.last_attested_at = Some(record.timestamp);
+        entry.did = entry.did.clone().or(record.peer_did);
+        entry.virtual_id = entry.virtual_id.clone().or(record.virtual_id);
+        entry.policy_digest = entry.policy_digest.clone().or(Some(record.policy_digest));
+        entry.last_attestation_source = Some(last_source.clone());
+    }
+
+    let mut peers: Vec<_> = by_node.into_values().collect();
+    peers.sort_by(|left, right| left.node_id.cmp(&right.node_id));
+    peers
+}
+
+fn build_peer_routing_trust_summary(
+    peer: &PeerRoutingTrustEvidence,
+    now: chrono::DateTime<chrono::Utc>,
+    now_ms: u64,
+) -> PeerRoutingTrustSummary {
+    let status_ok = peer
+        .trusted_status
+        .as_deref()
+        .map(|status| {
+            let status = status.to_lowercase();
+            status == "verified" || status == "trusted" || status == "success"
+        })
+        .unwrap_or(false);
+    let last_ok = peer
+        .last_result
+        .as_deref()
+        .map(|result| result.eq_ignore_ascii_case("success"))
+        .unwrap_or(status_ok);
+    let fresh = peer
+        .last_attested_at
+        .as_deref()
+        .map(|timestamp| timestamp_is_fresh(timestamp, now))
+        .unwrap_or(false);
+    let revoked = peer
+        .did
+        .as_deref()
+        .map(crate::crl::is_revoked)
+        .unwrap_or(false);
+    let policy_restrictions = collect_task2_policy_restrictions(peer);
+    let restricted = revoked || !policy_restrictions.is_empty();
+    let cot_trusted = status_ok && last_ok && fresh && !revoked;
+    let routing_allowed = cot_trusted && !restricted;
+    let attestation_state = if !last_ok {
+        "failed"
+    } else if !fresh {
+        "stale"
+    } else if cot_trusted {
+        "trusted"
+    } else {
+        "unknown"
+    }
+    .to_string();
+    let trust_status = if routing_allowed {
+        "trusted"
+    } else if revoked || !last_ok {
+        "not_trusted"
+    } else {
+        "restricted"
+    }
+    .to_string();
+    let mut restrictions = policy_restrictions;
+    if revoked {
+        restrictions.push("Peer DID is revoked by Task2 CRL state".to_string());
+    }
+    if !fresh {
+        restrictions.push(format!(
+            "Peer attestation is stale or missing; freshness window is {}h",
+            MAX_TRUSTED_PEER_AGE_HOURS
+        ));
+    }
+    if !last_ok {
+        restrictions.push("Latest CoT attestation result is not successful".to_string());
+    }
+
+    PeerRoutingTrustSummary {
+        schema_version: 1,
+        purpose: "Task2 peer routing trust handoff for Task3 route eligibility. Task3 consumes this file as an authorization constraint and must not read trusted_peers directly.".into(),
+        node_id: peer.node_id.clone(),
+        trust_status,
+        routing_allowed,
+        routing_guidance: if routing_allowed {
+            "Task3 may consider this peer for normal routes while honoring live health and policy constraints.".into()
+        } else {
+            "Task3 must fail closed for this peer until Task2 publishes trusted routing authorization.".into()
+        },
+        policy_status: if restrictions.is_empty() {
+            "no_peer_restrictions".into()
+        } else {
+            "restricted".into()
+        },
+        active_policy_id: peer.policy_digest.clone(),
+        active_policy_version: None,
+        applicable_members: if routing_allowed {
+            vec![peer.node_id.clone()]
+        } else {
+            Vec::new()
+        },
+        policy_restrictions: restrictions,
+        last_alert_id: None,
+        attestation_state,
+        updated_at_ms: now_ms,
+        sources: serde_json::json!({
+            "cot_trusted_peer_path": peer.trusted_peer_source,
+            "cot_last_attestation_path": peer.last_attestation_source,
+            "peer_id": peer.peer_id,
+            "peer_did": peer.did,
+            "virtual_id": peer.virtual_id,
+            "task2_policy_root": virtual_shift_state_root()
+                .join(sgx_anomaly_engine::virtual_shift::VS17_MEMBER_POLICY_STATE)
+                .display()
+                .to_string(),
+            "crl_checked": peer.did.is_some(),
+        }),
+    }
+}
+
+fn write_peer_routing_trust_summary(summary: &PeerRoutingTrustSummary) -> Result<PathBuf> {
+    let member = safe_peer_summary_component(&summary.node_id)
+        .ok_or_else(|| anyhow::anyhow!("unsafe Task2 peer routing summary node id"))?;
+    let output_path = task2_peer_routing_trust_root()
+        .join(member)
+        .join("routing_trust_summary.json");
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp_path = output_path.with_extension("json.tmp");
+    fs::write(
+        &tmp_path,
+        format!("{}\n", serde_json::to_string_pretty(summary)?),
+    )?;
+    fs::rename(&tmp_path, &output_path)?;
+    Ok(output_path)
+}
+
+fn publish_task2_peer_routing_trust_summaries() -> Result<Vec<PathBuf>> {
+    let peers = load_peer_routing_trust_evidence();
+    let now = Utc::now();
+    let now_ms = unix_time_millis();
+    let mut written = Vec::new();
+    for peer in peers {
+        let summary = build_peer_routing_trust_summary(&peer, now, now_ms);
+        written.push(write_peer_routing_trust_summary(&summary)?);
+    }
+    Ok(written)
+}
+
+pub(crate) fn publish_task2_peer_routing_trust_summaries_or_log(context: &str) {
+    match publish_task2_peer_routing_trust_summaries() {
+        Ok(paths) if !paths.is_empty() => {
+            println!(
+                "✅ Task2 peer routing trust published after {} ({} peer summaries)",
+                context,
+                paths.len()
+            );
+        }
+        Ok(_) => {}
+        Err(error) => {
+            eprintln!(
+                "❌ Task2 peer routing trust publication failed after {} (Task3 remains fail-closed): {}",
+                context, error
+            );
+        }
+    }
 }
 
 fn decode_dkp_pubkey_fingerprint(pubkey_der_b64: &str) -> Option<String> {
@@ -671,6 +1120,7 @@ fn write_trusted_peer_with_dirs(
 
     let entry = TrustedPeer {
         peer_id: peer_id.to_string(),
+        node_id: Some(ev.node_id.clone()).filter(|s| !s.is_empty()),
         ip: ip.to_string(),
         status: "verified".to_string(),
         timestamp: now.clone(),
@@ -702,6 +1152,7 @@ fn write_trusted_peer_with_dirs(
         for p in data.iter_mut() {
             if p.did.as_deref() == Some(new_did.as_str()) {
                 p.peer_id = entry.peer_id.clone();
+                p.node_id = entry.node_id.clone();
                 p.ip = entry.ip.clone();
                 p.status = "verified".into();
                 p.timestamp = entry.timestamp.clone();
@@ -724,6 +1175,7 @@ fn write_trusted_peer_with_dirs(
         for p in data.iter_mut() {
             if p.did.is_none() && p.peer_id == peer_id {
                 p.ip = entry.ip.clone();
+                p.node_id = entry.node_id.clone();
                 p.status = "verified".into();
                 p.timestamp = entry.timestamp.clone();
                 p.did = entry.did.clone();
@@ -772,7 +1224,11 @@ fn remove_trusted_peer(peer_id: &str) {
     }
 
     let before = data.len();
-    data.retain(|p| p.peer_id != peer_id);
+    data.retain(|p| {
+        p.peer_id != peer_id
+            && p.node_id.as_deref() != Some(peer_id)
+            && p.did.as_deref() != Some(peer_id)
+    });
     let removed = before.saturating_sub(data.len());
 
     if removed > 0 {
@@ -786,6 +1242,7 @@ fn remove_trusted_peer(peer_id: &str) {
         }
     }
     merge_parent_peer_file_with_dirs(&primary_dir, &fallback_dir);
+    publish_task2_peer_routing_trust_summaries_or_log("trusted peer removal");
 }
 /// Writes the most recent attestation outcome for a peer.
 /// `ev` is the *peer's* evidence (so DID/VID/DKP/PCR reflect THEM, not us).
@@ -822,6 +1279,7 @@ fn write_last_attestation(
 
     let record = LastAttestation {
         peer_id: peer_id.to_string(),
+        node_id: ev.map(|ev| ev.node_id.clone()).filter(|s| !s.is_empty()),
         policy_digest: policy_digest.to_string(),
         result: result.to_string(),
         timestamp: Utc::now().to_rfc3339(),
@@ -927,12 +1385,16 @@ fn merge_trusted_peer(existing: &mut TrustedPeer, candidate: TrustedPeer) {
 
     if candidate_is_newer {
         existing.peer_id = candidate.peer_id.clone();
+        existing.node_id = candidate.node_id.clone();
         existing.ip = candidate.ip.clone();
         existing.status = candidate.status.clone();
         existing.timestamp = candidate.timestamp.clone();
         if candidate.last_attested_at.is_some() {
             existing.last_attested_at = candidate.last_attested_at.clone();
         }
+    }
+    if candidate.node_id.is_some() {
+        existing.node_id = candidate.node_id.clone();
     }
     if candidate.did.is_some() {
         existing.did = candidate.did.clone();
@@ -1056,18 +1518,33 @@ fn infer_node_id_from_base_port(base_port: u16) -> Option<&'static str> {
     }
 }
 
-fn infer_node_id_from_peer(peer_ip: &str, base_port: u16) -> Option<String> {
-    if let Some(node_id) = infer_node_id_from_base_port(base_port) {
+fn infer_node_id_from_peer(peer_ip: &str, port: u16) -> Option<String> {
+    // Accept both Guardian base ports (50051/50052/50053) and
+    // attestation listener ports (50151/50152/50153).
+    //
+    // The outbound mutual-attestation path already receives the attestation
+    // listener port, so failing to normalize it caused Task3 D2 events to be
+    // published against the peer IP instead of stable node IDs.
+    let normalized_base_port = if infer_node_id_from_base_port(port).is_some() {
+        port
+    } else {
+        port.checked_sub(100)
+            .filter(|candidate| infer_node_id_from_base_port(*candidate).is_some())
+            .unwrap_or(port)
+    };
+
+    if let Some(node_id) = infer_node_id_from_base_port(normalized_base_port) {
         return Some(node_id.to_string());
     }
 
     for node in ["nodeA", "nodeB", "nodeC"] {
         if let Ok(conf) = load_node_config_for_attestation(node) {
-            if conf.port == base_port && conf.ip == peer_ip {
+            if conf.port == normalized_base_port && conf.ip == peer_ip {
                 return Some(node.to_string());
             }
         }
     }
+
     None
 }
 
@@ -2390,6 +2867,9 @@ impl AttestationService {
         if let Ok(Some(vc)) = crate::vc::persistence::load_own_any() {
             evidence.presented_vc_json = serde_json::to_string(&vc).ok();
         }
+        let target_peer =
+            infer_node_id_from_peer(&peer_ip, peer_port).unwrap_or_else(|| peer_ip.clone());
+        crate::task3_network_ai::notify_task3_message("attestation", &target_peer);
         if let Err(e) = write_evidence_framed(&mut stream, &evidence).await {
             eprintln!(
                 "❌ Failed to send attestation evidence to {}: {:?}",
@@ -2468,6 +2948,7 @@ impl AttestationService {
             current_rotation_reason_for_peer(&peer_ev.subject_did),
         );
         write_last_attestation(&addr, &peer_ev.policy_digest, "success", Some(&peer_ev));
+        publish_task2_peer_routing_trust_summaries_or_log("peer attestation success");
         Ok(true)
     }
 }
@@ -2493,6 +2974,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
         "🛡️ Attestation policy digest: {} (source: {})",
         policy_info.digest, policy_info.source
     );
+    spawn_task2_peer_routing_trust_refresh_loop();
 
     // === Spawn background TCP listener for incoming attestations ===
     println!("🛰️ Spawning attestation listener on port {}", listen_port);
@@ -2871,6 +3353,12 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                                     AuditAction::Rejected,
                                     &format!("Incoming peer VC rejected from {}: {}", remote, e),
                                 );
+                                write_last_attestation(
+                                    &incoming.node_id,
+                                    &incoming.policy_digest,
+                                    "failed",
+                                    Some(&incoming),
+                                );
                                 remove_trusted_peer(&incoming.node_id);
                                 continue;
                             }
@@ -2895,6 +3383,12 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                         eprintln!(
                             "❌ Listener: rejecting incoming attestation from {} (PCR/signature failure)",
                             peer_addr
+                        );
+                        write_last_attestation(
+                            &peer_addr,
+                            &incoming.policy_digest,
+                            "failed",
+                            Some(&incoming),
                         );
                         remove_trusted_peer(&peer_addr);
                         let node_id = std::env::args().nth(1).unwrap_or("unknown-node".into());
@@ -3066,6 +3560,12 @@ mod tests {
             std::env::set_var(key, value);
             Self { key, prev }
         }
+
+        fn set_str(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
     }
 
     impl Drop for EnvVarGuard {
@@ -3076,6 +3576,259 @@ mod tests {
                 std::env::remove_var(self.key);
             }
         }
+    }
+
+    fn install_peer_trust_test_env(label: &str) -> (PathBuf, PathBuf, Vec<EnvVarGuard>) {
+        let base = temp_test_dir(label);
+        let logs = base.join("logs");
+        let threat = base.join("threat");
+        let output = threat
+            .join("virtual_shift")
+            .join(sgx_anomaly_engine::virtual_shift::VS17_MEMBER_POLICY_STATE);
+        fs::create_dir_all(&logs).expect("create logs");
+        fs::create_dir_all(&output).expect("create output");
+        let guards = vec![
+            EnvVarGuard::set("SGX_GUARDIAN_HOME", &base),
+            EnvVarGuard::set("SGX_GUARDIAN_LOG_DIR", &logs),
+            EnvVarGuard::set("SGX_THREAT_STATE_DIR", &threat),
+            EnvVarGuard::set("SGX_TASK2_PEER_TRUST_ROOT", &output),
+            EnvVarGuard::set_str("SGX_GUARDIAN_NODE_ID", "nodeA"),
+        ];
+        (logs, output, guards)
+    }
+
+    fn trusted_peer_fixture(node_id: &str, timestamp: &str) -> TrustedPeer {
+        TrustedPeer {
+            peer_id: node_id.to_string(),
+            node_id: Some(node_id.to_string()),
+            ip: "10.10.0.2".to_string(),
+            status: "verified".to_string(),
+            timestamp: timestamp.to_string(),
+            did: Some(format!("did:guardian:{node_id}")),
+            virtual_id: Some(format!("vid-{node_id}")),
+            last_attested_at: Some(timestamp.to_string()),
+            dkp_pubkey_sha256_b16: Some("ab".repeat(16)),
+            pcr_composite_digest: Some("cd".repeat(16)),
+            policy_digest: Some("policy-digest".to_string()),
+            rotation_reason: None,
+            nonce_i: None,
+            nonce_r: None,
+        }
+    }
+
+    fn last_attestation_fixture(node_id: &str, result: &str, timestamp: &str) -> LastAttestation {
+        LastAttestation {
+            peer_id: node_id.to_string(),
+            node_id: Some(node_id.to_string()),
+            policy_digest: "policy-digest".to_string(),
+            result: result.to_string(),
+            timestamp: timestamp.to_string(),
+            peer_did: Some(format!("did:guardian:{node_id}")),
+            virtual_id: Some(format!("vid-{node_id}")),
+            dkp_pubkey_sha256_b16: Some("ab".repeat(16)),
+            pcr_composite_digest: Some("cd".repeat(16)),
+            nonce: None,
+            nonce_i: None,
+            nonce_r: None,
+            count: 1,
+        }
+    }
+
+    fn read_peer_summary(output: &Path, node_id: &str) -> serde_json::Value {
+        let path = output.join(node_id).join("routing_trust_summary.json");
+        serde_json::from_str(&fs::read_to_string(path).expect("read peer trust summary"))
+            .expect("parse peer trust summary")
+    }
+
+    #[test]
+    fn task2_peer_trust_publisher_writes_trusted_peer_summary() {
+        let _lock = crate::test_utils::TEST_ENV_LOCK.blocking_lock();
+        let (logs, output, _guards) = install_peer_trust_test_env("peer-trust-publisher-trusted");
+        let now = Utc::now().to_rfc3339();
+        fs::write(
+            logs.join("trusted_peers_nodeA.json"),
+            serde_json::to_string_pretty(&vec![trusted_peer_fixture("nodeB", &now)])
+                .expect("serialize peers"),
+        )
+        .expect("write peers");
+        fs::write(
+            logs.join("last_attestation.json"),
+            serde_json::to_string_pretty(&vec![last_attestation_fixture("nodeB", "success", &now)])
+                .expect("serialize last attestation"),
+        )
+        .expect("write last attestation");
+
+        let written = publish_task2_peer_routing_trust_summaries().expect("publish trust");
+
+        assert_eq!(written.len(), 1);
+        let summary = read_peer_summary(&output, "nodeB");
+        assert_eq!(summary["node_id"], "nodeB");
+        assert_eq!(summary["trust_status"], "trusted");
+        assert_eq!(summary["attestation_state"], "trusted");
+        assert_eq!(summary["routing_allowed"], true);
+        assert_eq!(summary["applicable_members"][0], "nodeB");
+    }
+
+    #[test]
+    fn task2_peer_trust_publisher_blocks_quarantined_peer() {
+        let _lock = crate::test_utils::TEST_ENV_LOCK.blocking_lock();
+        let (logs, output, _guards) =
+            install_peer_trust_test_env("peer-trust-publisher-quarantine");
+        let now = Utc::now().to_rfc3339();
+        fs::write(
+            logs.join("trusted_peers_nodeA.json"),
+            serde_json::to_string_pretty(&vec![trusted_peer_fixture("nodeB", &now)])
+                .expect("serialize peers"),
+        )
+        .expect("write peers");
+        fs::write(
+            logs.join("last_attestation.json"),
+            serde_json::to_string_pretty(&vec![last_attestation_fixture("nodeB", "success", &now)])
+                .expect("serialize last attestation"),
+        )
+        .expect("write last attestation");
+        let policy_root = output.join("nodeA");
+        fs::create_dir_all(&policy_root).expect("create policy dir");
+        fs::write(
+            policy_root.join("active_policy.json"),
+            serde_json::json!({
+                "policy_id": "quarantine-nodeB",
+                "policy_version": 7,
+                "applicable_members": ["nodeB"],
+                "rules": [{
+                    "action": "deny",
+                    "protocol": "tcp",
+                    "src": "nodeB",
+                    "port": 0,
+                    "dst": "*",
+                    "reason": "quarantine nodeB"
+                }]
+            })
+            .to_string(),
+        )
+        .expect("write active policy");
+
+        publish_task2_peer_routing_trust_summaries().expect("publish trust");
+
+        let summary = read_peer_summary(&output, "nodeB");
+        assert_eq!(summary["trust_status"], "restricted");
+        assert_eq!(summary["routing_allowed"], false);
+        assert!(summary["policy_restrictions"]
+            .as_array()
+            .expect("restrictions array")
+            .iter()
+            .any(|item| item
+                .as_str()
+                .unwrap_or_default()
+                .contains("quarantine nodeB")));
+    }
+
+    #[test]
+    fn task2_peer_trust_publisher_blocks_stale_and_failed_attestation() {
+        let _lock = crate::test_utils::TEST_ENV_LOCK.blocking_lock();
+        let (logs, output, _guards) = install_peer_trust_test_env("peer-trust-publisher-stale");
+        let stale =
+            (Utc::now() - chrono::Duration::hours(MAX_TRUSTED_PEER_AGE_HOURS + 2)).to_rfc3339();
+        let now = Utc::now().to_rfc3339();
+        fs::write(
+            logs.join("trusted_peers_nodeA.json"),
+            serde_json::to_string_pretty(&vec![
+                trusted_peer_fixture("nodeB", &stale),
+                trusted_peer_fixture("nodeC", &now),
+            ])
+            .expect("serialize peers"),
+        )
+        .expect("write peers");
+        fs::write(
+            logs.join("last_attestation.json"),
+            serde_json::to_string_pretty(&vec![
+                last_attestation_fixture("nodeB", "success", &stale),
+                last_attestation_fixture("nodeC", "failed", &now),
+            ])
+            .expect("serialize last attestation"),
+        )
+        .expect("write last attestation");
+
+        publish_task2_peer_routing_trust_summaries().expect("publish trust");
+
+        let stale_summary = read_peer_summary(&output, "nodeB");
+        assert_eq!(stale_summary["attestation_state"], "stale");
+        assert_eq!(stale_summary["routing_allowed"], false);
+        let failed_summary = read_peer_summary(&output, "nodeC");
+        assert_eq!(failed_summary["trust_status"], "not_trusted");
+        assert_eq!(failed_summary["attestation_state"], "failed");
+        assert_eq!(failed_summary["routing_allowed"], false);
+    }
+
+    #[test]
+    fn task2_peer_trust_publisher_uses_peer_specific_paths_for_multiple_peers() {
+        let _lock = crate::test_utils::TEST_ENV_LOCK.blocking_lock();
+        let (logs, output, _guards) = install_peer_trust_test_env("peer-trust-publisher-multiple");
+        let now = Utc::now().to_rfc3339();
+        fs::write(
+            logs.join("trusted_peers_nodeA.json"),
+            serde_json::to_string_pretty(&vec![
+                trusted_peer_fixture("nodeB", &now),
+                trusted_peer_fixture("nodeC", &now),
+            ])
+            .expect("serialize peers"),
+        )
+        .expect("write peers");
+        fs::write(
+            logs.join("last_attestation.json"),
+            serde_json::to_string_pretty(&vec![
+                last_attestation_fixture("nodeB", "success", &now),
+                last_attestation_fixture("nodeC", "success", &now),
+            ])
+            .expect("serialize last attestation"),
+        )
+        .expect("write last attestation");
+
+        let written = publish_task2_peer_routing_trust_summaries().expect("publish trust");
+
+        assert_eq!(written.len(), 2);
+        assert!(output.join("nodeB/routing_trust_summary.json").is_file());
+        assert!(output.join("nodeC/routing_trust_summary.json").is_file());
+    }
+
+    #[test]
+    fn task2_peer_trust_refresh_advances_summary_timestamp_without_changing_attestation_state() {
+        let _lock = crate::test_utils::TEST_ENV_LOCK.blocking_lock();
+        let (logs, output, _guards) = install_peer_trust_test_env("peer-trust-refresh-timestamp");
+        let attested_at = Utc::now().to_rfc3339();
+        fs::write(
+            logs.join("trusted_peers_nodeA.json"),
+            serde_json::to_string_pretty(&vec![trusted_peer_fixture("nodeB", &attested_at)])
+                .expect("serialize peers"),
+        )
+        .expect("write peers");
+        fs::write(
+            logs.join("last_attestation.json"),
+            serde_json::to_string_pretty(&vec![last_attestation_fixture(
+                "nodeB",
+                "success",
+                &attested_at,
+            )])
+            .expect("serialize last attestation"),
+        )
+        .expect("write last attestation");
+
+        publish_task2_peer_routing_trust_summaries().expect("first publish");
+        let first = read_peer_summary(&output, "nodeB");
+        let first_updated = first["updated_at_ms"].as_u64().expect("first updated_at");
+        std::thread::sleep(std::time::Duration::from_millis(3));
+        publish_task2_peer_routing_trust_summaries().expect("refresh publish");
+        let refreshed = read_peer_summary(&output, "nodeB");
+
+        assert!(
+            refreshed["updated_at_ms"]
+                .as_u64()
+                .expect("refreshed updated_at")
+                > first_updated
+        );
+        assert_eq!(refreshed["trust_status"], "trusted");
+        assert_eq!(refreshed["attestation_state"], "trusted");
+        assert_eq!(refreshed["routing_allowed"], true);
     }
 
     #[test]
@@ -3148,6 +3901,7 @@ mod tests {
         let dkp_state = stable_dkp_state_for_attestation(&ev);
         let persisted = vec![TrustedPeer {
             peer_id: "10.0.0.2:50152".to_string(),
+            node_id: Some("nodeB".to_string()),
             ip: "10.0.0.2".to_string(),
             status: "verified".to_string(),
             timestamp: "2026-06-10T00:00:00Z".to_string(),

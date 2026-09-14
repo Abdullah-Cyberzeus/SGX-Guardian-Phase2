@@ -24,8 +24,9 @@ use sgx_anomaly_engine::virtual_shift::{
     build_candidate_from_approved_review, canonical_policy_bytes, sha256_hex, sign_approved_policy,
     verify_signed_policy, vshift_alert_from_signed_policy, write_built_candidate,
     write_signed_policy, write_vshift_alert, ActiveVirtualShiftPolicy, ApprovalService,
-    GuardianKeyManager, ManualOverrideService, SignedVirtualShiftPolicy, VShiftAlert,
-    VS12_CANDIDATES, VS13_SIGNED_POLICIES, VS14_ALERTS, VS17_MEMBER_POLICY_STATE, VS19_OVERRIDES,
+    GuardianKeyManager, GuardianSignerConfig, ManualOverrideService, SignedVirtualShiftPolicy,
+    VShiftAlert, VS12_CANDIDATES, VS13_SIGNED_POLICIES, VS14_ALERTS, VS17_MEMBER_POLICY_STATE,
+    VS19_OVERRIDES,
 };
 use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
@@ -185,6 +186,7 @@ fn install_runtime_assets(state_dir: impl AsRef<Path>) -> Result<PathBuf> {
     write_if_missing(&global_path, GLOBAL_MODEL_JSON)?;
     write_if_missing(&node_a_path, NODE_A_MODEL_JSON)?;
     write_if_missing(&node_b_path, NODE_B_MODEL_JSON)?;
+    ensure_virtual_shift_assets(state_dir)?;
 
     let config_path = baseline_config_path(state_dir);
     let config_json = serde_json::json!({
@@ -207,6 +209,21 @@ fn write_if_missing(path: &Path, content: &str) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, content)?;
+    Ok(())
+}
+
+fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
+    let bytes = serde_json::to_vec_pretty(value)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension(format!(
+        "tmp-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_millis()
+    ));
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(tmp, path)?;
     Ok(())
 }
 
@@ -418,10 +435,17 @@ fn ensure_virtual_shift_assets(state_dir: impl AsRef<Path>) -> Result<VirtualShi
     let guardian_signer = config_dir.join("guardian_signer.json");
     let node_roles = config_dir.join("node_roles.json");
     let gossip_topology = config_dir.join("circle_gossip_topology.json");
+    let circle_guardian_authorization = config_dir.join("circle_guardian_authorization.json");
     write_if_missing(&active_policy, ACTIVE_VIRTUAL_SHIFT_POLICY_JSON)?;
     write_if_missing(&guardian_signer, GUARDIAN_SIGNER_JSON)?;
     write_if_missing(&node_roles, NODE_ROLES_JSON)?;
     write_if_missing(&gossip_topology, CIRCLE_GOSSIP_TOPOLOGY_JSON)?;
+    write_circle_guardian_authorization(
+        &circle_guardian_authorization,
+        &guardian_signer,
+        root.join("guardian_keys"),
+        &active_policy,
+    )?;
 
     let proposal_root = root.join(VS01_TO_VS09_PROPOSALS);
     let review_root = root.join(VS10_VS11_REVIEWS);
@@ -434,6 +458,42 @@ fn ensure_virtual_shift_assets(state_dir: impl AsRef<Path>) -> Result<VirtualShi
         proposal_root,
         review_root,
     })
+}
+
+fn write_circle_guardian_authorization(
+    authorization_path: &Path,
+    signer_config_path: &Path,
+    guardian_key_root: impl AsRef<Path>,
+    active_policy_path: &Path,
+) -> Result<()> {
+    let signer = GuardianSignerConfig::from_path(signer_config_path)?;
+    let guardian = GuardianKeyManager::from_config(signer_config_path, guardian_key_root.as_ref())?;
+
+    // Ensure the runtime public trust anchor exists and matches the private key.
+    // This signs only a bootstrap probe, not a policy; no verifier behavior changes.
+    let _ = guardian.sign(b"SGX-VSHIFT-AUTHORIZATION-BOOTSTRAP-v1")?;
+
+    let public_key_path = guardian_key_root
+        .as_ref()
+        .join(format!("{}.ed25519.public", signer.guardian_id));
+    if !public_key_path.is_file() {
+        anyhow::bail!(
+            "Guardian public key missing after signer bootstrap: {}",
+            public_key_path.display()
+        );
+    }
+
+    let authorization = serde_json::json!({
+        "schema_version": 1,
+        "circle_id": "standalone-circle",
+        "active_policy_path": active_policy_path.canonicalize()?.display().to_string(),
+        "authorized_guardians": [{
+            "guardian_id": guardian.guardian_id(),
+            "public_key_path": public_key_path.canonicalize()?.display().to_string()
+        }]
+    });
+
+    write_json_atomic(authorization_path, &authorization)
 }
 
 fn virtual_shift_root_path(state_dir: impl AsRef<Path>) -> PathBuf {
@@ -580,6 +640,21 @@ pub struct Task2OwnerDecisionRuntimeResult {
     pub alert_protobuf_path: Option<String>,
 }
 
+fn contains_sensitive_route_review_action(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.get("action_type")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|action| action == "review_sensitive_route_change")
+                || map.values().any(contains_sensitive_route_review_action)
+        }
+        serde_json::Value::Array(values) => {
+            values.iter().any(contains_sensitive_route_review_action)
+        }
+        _ => false,
+    }
+}
+
 fn task2_now_ms() -> Result<u64> {
     Ok(u64::try_from(
         std::time::SystemTime::now()
@@ -621,6 +696,24 @@ pub fn process_task2_owner_decision(
             plan_id: decided.recommendation_id,
             decision_actor: node_id.to_owned(),
             decision: "rejected".into(),
+            policy_build_allowed: false,
+            candidate_path: None,
+            signed_policy_path: None,
+            alert_id: None,
+            alert_json_path: None,
+            alert_protobuf_path: None,
+        });
+    }
+
+    // D12 sensitive-route reviews are approval-only Task2 authorization
+    // decisions. They must retain the durable owner decision/audit, but must
+    // not be converted into an unrelated Virtual Shift policy mutation.
+    if contains_sensitive_route_review_action(&decided.proposal) {
+        return Ok(Task2OwnerDecisionRuntimeResult {
+            schema_version: 1,
+            plan_id: decided.recommendation_id,
+            decision_actor: node_id.to_owned(),
+            decision: "approved".into(),
             policy_build_allowed: false,
             candidate_path: None,
             signed_policy_path: None,
@@ -1323,6 +1416,60 @@ mod tests {
         assert!(dir.join(MODELS_DIR).join("nodeA.json").exists());
         assert!(dir.join(MODELS_DIR).join("nodeB.json").exists());
         assert_eq!(config["reload_check_seconds"], 5);
+
+        let authorization_path = virtual_shift_root_path(&dir)
+            .join(VIRTUAL_SHIFT_CONFIG_DIR)
+            .join("circle_guardian_authorization.json");
+        let authorization: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&authorization_path).expect("read authorization config"),
+        )
+        .expect("parse authorization config");
+        let signer: GuardianSignerConfig =
+            serde_json::from_str(GUARDIAN_SIGNER_JSON).expect("parse repository signer config");
+        let public_key_path = authorization["authorized_guardians"][0]["public_key_path"]
+            .as_str()
+            .expect("public key path");
+
+        assert!(authorization_path.exists());
+        assert_eq!(
+            authorization["authorized_guardians"][0]["guardian_id"],
+            signer.guardian_id
+        );
+        assert_eq!(
+            public_key_path,
+            virtual_shift_root_path(&dir)
+                .join("guardian_keys")
+                .join(format!("{}.ed25519.public", signer.guardian_id))
+                .canonicalize()
+                .expect("canonical public key")
+                .display()
+                .to_string()
+        );
+        assert!(Path::new(public_key_path).exists());
+        assert_eq!(
+            authorization["active_policy_path"],
+            virtual_shift_root_path(&dir)
+                .join(VIRTUAL_SHIFT_CONFIG_DIR)
+                .join("active_virtual_shift_policy.json")
+                .canonicalize()
+                .expect("canonical active policy")
+                .display()
+                .to_string()
+        );
+
+        install_runtime_assets(&dir).expect("idempotent reinstall");
+        let after_second_install =
+            std::fs::read_to_string(&authorization_path).expect("reread authorization config");
+        let authorization_after: serde_json::Value = serde_json::from_str(&after_second_install)
+            .expect("parse authorization after reinstall");
+        assert_eq!(
+            authorization_after["authorized_guardians"][0]["guardian_id"],
+            signer.guardian_id
+        );
+        assert_eq!(
+            authorization_after["authorized_guardians"][0]["public_key_path"],
+            public_key_path
+        );
 
         let _ = std::fs::remove_dir_all(dir);
     }

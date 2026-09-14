@@ -1684,6 +1684,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
+                match registry_sync::pull_relay_telemetry_snapshot_from_ca(&ca_host).await {
+                    Ok(latest_telemetry_json) => {
+                        if let Err(e) = registry_sync::apply_relay_telemetry_snapshot(
+                            &latest_telemetry_json,
+                            registry_sync::RELAY_TELEMETRY_DIR,
+                        ) {
+                            eprintln!(
+                                "⚠️  Relay telemetry snapshot rejected from {}: {}",
+                                ca_host, e
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            "Relay telemetry snapshot pull failed from {}: {}",
+                            ca_host,
+                            e
+                        );
+                    }
+                }
+
                 if did_doc_sync_elapsed >= DID_DOC_PULL_INTERVAL_SECS {
                     did_doc_sync_elapsed = 0;
                     match sgx_guardian_client::did::doc_distribution::pull_and_apply_aggregate(
@@ -2111,6 +2132,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 loop {
                     match NebulaStats::fetch().await {
                         Ok(stats) => {
+                            let runtime_is_active_relay =
+                                std::fs::read_to_string(registry_sync::RELAY_REGISTRY_PATH)
+                                    .ok()
+                                    .and_then(|raw| {
+                                        serde_json::from_str::<serde_json::Value>(&raw).ok()
+                                    })
+                                    .and_then(|registry| {
+                                        registry
+                                            .get("relays")
+                                            .and_then(|relays| relays.get(&node_for_stats))
+                                            .cloned()
+                                    })
+                                    .and_then(|relay| {
+                                        relay.get("is_active").and_then(|v| v.as_bool())
+                                    })
+                                    .unwrap_or(false);
+
                             let mut m = metrics_clone.lock().await;
 
                             m.update_relay_stats(
@@ -2121,7 +2159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 stats.relay_tunnels,
                             );
 
-                            if relay_cfg.enabled && relay_cfg.max_bandwidth_mbps > 0 {
+                            if runtime_is_active_relay && relay_cfg.max_bandwidth_mbps > 0 {
                                 let threshold_mbps = (relay_cfg.max_bandwidth_mbps as f64)
                                     * (relay_cfg.alert_threshold_pct as f64 / 100.0);
 
@@ -2147,11 +2185,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 "relay_tunnels": stats.relay_tunnels
                             });
 
-                            let _ = std::fs::write(
-                                &relay_stats_path,
-                                serde_json::to_string_pretty(&payload)
-                                    .unwrap_or_else(|_| "{}".to_string()),
-                            );
+                            let relay_stats_json = serde_json::to_string_pretty(&payload)
+                                .unwrap_or_else(|_| "{}".to_string());
+
+                            let _ = std::fs::write(&relay_stats_path, &relay_stats_json);
+
+                            if runtime_is_active_relay {
+                                let ca_host = resolve_ca_ip_from_config_inner().await;
+                                if let Err(e) = registry_sync::publish_relay_stats_to_ca(
+                                    &ca_host,
+                                    &node_for_stats,
+                                    &relay_stats_json,
+                                )
+                                .await
+                                {
+                                    tracing::warn!(
+                                        "Relay telemetry publish failed from {} to CA {}: {}",
+                                        node_for_stats,
+                                        ca_host,
+                                        e
+                                    );
+                                }
+                            }
                         }
 
                         Err(e) => {
@@ -2410,6 +2465,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             });
+        }
+
+        {
+            let task3_nebula_base_dir = std::env::var("SGX_NEBULA_DIR")
+                .unwrap_or("/var/lib/sgx-guardian/nebula".to_string());
+            let task3_config =
+                sgx_guardian_client::task3_network_ai::Task3NetworkAiConfig::from_env(
+                    "/var/lib/sgx-guardian/threat",
+                    task3_nebula_base_dir,
+                );
+            let task3_deps = sgx_guardian_client::task3_network_ai::Task3NetworkAiRuntimeDeps {
+                node_id: node_id.clone(),
+                metrics: metrics.clone(),
+                cot_circle: cot_circle.clone(),
+                link_monitor: link_monitor.clone(),
+                failover: failover.clone(),
+            };
+            sgx_guardian_client::task3_network_ai::spawn_production_runtime(
+                task3_config,
+                task3_deps,
+            );
+            println!("✅ Task 3 network AI production runtime wired");
         }
         // === CoT Deliverable Integration End ===
         cooldown().await;
@@ -3003,19 +3080,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     // === END POLICY ENFORCEMENT ===
 
-    // Only nodeA sends pings to others
+    // Only nodeA sends recurring real mTLS peer heartbeats.
+    //
+    // Task3 D2 consumes heartbeat classification events with a 30-second TTL,
+    // so the production heartbeat interval is intentionally shorter than that
+    // window. This is real Guardian peer traffic, not a synthetic Task3 event.
     if node_id == "nodeA" {
-        for peer in peers {
-            let target = format!("{}:{}", peer.ip, peer.port);
-            log_event(&node_id, &format!("Sending ping to {}", target));
-            if let Err(e) =
-                send_ping(target, node_id.clone(), identity.clone(), ca_cert.clone()).await
-            {
-                log_error(&node_id, &format!("Ping failed: {}", e));
-                let mut m = metrics.lock().await;
-                m.record_error();
+        let heartbeat_node_id = node_id.clone();
+        let heartbeat_peers = peers.clone();
+        let heartbeat_identity = identity.clone();
+        let heartbeat_ca_cert = ca_cert.clone();
+        let heartbeat_metrics = metrics.clone();
+
+        tokio::spawn(async move {
+            loop {
+                for peer in &heartbeat_peers {
+                    let target = format!("{}:{}", peer.ip, peer.port);
+
+                    log_event(
+                        &heartbeat_node_id,
+                        &format!("Sending peer heartbeat to {}", target),
+                    );
+
+                    if let Err(e) = send_ping(
+                        target,
+                        heartbeat_node_id.clone(),
+                        heartbeat_identity.clone(),
+                        heartbeat_ca_cert.clone(),
+                    )
+                    .await
+                    {
+                        log_error(&heartbeat_node_id, &format!("Peer heartbeat failed: {}", e));
+
+                        let mut m = heartbeat_metrics.lock().await;
+                        m.record_error();
+                    }
+                }
+
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
             }
-        }
+        });
     }
     // background uptime tracker + heartbeat writer
     let node_id_clone = node_id.clone();
