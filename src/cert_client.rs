@@ -70,6 +70,15 @@ fn split_host_port(addr: &str) -> (String, u16) {
     (addr.to_string(), 50061)
 }
 
+/// Fingerprint of a device public key PEM (first 16 hex chars of SHA-256).
+/// Mirrors the fingerprint the CA records for this same key in cert_service.rs,
+/// used here to detect a locally cached cert that no longer matches our own key.
+fn public_key_fingerprint(pem: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(pem.as_bytes());
+    hex::encode(&hash[..8])
+}
+
 fn local_membership_vc_available() -> bool {
     crate::vc::persistence::load_own_any()
         .ok()
@@ -136,8 +145,30 @@ pub async fn request_certificate_from_ca(
 
     let cert_path = format!("{}/nodes/{}.crt", NEBULA_BASE_DIR, node_id);
     let key_path = format!("{}/nodes/{}.key", NEBULA_BASE_DIR, node_id);
+    let fp_path = format!("{}/nodes/{}.pubkey_fp", NEBULA_BASE_DIR, node_id);
     let has_vc = local_membership_vc_available();
     let has_status_list = crate::vc::persistence::status_list_path().exists();
+
+    // A cert/key pair on disk is only valid for the identity that requested
+    // it. If our local public key has changed since that pair was written
+    // (e.g. local state was wiped and a new keypair generated, but node_id
+    // was reused), the cached files no longer match — discard them so we
+    // fetch a fresh, matching pair instead of running with a mismatched or
+    // key-less cert.
+    let current_fingerprint = public_key_fingerprint(&public_key_pem);
+    let stale_identity = Path::new(&cert_path).exists()
+        && std::fs::read_to_string(&fp_path)
+            .map(|stored| stored.trim() != current_fingerprint)
+            .unwrap_or(true);
+    if stale_identity {
+        eprintln!(
+            "⚠️  Cached cert for {} was issued to a different public key — discarding stale cert/key.",
+            node_id
+        );
+        let _ = std::fs::remove_file(&cert_path);
+        let _ = std::fs::remove_file(&key_path);
+        let _ = std::fs::remove_file(&fp_path);
+    }
 
     // Idempotent: cert AND CA cert both present
     if Path::new(&cert_path).exists()
@@ -275,6 +306,13 @@ pub async fn request_certificate_from_ca(
                                 .await;
                             continue;
                         }
+                    }
+
+                    // Record which public key this cert/key pair belongs to,
+                    // so a future run under a different local identity (same
+                    // node_id) doesn't mistake this pair for still being valid.
+                    if Path::new(&cert_path).exists() && Path::new(&key_path).exists() {
+                        let _ = write_file(&fp_path, &current_fingerprint).await;
                     }
 
                     if !resp.overlay_registry_json.is_empty() {

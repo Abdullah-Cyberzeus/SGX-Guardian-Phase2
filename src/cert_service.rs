@@ -155,6 +155,20 @@ fn cert_contains_overlay_ip(cert_path: &str, expected_ip_cidr: &str) -> bool {
     }
 }
 
+/// Fingerprint of a device public key PEM (first 16 hex chars of SHA-256).
+/// Used to detect when a node_id is re-presenting under a brand-new identity
+/// (e.g. local state wiped and regenerated) so the idempotency path below
+/// doesn't hand out a cert/key pair that doesn't match the caller's key.
+fn public_key_fingerprint(pem: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(pem.as_bytes());
+    hex::encode(&hash[..8])
+}
+
+fn pubkey_fp_path(node_id: &str) -> String {
+    format!("{}/nodes/{}.pubkey_fp", NEBULA_BASE_DIR, node_id)
+}
+
 fn resolve_member_lighthouse_endpoint(node_id: &str) -> String {
     let candidates = [
         format!("/etc/sgx-guardian/config/{}.yaml", node_id),
@@ -296,7 +310,19 @@ impl CertService for MyCertService {
             let ip_matches = requested_overlay_ip.is_empty()
                 || cert_contains_overlay_ip(&cert_path, &requested_overlay_ip);
 
-            if ip_matches {
+            // ...and if the caller's current public key doesn't match the key
+            // this cert was issued for, this is a *different* identity reusing
+            // the same node_id (e.g. local state wiped and regenerated) — not
+            // a legitimate re-request. Treat it as a fresh enrollment instead
+            // of silently handing back a cert/key pair for the old identity.
+            let fp_path = pubkey_fp_path(&node_id);
+            let requested_fingerprint = public_key_fingerprint(&public_key_pem);
+            let pubkey_matches = tokio::fs::read_to_string(&fp_path)
+                .await
+                .map(|stored| stored.trim() == requested_fingerprint)
+                .unwrap_or(false);
+
+            if ip_matches && pubkey_matches {
                 println!(
                     "Certificate already exists for {} — returning existing",
                     node_id
@@ -362,13 +388,23 @@ impl CertService for MyCertService {
                     signing_pubkey_der,
                     member_vc_json,
                 }));
-            } else {
+            } else if !ip_matches {
                 eprintln!(
                     "⚠️ Existing cert IP mismatch for {} (expected {}). Regenerating cert.",
                     node_id, requested_overlay_ip
                 );
                 let _ = tokio::fs::remove_file(&cert_path).await;
                 let _ = tokio::fs::remove_file(&key_path).await;
+                let _ = tokio::fs::remove_file(&fp_path).await;
+            } else {
+                eprintln!(
+                    "⚠️ Existing cert for {} was issued to a different public key — \
+                     treating as a new identity and regenerating cert.",
+                    node_id
+                );
+                let _ = tokio::fs::remove_file(&cert_path).await;
+                let _ = tokio::fs::remove_file(&key_path).await;
+                let _ = tokio::fs::remove_file(&fp_path).await;
             }
         }
 
@@ -648,6 +684,20 @@ impl CertService for MyCertService {
                 "Guardian Mesh CA signing failed: {}",
                 e
             )));
+        }
+
+        // Record which public key this cert/key pair was issued to, so a
+        // future request under the same node_id but a different key (e.g.
+        // after a wipe/reprovision) is recognized as a new identity instead
+        // of matching the idempotency shortcut above.
+        if let Err(e) =
+            tokio::fs::write(pubkey_fp_path(&node_id), public_key_fingerprint(&public_key_pem))
+                .await
+        {
+            eprintln!(
+                "⚠️  Failed to record public key fingerprint for {}: {}",
+                node_id, e
+            );
         }
 
         use crate::nebula::lighthouse::LighthouseRegistry;
