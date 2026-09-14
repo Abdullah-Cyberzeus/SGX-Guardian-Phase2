@@ -2,11 +2,12 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use sgx_anomaly_engine::network_ai::{
     append_degradation_prediction_jsonl, append_observation_jsonl, persist_current_observation,
-    persist_decision_audit, read_task1_route_signal, read_task2_trust_summary,
+    persist_decision_audit, read_optional_task1_route_signal, read_optional_task2_trust_summary,
     ContextualBanditPolicy, DecisionAuditPaths, DecisionAuditRecord, DecisionEvidenceLinks,
     DegradationPredictor, EligibilityFilter, EligibleRouteSet, MultiRelayLoadBalancer,
-    NetworkTelemetryAdapter, NetworkTelemetryContext, RouteCandidateInventory, RouteHistoryEntry,
-    RouteHistoryStore, RouteKind, RouteReward, RouteSwitchState, RuntimeRouteApplyRequest,
+    NetworkAiConfig, NetworkAiRuntimeMode, NetworkTelemetryAdapter, NetworkTelemetryContext,
+    RouteCandidateInventory, RouteHistoryEntry, RouteHistoryStore, RouteKind, RouteReward,
+    RouteSafetyGuard, RouteSwitchState, RuntimeModeController, RuntimeRouteApplyRequest,
     RuntimeRouteState, SafeRuntimeRouteController, SimpleDegradationPredictor,
     SimpleRouteQualityPredictor, Task1RouteSignal, Task2RoutingTrustSummary, TrafficClass,
     TrustStateSnapshot,
@@ -27,8 +28,67 @@ struct CandidateInventoryReport {
 #[derive(Debug, Serialize)]
 struct IntegrationBridgeAudit {
     task1_signal: Option<Task1RouteSignal>,
+    task1_bridge_status: String,
     task2_trust_summary: Option<Task2RoutingTrustSummary>,
+    task2_bridge_status: String,
     bridge_result: String,
+}
+
+#[derive(Debug, Serialize)]
+struct EffectiveNetworkAiConfigEvidence {
+    config_source: String,
+    effective_mode: NetworkAiRuntimeMode,
+    config: NetworkAiConfig,
+}
+
+/// Small, senior-readable D21 view. Detailed model/audit JSON remains
+/// available separately; this file answers only what Shadow selected and why.
+#[derive(Debug, Serialize)]
+struct ShadowRouteDecision {
+    schema_version: &'static str,
+    decision_id: String,
+    mode: NetworkAiRuntimeMode,
+    traffic_class: TrafficClass,
+    priority: String,
+    task2_trust_version: String,
+    task2_bridge_status: String,
+    eligible_route_ids: Vec<String>,
+    rejected_routes: Vec<ShadowRejectedRoute>,
+    selected_route_id: Option<String>,
+    expected_latency_ms: Option<f64>,
+    expected_loss_pct: Option<f64>,
+    expected_throughput_mbps: Option<f64>,
+    confidence: Option<f64>,
+    selection_reason: String,
+    degradation_probability: Option<f64>,
+    degradation_contributors: Vec<String>,
+    applied: bool,
+    operator_next_step: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct ShadowRejectedRoute {
+    route_id: String,
+    reason: String,
+}
+
+/// D22 is advisory-only. The safety verdict is evaluated read-only so an
+/// operator can see whether Active mode would be permitted, without applying.
+#[derive(Debug, Serialize)]
+struct AdvisoryRouteRecommendation {
+    schema_version: &'static str,
+    recommendation_id: String,
+    mode: NetworkAiRuntimeMode,
+    current_route_id: String,
+    recommended_route_id: Option<String>,
+    expected_improvement_pct: f64,
+    confidence: Option<f64>,
+    reason: String,
+    safety_verdict: String,
+    safety_allowed_if_activated: bool,
+    safety_reason: String,
+    applied: bool,
+    operator_next_step: &'static str,
 }
 
 fn arg_value(args: &[String], flag: &str) -> Option<String> {
@@ -86,7 +146,7 @@ fn print_eligible_routes(routes: &EligibleRouteSet) {
 
 fn usage() {
     eprintln!(
-        "Usage: cargo run --example run_task3_network_optimizer_demo -- [--traffic-class operational|security-control] [--source-node nodeA] [--destination-node nodeB] [--out-dir data/network_ai] [--task1-recommendation path] [--task2-trust-state path] [--current-route-failed]"
+        "Usage: cargo run --example run_task3_network_optimizer_demo -- [--config path] [--mode shadow|advisory|active] [--traffic-class operational|security-control] [--source-node nodeA] [--destination-node nodeB] [--out-dir data/network_ai] [--task1-recommendation path] [--task2-trust-state path] [--current-route-failed]"
     );
 }
 
@@ -120,6 +180,22 @@ fn main() -> Result<()> {
         .map(|value| parse_traffic_class(&value))
         .unwrap_or(TrafficClass::SecurityControl);
     let current_route_failed = args.iter().any(|arg| arg == "--current-route-failed");
+    let config_path = arg_value(&args, "--config").map(PathBuf::from);
+    let network_config = match &config_path {
+        Some(path) => NetworkAiConfig::load_json(path)?,
+        None => NetworkAiConfig::default(),
+    };
+    let requested_mode = match arg_value(&args, "--mode") {
+        Some(value) => NetworkAiRuntimeMode::parse(&value).ok_or_else(|| {
+            anyhow::anyhow!("invalid --mode '{value}'; use shadow, advisory, or active")
+        })?,
+        None => network_config.mode,
+    };
+    let runtime_mode = if network_config.enabled {
+        requested_mode
+    } else {
+        NetworkAiRuntimeMode::Shadow
+    };
     let out_dir = PathBuf::from(
         arg_value(&args, "--out-dir")
             .unwrap_or_else(|| "data/network_ai/task3_deliverable_1_2_demo".to_string()),
@@ -136,16 +212,14 @@ fn main() -> Result<()> {
             path.exists().then_some(path)
         });
 
-    let task1_signal = task1_recommendation_path
-        .as_ref()
-        .filter(|path| path.exists())
-        .map(read_task1_route_signal)
-        .transpose()?;
-    let task2_trust_summary = task2_trust_state_path
-        .as_ref()
-        .filter(|path| path.exists())
-        .map(read_task2_trust_summary)
-        .transpose()?;
+    let task1_bridge = read_optional_task1_route_signal(
+        task1_recommendation_path
+            .as_deref()
+            .filter(|path| path.exists()),
+    );
+    let task1_signal = task1_bridge.signal.clone();
+    let task2_bridge = read_optional_task2_trust_summary(task2_trust_state_path.as_deref());
+    let task2_trust_summary = task2_bridge.summary.clone();
 
     let raw = RawSample {
         ts_ms: 1788433000000,
@@ -179,9 +253,8 @@ fn main() -> Result<()> {
         ["nodeC", "nodeD"],
     );
 
-    // Synthetic demo health: nodeD path is present but cannot be used because
-    // Task2 trust state quarantines nodeD below. This proves that route
-    // discovery and eligibility are separate stages.
+    // Discovery is independent from eligibility. The latest Task2 summary is
+    // the only authority deciding which relays are trusted or quarantined.
     for candidate in &mut inventory.candidates {
         if candidate.relay_ids.iter().any(|relay| relay == "nodeD") {
             candidate.observed_available = true;
@@ -193,11 +266,6 @@ fn main() -> Result<()> {
         .as_ref()
         .map(Task2RoutingTrustSummary::to_trust_snapshot)
         .unwrap_or_else(|| TrustStateSnapshot::missing("task2-routing-trust-state-missing"));
-    let trust_state = if task2_trust_summary.is_some() {
-        trust_state.trust_peer("nodeC").quarantine_peer("nodeD")
-    } else {
-        trust_state
-    };
     for candidate in &mut inventory.candidates {
         candidate.metadata.trust_state_version_seen = Some(trust_state.version.clone());
     }
@@ -224,8 +292,14 @@ fn main() -> Result<()> {
     let route_transition_audit_path = out_dir.join("route_transition_audit.jsonl");
     let relay_weights_path = out_dir.join("relay_weights.json");
     let task1_signal_path = out_dir.join("task1_route_signal.json");
+    let task1_bridge_path = out_dir.join("task1_bridge_status.json");
     let task2_trust_summary_path = out_dir.join("task2_trust_summary.json");
+    let task2_bridge_path = out_dir.join("task2_bridge_status.json");
     let integration_audit_path = out_dir.join("task3_integration_audit.json");
+    let runtime_mode_path = out_dir.join("runtime_mode_decision.json");
+    let shadow_decision_path = out_dir.join("shadow_route_decision.json");
+    let advisory_recommendation_path = out_dir.join("advisory_route_recommendation.json");
+    let effective_config_path = out_dir.join("effective_network_ai_config.json");
     let decision_audit_paths = DecisionAuditPaths::under(&out_dir);
 
     persist_current_observation(&observation_path, &observation)?;
@@ -241,7 +315,7 @@ fn main() -> Result<()> {
     )?;
     write_json(&eligible_path, &eligible_routes)?;
 
-    let mut history_store = RouteHistoryStore::new(0.5, 20);
+    let mut history_store = RouteHistoryStore::new(0.5, network_config.history_window_entries);
     history_store.record_observation(&observation);
     history_store.record(RouteHistoryEntry {
         ts_ms: raw.ts_ms + 1000,
@@ -298,7 +372,10 @@ fn main() -> Result<()> {
     );
     write_json(&prediction_path, &predictions)?;
 
-    let degradation_predictor = SimpleDegradationPredictor::default();
+    let degradation_predictor = SimpleDegradationPredictor {
+        high_probability_threshold: network_config.degradation_probability_threshold,
+        ..SimpleDegradationPredictor::default()
+    };
     let degradation_predictions = history_store
         .entries_by_route
         .iter()
@@ -319,12 +396,19 @@ fn main() -> Result<()> {
                 .find(|candidate| candidate.route_id == prediction.route_id)
                 .map(|candidate| candidate.hop_count)
                 .unwrap_or(0);
-            RouteReward::from_prediction(prediction, hop_count, true, false)
+            RouteReward::from_prediction_with_weights(
+                prediction,
+                hop_count,
+                true,
+                false,
+                &network_config.reward_weights,
+            )
         })
         .collect::<Vec<_>>();
     write_json(&rewards_path, &rewards)?;
 
-    let mut rl_policy = ContextualBanditPolicy::default();
+    let mut rl_policy =
+        ContextualBanditPolicy::new(network_config.rl_learning_rate, network_config.rl_epsilon);
     for reward in &rewards {
         rl_policy.update_with_reward(reward);
     }
@@ -365,41 +449,154 @@ fn main() -> Result<()> {
         .find(|reward| reward.route_id == requested_route_id)
         .map(|reward| reward.total_reward);
     let mut runtime_state = RuntimeRouteState::from_switch_state(&switch_state);
-    let runtime_result = SafeRuntimeRouteController::default().apply_and_persist(
+    let apply_request = RuntimeRouteApplyRequest {
+        ts_ms: raw.ts_ms,
+        requested_route_id,
+        current_score,
+        candidate_score,
+        current_route_failed,
+        transport_apply_succeeds: true,
+        selected_by: rl_decision.decision_mode.clone(),
+        observed_rtt_ms: observation.rtt_ms,
+        observed_packet_loss_pct: observation.packet_loss_pct,
+        observed_throughput_mbps: observation.throughput_mbps,
+        observed_bandwidth_utilization_pct: observation.bandwidth_utilization_pct,
+        observed_reward: selected_reward,
+    };
+    let advisory_safety = RouteSafetyGuard {
+        config: network_config.safety.clone(),
+    }
+    .evaluate_with_route_health(
+        raw.ts_ms,
+        &switch_state,
+        Some(&apply_request.requested_route_id),
+        current_score,
+        candidate_score,
+        current_route_failed,
+    );
+    let mode_execution = RuntimeModeController {
+        route_controller: SafeRuntimeRouteController {
+            safety_guard: RouteSafetyGuard {
+                config: network_config.safety.clone(),
+            },
+        },
+    }
+    .execute_and_persist(
+        runtime_mode,
         &mut runtime_state,
         &eligible_routes,
-        &RuntimeRouteApplyRequest {
-            ts_ms: raw.ts_ms,
-            requested_route_id,
-            current_score,
-            candidate_score,
-            current_route_failed,
-            transport_apply_succeeds: true,
-            selected_by: rl_decision.decision_mode.clone(),
-            observed_rtt_ms: observation.rtt_ms,
-            observed_packet_loss_pct: observation.packet_loss_pct,
-            observed_throughput_mbps: observation.throughput_mbps,
-            observed_bandwidth_utilization_pct: observation.bandwidth_utilization_pct,
-            observed_reward: selected_reward,
-        },
+        &apply_request,
         &runtime_route_state_path,
         &runtime_apply_result_path,
         &route_transition_audit_path,
         &route_outcomes_path,
     )?;
-    let safety_decision = runtime_result.audit.safety_decision.clone();
-    let apply_result = runtime_result.audit.apply_result.clone();
-    write_json(&safety_decision_path, &safety_decision)?;
-    write_json(&apply_result_path, &apply_result)?;
+    write_json(&runtime_mode_path, &mode_execution.decision)?;
+    write_json(
+        &effective_config_path,
+        &EffectiveNetworkAiConfigEvidence {
+            config_source: config_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "built-in safe defaults".to_string()),
+            effective_mode: runtime_mode,
+            config: network_config.clone(),
+        },
+    )?;
+    let runtime_result = mode_execution.route_result;
+    if let Some(result) = &runtime_result {
+        write_json(&safety_decision_path, &result.audit.safety_decision)?;
+        write_json(&apply_result_path, &result.audit.apply_result)?;
+    }
     let relay_weights =
         MultiRelayLoadBalancer::default().calculate(&eligible_routes.eligible, &predictions);
     write_json(&relay_weights_path, &relay_weights)?;
+    if runtime_mode == NetworkAiRuntimeMode::Shadow {
+        let selected_prediction = predictions.predictions.iter().find(|prediction| {
+            Some(&prediction.route_id) == rl_decision.selected_route_id.as_ref()
+        });
+        let selected_degradation = rl_decision.selected_route_id.as_ref().and_then(|route_id| {
+            degradation_predictions
+                .iter()
+                .find(|prediction| prediction.route_id == *route_id)
+        });
+        write_json(
+            &shadow_decision_path,
+            &ShadowRouteDecision {
+                schema_version: "network-ai-shadow-decision-v1",
+                decision_id: format!(
+                    "task3-shadow-{source_node}-{destination_node}-{}",
+                    raw.ts_ms
+                ),
+                mode: runtime_mode,
+                traffic_class,
+                priority: format!("{:?}", observation.priority_class),
+                task2_trust_version: eligible_routes.trust_state_version.clone(),
+                task2_bridge_status: task2_bridge.status.clone(),
+                eligible_route_ids: eligible_routes
+                    .eligible
+                    .iter()
+                    .map(|route| route.route_id.clone())
+                    .collect(),
+                rejected_routes: eligible_routes
+                    .rejected
+                    .iter()
+                    .map(|route| ShadowRejectedRoute {
+                        route_id: route.route_id.clone(),
+                        reason: format!("{:?}", route.reason),
+                    })
+                    .collect(),
+                selected_route_id: rl_decision.selected_route_id.clone(),
+                expected_latency_ms: selected_prediction.map(|value| value.expected_latency_ms),
+                expected_loss_pct: selected_prediction.map(|value| value.expected_loss_pct),
+                expected_throughput_mbps: selected_prediction
+                    .map(|value| value.expected_throughput_mbps),
+                confidence: selected_prediction.map(|value| value.confidence),
+                selection_reason: selected_prediction
+                    .map(|value| value.reason.clone())
+                    .unwrap_or_else(|| "no eligible trusted route was selected".to_string()),
+                degradation_probability: selected_degradation.map(|value| value.probability),
+                degradation_contributors: selected_degradation
+                    .map(|value| value.contributors.clone())
+                    .unwrap_or_default(),
+                applied: false,
+                operator_next_step: "Review this shadow recommendation; no route was changed.",
+            },
+        )?;
+    }
+    if runtime_mode == NetworkAiRuntimeMode::Advisory {
+        let selected_prediction = predictions.predictions.iter().find(|prediction| {
+            Some(&prediction.route_id) == rl_decision.selected_route_id.as_ref()
+        });
+        write_json(
+            &advisory_recommendation_path,
+            &AdvisoryRouteRecommendation {
+                schema_version: "network-ai-advisory-recommendation-v1",
+                recommendation_id: format!("task3-advisory-{source_node}-{destination_node}-{}", raw.ts_ms),
+                mode: runtime_mode,
+                current_route_id: current_route_id.clone(),
+                recommended_route_id: rl_decision.selected_route_id.clone(),
+                expected_improvement_pct: advisory_safety.improvement_pct,
+                confidence: selected_prediction.map(|value| value.confidence),
+                reason: selected_prediction
+                    .map(|value| value.reason.clone())
+                    .unwrap_or_else(|| "no eligible trusted route was selected".to_string()),
+                safety_verdict: format!("{:?}", advisory_safety.verdict),
+                safety_allowed_if_activated: advisory_safety.allowed,
+                safety_reason: advisory_safety.reason.clone(),
+                applied: false,
+                operator_next_step: "Review recommendation and explicitly enable Active mode only when operationally approved.",
+            },
+        )?;
+    }
     if let Some(signal) = &task1_signal {
         write_json(&task1_signal_path, signal)?;
     }
+    write_json(&task1_bridge_path, &task1_bridge)?;
     if let Some(summary) = &task2_trust_summary {
         write_json(&task2_trust_summary_path, summary)?;
     }
+    write_json(&task2_bridge_path, &task2_bridge)?;
     let bridge_result = if task1_signal.is_some() || task2_trust_summary.is_some() {
         "Task3 consumed available Task1/Task2 JSON signals read-only; Task2 state was not mutated."
     } else {
@@ -409,7 +606,9 @@ fn main() -> Result<()> {
         &integration_audit_path,
         &IntegrationBridgeAudit {
             task1_signal: task1_signal.clone(),
+            task1_bridge_status: task1_bridge.status.clone(),
             task2_trust_summary: task2_trust_summary.clone(),
+            task2_bridge_status: task2_bridge.status.clone(),
             bridge_result: bridge_result.to_string(),
         },
     )?;
@@ -453,6 +652,15 @@ fn main() -> Result<()> {
     print_kv("Destination node", &destination_node);
     print_kv("Traffic class", format!("{:?}", observation.traffic_class));
     print_kv("Priority", format!("{:?}", observation.priority_class));
+    print_kv("Config version", &network_config.config_version);
+    print_kv(
+        "Config source",
+        config_path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "built-in safe defaults".to_string()),
+    );
+    print_kv("Task3 enabled", network_config.enabled);
 
     println!();
     println!("2. NETWORK OBSERVATION - Task1-compatible metrics reused");
@@ -588,29 +796,39 @@ fn main() -> Result<()> {
 
     println!();
     println!("9. SAFETY GUARD AND SAFE ROUTE SWITCHING");
-    print_kv("Current route", &safety_decision.current_route_id);
-    print_kv(
-        "Candidate route",
-        safety_decision
-            .candidate_route_id
-            .as_deref()
-            .unwrap_or("none"),
-    );
-    print_kv("Safety verdict", format!("{:?}", safety_decision.verdict));
-    print_kv("Allowed", safety_decision.allowed);
-    print_kv("Hard failover", safety_decision.hard_failover);
-    print_kv("Recent switches", safety_decision.recent_switches_in_window);
-    print_kv(
-        "Improvement",
-        format!("{:.1}%", safety_decision.improvement_pct),
-    );
-    print_kv("Reason", &safety_decision.reason);
-    print_kv("Applied", apply_result.applied);
-    print_kv("Active route", &apply_result.active_route_id);
-    print_kv(
-        "Rollback route",
-        apply_result.rollback_route_id.as_deref().unwrap_or("none"),
-    );
+    print_kv("Runtime mode", format!("{:?}", runtime_mode));
+    if let Some(result) = &runtime_result {
+        let safety_decision = &result.audit.safety_decision;
+        let apply_result = &result.audit.apply_result;
+        print_kv("Current route", &safety_decision.current_route_id);
+        print_kv(
+            "Candidate route",
+            safety_decision
+                .candidate_route_id
+                .as_deref()
+                .unwrap_or("none"),
+        );
+        print_kv("Safety verdict", format!("{:?}", safety_decision.verdict));
+        print_kv("Allowed", safety_decision.allowed);
+        print_kv("Hard failover", safety_decision.hard_failover);
+        print_kv("Recent switches", safety_decision.recent_switches_in_window);
+        print_kv(
+            "Improvement",
+            format!("{:.1}%", safety_decision.improvement_pct),
+        );
+        print_kv("Reason", &safety_decision.reason);
+        print_kv("Applied", apply_result.applied);
+        print_kv("Active route", &apply_result.active_route_id);
+        print_kv(
+            "Rollback route",
+            apply_result.rollback_route_id.as_deref().unwrap_or("none"),
+        );
+    } else {
+        print_kv("Current route", &runtime_state.active_route_id);
+        print_kv("Recommended route", &apply_request.requested_route_id);
+        print_kv("Applied", false);
+        print_kv("Reason", &mode_execution.decision.reason);
+    }
 
     println!();
     println!("10. MULTI-RELAY LOAD BALANCING");
@@ -673,31 +891,64 @@ fn main() -> Result<()> {
         print_kv("Applicable members", summary.applicable_members.join(", "));
     }
     print_kv("Bridge result", bridge_result);
+    print_kv("Task1 bridge status", &task1_bridge.status);
+    print_kv("Task2 bridge status", &task2_bridge.status);
 
     println!();
     println!("12. GUARDED RUNTIME ROUTE CONTROLLER");
-    print_kv(
-        "Transition",
-        format!("{:?}", runtime_result.audit.transition),
-    );
-    print_kv(
-        "Already eligible",
-        runtime_result.audit.requested_route_was_eligible,
-    );
-    print_kv(
-        "Owner approval",
-        "not required for safe runtime route change",
-    );
-    print_kv(
-        "Runtime active route",
-        &runtime_result.state.active_route_id,
-    );
+    if let Some(result) = &runtime_result {
+        print_kv("Transition", format!("{:?}", result.audit.transition));
+        print_kv(
+            "Already eligible",
+            result.audit.requested_route_was_eligible,
+        );
+        print_kv(
+            "Owner approval",
+            "not required for safe runtime route change",
+        );
+        print_kv("Runtime active route", &result.state.active_route_id);
+    } else {
+        print_kv("Controller status", "not invoked outside Active mode");
+        print_kv("Runtime active route", &runtime_state.active_route_id);
+    }
     print_kv(
         "Outcome reward fed",
         selected_reward
             .map(|v| format!("{v:.2}"))
             .unwrap_or_else(|| "none".to_string()),
     );
+
+    if runtime_mode == NetworkAiRuntimeMode::Shadow {
+        println!();
+        println!("13. D21 SHADOW DECISION");
+        print_kv(
+            "Selected route",
+            rl_decision.selected_route_id.as_deref().unwrap_or("none"),
+        );
+        print_kv("Applied", false);
+        print_kv(
+            "Operator next step",
+            "Review recommendation; no route was changed.",
+        );
+    }
+    if runtime_mode == NetworkAiRuntimeMode::Advisory {
+        println!();
+        println!("14. D22 ADVISORY RECOMMENDATION");
+        print_kv(
+            "Recommended route",
+            rl_decision.selected_route_id.as_deref().unwrap_or("none"),
+        );
+        print_kv(
+            "Expected improvement",
+            format!("{:.1}%", advisory_safety.improvement_pct),
+        );
+        print_kv("Safety verdict", format!("{:?}", advisory_safety.verdict));
+        print_kv("Applied", false);
+        print_kv(
+            "Operator next step",
+            "Review and explicitly enable Active mode if approved.",
+        );
+    }
 
     println!();
     println!("SAVED EVIDENCE");
@@ -713,11 +964,24 @@ fn main() -> Result<()> {
     print_kv("Route rewards", rewards_path.display());
     print_kv("RL policy", rl_policy_path.display());
     print_kv("RL decision", rl_decision_path.display());
-    print_kv("Safety decision", safety_decision_path.display());
-    print_kv("Apply result", apply_result_path.display());
-    print_kv("Runtime route state", runtime_route_state_path.display());
-    print_kv("Runtime apply result", runtime_apply_result_path.display());
-    print_kv("Transition audit", route_transition_audit_path.display());
+    print_kv("Runtime mode decision", runtime_mode_path.display());
+    if runtime_mode == NetworkAiRuntimeMode::Shadow {
+        print_kv("D21 shadow decision", shadow_decision_path.display());
+    }
+    if runtime_mode == NetworkAiRuntimeMode::Advisory {
+        print_kv(
+            "D22 advisory recommendation",
+            advisory_recommendation_path.display(),
+        );
+    }
+    print_kv("Effective Task3 config", effective_config_path.display());
+    if runtime_result.is_some() {
+        print_kv("Safety decision", safety_decision_path.display());
+        print_kv("Apply result", apply_result_path.display());
+        print_kv("Runtime route state", runtime_route_state_path.display());
+        print_kv("Runtime apply result", runtime_apply_result_path.display());
+        print_kv("Transition audit", route_transition_audit_path.display());
+    }
     print_kv("Relay weights", relay_weights_path.display());
     print_kv("Integration audit", integration_audit_path.display());
     print_kv(
@@ -739,9 +1003,11 @@ fn main() -> Result<()> {
     if task1_signal.is_some() {
         print_kv("Task1 route signal", task1_signal_path.display());
     }
+    print_kv("Task1 bridge status", task1_bridge_path.display());
     if task2_trust_summary.is_some() {
         print_kv("Task2 trust summary", task2_trust_summary_path.display());
     }
+    print_kv("Task2 bridge status", task2_bridge_path.display());
 
     Ok(())
 }

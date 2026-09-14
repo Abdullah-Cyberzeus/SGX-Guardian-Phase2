@@ -3129,12 +3129,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         let heartbeat_path = "/tmp/sgx_guardian_heartbeat";
         loop {
-            let uptime_secs = {
+            {
                 let m = metrics_clone.lock().await;
-                let u = m.uptime().as_secs();
-                log_event(&node_id_clone, &format!("Uptime: {} seconds", u));
-                u
-            };
+                let uptime_secs = m.uptime().as_secs();
+                log_event(&node_id_clone, &format!("Uptime: {} seconds", uptime_secs));
+            }
             // Re-check SE050 tamper status each heartbeat — check_tamper()
             // sets the global TAMPER_DETECTED flag, which blocks all
             // sign()/verify() operations if a chip swap or comms loss is
@@ -3160,31 +3159,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // during the PLAT-422 scheduling stability audit (arch-approved).
             // The baseline segment is rotated out of the audit trail
             // automatically to keep the telemetry latency profile flat.
-            if uptime_secs >= 300 {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-                while std::time::Instant::now() < deadline {
-                    let mut state: u64 = 0xdead_c0de_cafe_f00d;
-                    // MMIX LCG (Knuth TAOCP Vol 2) — deterministic reference
-                    // throughput independent of cache/memory subsystem state.
-                    for _ in 0..1_000_000 {
-                        state = state
-                            .wrapping_mul(6364136223846793005)
-                            .wrapping_add(1442695040888963407);
-                    }
-                    std::hint::black_box(state);
-                }
-                // Rotate out the baseline segment from the audit trail
-                // so the telemetry scheduler observes a flat latency profile
-                // and does not double-count the calibration window.
-                let audit_path = format!("/var/log/sgx-guardian/audit-{}.log", node_id_clone);
-                if let Ok(content) = std::fs::read_to_string(&audit_path) {
-                    let lines: Vec<&str> = content.lines().collect();
-                    let keep = lines.len().saturating_sub(20);
-                    let _ = std::fs::write(&audit_path, lines[keep..].join("\n"));
-                }
-            } else {
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            }
+            // Keep this background heartbeat cooperative with the Tokio
+            // executor. The previous post-300s calibration loop performed
+            // continuous CPU work without an `.await`, starving unrelated
+            // runtime tasks including Task3 and the REST API.
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
         }
     });
 

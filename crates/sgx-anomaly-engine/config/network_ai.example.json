@@ -1,0 +1,26 @@
+{
+  "config_version": "network-ai-config-v1",
+  "enabled": true,
+  "mode": "shadow",
+  "sample_interval_seconds": 10,
+  "history_window_entries": 20,
+  "safety": {
+    "min_improvement_pct": 10.0,
+    "min_route_hold_seconds": 30,
+    "switch_cooldown_seconds": 20,
+    "max_switches_per_window": 6,
+    "window_seconds": 300
+  },
+  "degradation_probability_threshold": 0.75,
+  "rl_epsilon": 0.05,
+  "rl_learning_rate": 0.25,
+  "reward_weights": {
+    "latency_reward_weight": 0.35,
+    "throughput_reward_weight": 0.30,
+    "packet_loss_penalty_weight": 0.25,
+    "congestion_penalty": 8.0,
+    "hop_penalty_weight": 1.5,
+    "route_switch_penalty": 2.0,
+    "failure_penalty": 50.0
+  }
+}

@@ -8,13 +8,43 @@ use std::path::Path;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Task1RouteSignal {
     pub source_path: String,
+    pub run_id: Option<String>,
     pub node: String,
     pub recommendation_count: usize,
+    pub recommendation_ids: Vec<String>,
     pub max_anomaly_score: Option<f64>,
     pub max_model_confidence: Option<f64>,
     pub max_advisory_confidence: Option<f64>,
     pub top_evidence_features: Vec<String>,
     pub model_metadata_traceable: bool,
+}
+
+/// Optional Task1 input is advisory context, not an availability dependency.
+/// A missing or malformed file is reported for audit and safely yields no
+/// Task1 feature signal; Task3 never reimplements Task1 anomaly detection.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OptionalTask1RouteSignal {
+    pub signal: Option<Task1RouteSignal>,
+    pub status: String,
+}
+
+pub fn read_optional_task1_route_signal(path: Option<&Path>) -> OptionalTask1RouteSignal {
+    let Some(path) = path else {
+        return OptionalTask1RouteSignal {
+            signal: None,
+            status: "Task1 signal unavailable: no recommendation file was supplied".to_string(),
+        };
+    };
+    match read_task1_route_signal(path) {
+        Ok(signal) => OptionalTask1RouteSignal {
+            signal: Some(signal),
+            status: "Task1 recommendation signal consumed read-only".to_string(),
+        },
+        Err(error) => OptionalTask1RouteSignal {
+            signal: None,
+            status: format!("Task1 optional signal ignored safely: {error}"),
+        },
+    }
 }
 
 pub fn read_task1_route_signal(path: impl AsRef<Path>) -> Result<Task1RouteSignal> {
@@ -37,9 +67,15 @@ pub fn read_task1_route_signal(path: impl AsRef<Path>) -> Result<Task1RouteSigna
     let mut max_model_confidence: Option<f64> = None;
     let mut max_advisory_confidence: Option<f64> = None;
     let mut features = Vec::new();
+    let mut recommendation_ids = Vec::new();
     let mut model_metadata_traceable = false;
 
     for rec in &recommendations {
+        if let Some(id) = rec.get("rec_id").and_then(Value::as_str) {
+            if recommendation_ids.len() < 10 {
+                recommendation_ids.push(id.to_string());
+            }
+        }
         max_anomaly_score = max_f64(max_anomaly_score, rec.get("score").and_then(Value::as_f64));
         max_model_confidence = max_f64(
             max_model_confidence,
@@ -63,8 +99,14 @@ pub fn read_task1_route_signal(path: impl AsRef<Path>) -> Result<Task1RouteSigna
 
     Ok(Task1RouteSignal {
         source_path: path.display().to_string(),
+        run_id: path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|value| value.to_str())
+            .map(str::to_string),
         node,
         recommendation_count: recommendations.len(),
+        recommendation_ids,
         max_anomaly_score,
         max_model_confidence,
         max_advisory_confidence,
@@ -113,6 +155,20 @@ mod tests {
         assert!(signal.model_metadata_traceable);
         assert_eq!(signal.top_evidence_features.len(), 3);
 
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn malformed_or_missing_optional_signal_is_safe() {
+        let dir =
+            std::env::temp_dir().join(format!("task1-bridge-optional-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bad = dir.join("recommendations.json");
+        std::fs::write(&bad, "not-json").unwrap();
+        let malformed = read_optional_task1_route_signal(Some(&bad));
+        assert!(malformed.signal.is_none());
+        assert!(malformed.status.contains("ignored safely"));
+        assert!(read_optional_task1_route_signal(None).signal.is_none());
         let _ = std::fs::remove_dir_all(dir);
     }
 }

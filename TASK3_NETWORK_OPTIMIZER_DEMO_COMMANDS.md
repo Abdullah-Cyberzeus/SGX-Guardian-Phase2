@@ -18,9 +18,64 @@ Deliverable 10 complete locally: Official safety guard, hysteresis, cooldown, ha
 Deliverable 11 complete locally: Guarded runtime route controller, state, transition audit, observed outcome
 Deliverable 12 complete locally: Sensitive route changes hand off to Task2 pending owner review
 Deliverable 13 complete locally: Multi-relay ranking, stable weights, overload reduction and recovery ramp
+Deliverable 14 complete locally: Linked decision, reward, degradation, Task1 and Task2 audit evidence
+Deliverable 15 complete locally: Shadow/Advisory/Active safe runtime modes
+Deliverable 16 complete locally: Versioned validated admin configuration with effective-value evidence
+Deliverable 17 complete locally: Guardian-facing bounded periodic runtime with restart-safe state
+Deliverable 18 complete locally: Authenticated Task3 client API with safe bounded audit responses
+Deliverable 19 complete locally: Optional read-only Task1 anomaly/risk bridge with trace evidence
+Deliverable 20 complete locally: Read-only latest Task2 trust/policy bridge with safe fallback and source trace
+Deliverable 21 complete locally: Shadow route decision with simple readable evidence and no apply
+Deliverable 22 complete locally: Advisory route recommendation with read-only safety verdict and no apply
 ```
 
 No commit/push until full Task3 is complete.
+
+---
+
+## Demo 10 - Deliverable 21: Shadow route decision
+
+```powershell
+Set-Location "C:\Users\Hp\Desktop\Task1-2_AnomalydetectionEngine\sgx-anomaly-engine"
+
+cargo run --example run_task3_network_optimizer_demo -- `
+  --mode shadow `
+  --traffic-class operational `
+  --source-node nodeA `
+  --destination-node nodeB `
+  --task2-trust-state data\virtual_shift\15_ROUTING_TRUST_STATE\nodeB\routing_trust_summary.json `
+  --out-dir data\network_ai\d21_shadow_demo
+```
+
+It prints trusted/rejected routes, predicted metrics, degradation and selected
+route, but writes no runtime apply result. Read the short decision here:
+
+```text
+data\network_ai\d21_shadow_demo\shadow_route_decision.json
+```
+
+---
+
+## Demo 11 - Deliverable 22: Advisory route recommendation
+
+```powershell
+Set-Location "C:\Users\Hp\Desktop\Task1-2_AnomalydetectionEngine\sgx-anomaly-engine"
+
+cargo run --example run_task3_network_optimizer_demo -- `
+  --mode advisory `
+  --traffic-class operational `
+  --source-node nodeA `
+  --destination-node nodeB `
+  --task2-trust-state data\virtual_shift\15_ROUTING_TRUST_STATE\nodeB\routing_trust_summary.json `
+  --out-dir data\network_ai\d22_advisory_demo
+```
+
+No active route changes. The saved recommendation contains expected improvement,
+confidence, reason, read-only safety verdict and the operator next step:
+
+```text
+data\network_ai\d22_advisory_demo\advisory_route_recommendation.json
+```
 
 ---
 
@@ -352,3 +407,212 @@ data\network_ai\d14_audit_demo\degradation_events.jsonl
 `current_decision.json` links selected route/reason/confidence, rejected
 routes/reasons, model versions, Task1/Task2 traces, route history, observed
 outcomes, selected reward, and degradation predictions.
+
+---
+
+## Demo 5 - Deliverable 15: Runtime modes
+
+`--mode` is the runtime configuration. If it is omitted, Task3 defaults to
+`shadow`. Shadow and Advisory generate evidence/recommendations only; only
+Active can call the existing D10/D11 guarded controller.
+
+### Shadow (default, no route apply)
+
+```powershell
+Set-Location "C:\Users\Hp\Desktop\Task1-2_AnomalydetectionEngine\sgx-anomaly-engine"
+
+cargo run --example run_task3_network_optimizer_demo -- `
+  --out-dir data\network_ai\d15_shadow_demo `
+  --mode shadow `
+  --traffic-class operational `
+  --source-node nodeA `
+  --destination-node nodeB
+```
+
+### Advisory (recommend only, no route apply)
+
+```powershell
+cargo run --example run_task3_network_optimizer_demo -- `
+  --out-dir data\network_ai\d15_advisory_demo `
+  --mode advisory `
+  --traffic-class operational `
+  --source-node nodeA `
+  --destination-node nodeB
+```
+
+### Active (only Task2-trusted route + D10/D11 safety path)
+
+```powershell
+cargo run --example run_task3_network_optimizer_demo -- `
+  --out-dir data\network_ai\d15_active_demo `
+  --mode active `
+  --traffic-class operational `
+  --source-node nodeA `
+  --destination-node nodeB
+```
+
+Each run saves `runtime_mode_decision.json`. Shadow/Advisory show
+`Applied: false`; Active saves D10 safety and D11 apply evidence only when
+the selected route is already Task2-eligible.
+
+---
+
+## Demo 6 - Deliverable 16: Versioned admin configuration
+
+The config is validated before the engine uses it. It controls enabled/mode,
+sampling/history retention, D10 safety settings, degradation threshold, RL
+epsilon/learning rate, and reward weights.
+
+```powershell
+Set-Location "C:\Users\Hp\Desktop\Task1-2_AnomalydetectionEngine\sgx-anomaly-engine"
+
+cargo run --example run_task3_network_optimizer_demo -- `
+  --config config\network_ai.example.json `
+  --out-dir data\network_ai\d16_config_demo `
+  --traffic-class operational `
+  --source-node nodeA `
+  --destination-node nodeB
+```
+
+Evidence:
+
+```text
+config\network_ai.example.json
+data\network_ai\d16_config_demo\effective_network_ai_config.json
+```
+
+---
+
+## Demo 7 - Deliverable 17: Bounded production-runtime integration
+
+This runs two periodic Task3 ticks through the Guardian-facing runtime module,
+using fresh Task2-filtered inputs per tick. It exits automatically after two
+ticks; it does not start an endless background process.
+
+```powershell
+Set-Location "C:\Users\Hp\Desktop\Task1-2_AnomalydetectionEngine\sgx-anomaly-engine"
+
+cargo run --example run_task3_runtime_demo -- `
+  --config config\network_ai.example.json
+```
+
+Evidence:
+
+```text
+data\network_ai\d17_runtime_demo\runtime.json
+```
+
+---
+
+## Demo 8 - Deliverable 18: Authenticated client API
+
+Start this in one PowerShell terminal:
+
+```powershell
+Set-Location "C:\Users\Hp\Desktop\Task1-2_AnomalydetectionEngine\sgx-anomaly-engine"
+cargo run --example run_task3_network_ai_api
+```
+
+In a second terminal, authenticated read example:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8093/api/v1/network-ai/status `
+  -Headers @{ "x-operator-id" = "nodeA" }
+```
+
+Endpoints: `status`, `candidates`, `decision/current`, `history`, `rewards`,
+and authenticated `POST /api/v1/network-ai/mode`. No private keys, tokens, or
+Task2 credentials are exposed.
+
+---
+
+## Demo 9 - Deliverable 19: Task1 anomaly/risk bridge
+
+```powershell
+Set-Location "C:\Users\Hp\Desktop\Task1-2_AnomalydetectionEngine\sgx-anomaly-engine"
+
+cargo run --example run_task3_network_optimizer_demo -- `
+  --task1-recommendation data\recommendation_records\nodeA\run_012\recommendations.json `
+  --out-dir data\network_ai\d19_task1_bridge_demo `
+  --traffic-class operational `
+  --source-node nodeA `
+  --destination-node nodeB
+```
+
+Task3 reads the existing Task1 JSON only. It stores source path, run ID,
+recommendation IDs, anomaly score and evidence features in
+`task1_route_signal.json`; missing/malformed optional input safely becomes no
+Task1 signal rather than crashing the optimizer.
+
+---
+
+## Demo 10 - Deliverable 23: Active safe route switch
+
+This uses real Task2-backed eligibility, deterministic route prediction,
+reward/Q-value selection, D10 safety, and D11 apply. It proves trusted
+direct -> relay and relay -> relay changes only when both safety verdicts pass.
+
+```powershell
+Set-Location "C:\Users\Hp\Desktop\Task1-2_AnomalydetectionEngine\sgx-anomaly-engine"
+
+cargo run --example run_task3_active_safe_switch_demo
+```
+
+Evidence:
+
+```text
+data\network_ai\d23_active_safe_switch_demo\d23_evidence.json
+data\network_ai\d23_active_safe_switch_demo\apply1.json
+data\network_ai\d23_active_safe_switch_demo\apply2.json
+data\network_ai\d23_active_safe_switch_demo\state.json
+data\network_ai\d23_active_safe_switch_demo\transitions.jsonl
+data\network_ai\d23_active_safe_switch_demo\outcomes.jsonl
+data\network_ai\d23_active_safe_switch_demo\predictions.json
+data\network_ai\d23_active_safe_switch_demo\rewards.json
+data\network_ai\d23_active_safe_switch_demo\rl_decision.json
+```
+
+---
+
+## Demo 11 - Deliverable 24: Task2 handoff for a sensitive route
+
+An untrusted/new relay is never applied directly. Task3 creates an existing
+Task2 owner-review record and keeps Task2 trust/policy unchanged.
+
+```powershell
+Set-Location "C:\Users\Hp\Desktop\Task1-2_AnomalydetectionEngine\sgx-anomaly-engine"
+
+cargo run --example run_task3_d24_task2_handoff_demo
+```
+
+Expected: `DIRECT_APPLY_BLOCKED: true`, `PendingReview`, linked Task3 handoff
+ID, Task2 review JSON, and audit evidence at:
+
+```text
+data\network_ai\d24_task2_handoff_demo\task3_task2_handoff_audit.json
+data\virtual_shift\02_OWNER_REVIEW_DECISIONS\<task3-handoff-id>\review.json
+```
+
+---
+
+## Demo 12 - Deliverable 25: Static versus AI benchmark
+
+Runs the identical fixed laptop/synthetic topology and operational workload for
+static direct routing and Task3 AI routing. Task2 filtering happens before AI
+selection; D10/D11 must allow the selected trusted route. The target is judged
+from the measured output, not unit-test success.
+
+```powershell
+Set-Location "C:\Users\Hp\Desktop\Task1-2_AnomalydetectionEngine\sgx-anomaly-engine"
+
+cargo run --example run_task3_static_vs_ai_benchmark
+```
+
+Evidence:
+
+```text
+data\network_ai\d25_static_vs_ai_benchmark\benchmark.json
+```
+
+It records average/p50/p95/p99 latency, loss, throughput, switch count,
+measured latency improvement, D10/D11 state, and an honest 20–40% target verdict.

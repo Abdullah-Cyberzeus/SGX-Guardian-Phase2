@@ -15,12 +15,14 @@ use sgx_anomaly_engine::network_ai::candidates::RouteCandidateMetadata;
 use sgx_anomaly_engine::network_ai::{
     append_observation_jsonl, classify_message_type, persist_current_observation,
     ContextualBanditPolicy, DecisionAuditRecord, DecisionEvidenceLinks, DegradationPredictor,
-    EligibilityFilter, MultiRelayLoadBalancer, NetworkObservation, NetworkTelemetryAdapter,
-    NetworkTelemetryContext, RelayRuntimeHealth, RelayWeightSet, RouteCandidate, RouteHistoryEntry,
-    RouteHistoryStore, RouteKind, RoutePredictionSet, RouteReward, RuntimeRouteApplyRequest,
+    EligibilityFilter, MultiRelayLoadBalancer, NetworkAiConfig as EngineNetworkAiConfig,
+    NetworkAiRuntimeMode, NetworkObservation, NetworkTelemetryAdapter, NetworkTelemetryContext,
+    RelayRuntimeHealth, RelayWeightSet, RouteCandidate, RouteHistoryEntry, RouteHistoryStore,
+    RouteKind, RoutePredictionSet, RouteReward, RuntimeModeDecision, RuntimeRouteApplyRequest,
     RuntimeRouteState, SafeRuntimeRouteController, SimpleDegradationPredictor,
-    SimpleRouteQualityPredictor, Task1RouteSignal, Task2RoutingTrustSummary, TrafficClass,
-    TrustStateSnapshot,
+    SimpleRouteQualityPredictor, Task1RouteSignal, Task2RoutingTrustSummary,
+    Task2TrustStateSources, TrafficClass, TrustStateSnapshot, NETWORK_AI_CONFIG_VERSION,
+    NETWORK_AI_RUNTIME_MODE_VERSION,
 };
 use sgx_anomaly_engine::telemetry::{RawSample, TelemetrySource};
 use sgx_anomaly_engine::virtual_shift::VS17_MEMBER_POLICY_STATE;
@@ -34,11 +36,12 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::{interval, timeout, Duration};
 
 const STATUS_SCHEMA: &str = "task3-network-ai-runtime-status-v1";
-const DEFAULT_INTERVAL_SECS: u64 = 30;
 const DEFAULT_TRUST_MAX_AGE_MS: u64 = 300_000;
 const TASK3_TRAFFIC_EVENT_TTL_MS: u64 = 30_000;
 const TASK1_NETWORK_SIGNAL_MAX_AGE_MS: u64 = 300_000;
 const TASK1_PRODUCTION_STATE_ROOT: &str = "/var/lib/sgx-guardian/threat";
+const DEFAULT_NETWORK_AI_CONFIG_PATH: &str =
+    "/var/lib/sgx-guardian/threat/network_ai/config/network_ai.json";
 const RELAY_TELEMETRY_MAX_AGE_MS: u64 = 120_000;
 
 #[derive(Debug, Clone)]
@@ -183,6 +186,9 @@ pub struct Task3NetworkAiConfig {
     pub nebula_base_dir: PathBuf,
     pub task2_trust_root: PathBuf,
     pub allow_transport_apply: bool,
+    pub network_ai_config_path: PathBuf,
+    pub network_ai_config: EngineNetworkAiConfig,
+    pub config_error: Option<String>,
 }
 
 impl Task3NetworkAiConfig {
@@ -190,11 +196,26 @@ impl Task3NetworkAiConfig {
         let state_dir = state_dir.as_ref();
         let enabled = env_bool("SGX_TASK3_NETWORK_AI_ENABLED").unwrap_or(true);
         let allow_transport_apply = env_bool("SGX_TASK3_TRANSPORT_APPLY").unwrap_or(true);
+        let default_network_config_path = state_dir
+            .join("network_ai")
+            .join("config")
+            .join("network_ai.json");
+        let network_ai_config_path = std::env::var("SGX_NETWORK_AI_CONFIG")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                if state_dir.as_os_str().is_empty() {
+                    PathBuf::from(DEFAULT_NETWORK_AI_CONFIG_PATH)
+                } else {
+                    default_network_config_path
+                }
+            });
+        let (network_ai_config, config_error) =
+            load_or_seed_network_ai_config(&network_ai_config_path);
         let interval_secs = std::env::var("SGX_TASK3_NETWORK_AI_INTERVAL_SECS")
             .ok()
             .and_then(|raw| raw.parse::<u64>().ok())
             .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_INTERVAL_SECS);
+            .unwrap_or(network_ai_config.sample_interval_seconds.max(1));
         let persistence_root = std::env::var("SGX_TASK3_NETWORK_AI_ROOT")
             .map(PathBuf::from)
             .unwrap_or_else(|_| state_dir.join("network_ai").join("runtime"));
@@ -213,8 +234,51 @@ impl Task3NetworkAiConfig {
             nebula_base_dir: nebula_base_dir.into(),
             task2_trust_root,
             allow_transport_apply,
+            network_ai_config_path,
+            network_ai_config,
+            config_error,
         }
     }
+}
+
+fn load_or_seed_network_ai_config(path: &Path) -> (EngineNetworkAiConfig, Option<String>) {
+    match EngineNetworkAiConfig::load_json(path) {
+        Ok(config) => (config, None),
+        Err(_error) if !path.exists() => {
+            let config = EngineNetworkAiConfig::default();
+            if let Err(write_error) = persist_json(path, &config) {
+                return (
+                    config,
+                    Some(format!(
+                        "using safe default Shadow config; failed to seed {}: {}",
+                        path.display(),
+                        write_error
+                    )),
+                );
+            }
+            (config, None)
+        }
+        Err(error) => {
+            let mut config = EngineNetworkAiConfig::default();
+            config.mode = NetworkAiRuntimeMode::Shadow;
+            (
+                config,
+                Some(format!(
+                    "invalid NetworkAI config {}; safe Shadow fallback active: {}",
+                    path.display(),
+                    error
+                )),
+            )
+        }
+    }
+}
+
+fn effective_network_ai_config(path: &Path) -> (EngineNetworkAiConfig, Option<String>) {
+    let (mut config, error) = load_or_seed_network_ai_config(path);
+    if error.is_some() {
+        config.mode = NetworkAiRuntimeMode::Shadow;
+    }
+    (config, error)
 }
 
 #[derive(Clone)]
@@ -247,7 +311,14 @@ pub fn spawn_production_runtime(config: Task3NetworkAiConfig, deps: Task3Network
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Task3RuntimeStatus {
     pub schema_version: String,
+    pub config_version: String,
+    pub enabled: bool,
+    pub mode: NetworkAiRuntimeMode,
     pub running: bool,
+    pub tick_count: u64,
+    pub last_tick_ms: Option<u64>,
+    pub latest_mode_decision: Option<RuntimeModeDecision>,
+    pub config_error: Option<String>,
     pub last_cycle_ms: Option<u64>,
     pub last_success_ms: Option<u64>,
     pub trust_state_available: bool,
@@ -264,7 +335,14 @@ impl Default for Task3RuntimeStatus {
     fn default() -> Self {
         Self {
             schema_version: STATUS_SCHEMA.to_string(),
+            config_version: NETWORK_AI_CONFIG_VERSION.to_string(),
+            enabled: true,
+            mode: NetworkAiRuntimeMode::Shadow,
             running: false,
+            tick_count: 0,
+            last_tick_ms: None,
+            latest_mode_decision: None,
+            config_error: None,
             last_cycle_ms: None,
             last_success_ms: None,
             trust_state_available: false,
@@ -361,6 +439,48 @@ pub struct ProductionRouteApplyResult {
     pub rollback_attempted: bool,
     pub rollback_applied: bool,
     pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ShadowRouteDecision {
+    pub schema_version: String,
+    pub decision_id: String,
+    pub mode: NetworkAiRuntimeMode,
+    pub traffic_class: TrafficClass,
+    pub task2_trust_version: String,
+    pub eligible_route_ids: Vec<String>,
+    pub rejected_routes: Vec<ShadowRejectedRoute>,
+    pub selected_route_id: Option<String>,
+    pub expected_latency_ms: Option<f64>,
+    pub expected_loss_pct: Option<f64>,
+    pub expected_throughput_mbps: Option<f64>,
+    pub confidence: Option<f64>,
+    pub selection_reason: String,
+    pub degradation_probability: Option<f64>,
+    pub applied: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ShadowRejectedRoute {
+    pub route_id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AdvisoryRouteRecommendation {
+    pub schema_version: String,
+    pub recommendation_id: String,
+    pub mode: NetworkAiRuntimeMode,
+    pub current_route_id: String,
+    pub recommended_route_id: Option<String>,
+    pub expected_improvement_pct: f64,
+    pub confidence: Option<f64>,
+    pub reason: String,
+    pub safety_verdict: String,
+    pub safety_allowed_if_activated: bool,
+    pub safety_reason: String,
+    pub applied: bool,
+    pub operator_next_step: String,
 }
 
 #[async_trait]
@@ -478,6 +598,10 @@ impl Task3NetworkAiRuntimeService {
         relay_health: Arc<dyn RelayHealthProvider>,
         relay_control: Arc<dyn RelayControl>,
     ) -> Self {
+        let initial_config_version = config.network_ai_config.config_version.clone();
+        let initial_enabled = config.enabled && config.network_ai_config.enabled;
+        let initial_mode = config.network_ai_config.mode;
+        let initial_config_error = config.config_error.clone();
         Self {
             config,
             telemetry,
@@ -489,7 +613,11 @@ impl Task3NetworkAiRuntimeService {
             relay_control,
             cycle_lock: Arc::new(Mutex::new(())),
             status: Arc::new(RwLock::new(Task3RuntimeStatus {
+                config_version: initial_config_version,
+                enabled: initial_enabled,
+                mode: initial_mode,
                 running: true,
+                config_error: initial_config_error,
                 ..Task3RuntimeStatus::default()
             })),
         }
@@ -550,6 +678,152 @@ impl Task3NetworkAiRuntimeService {
         self.persist_cycle_stage("01_cycle_started", now_ms);
         fs::create_dir_all(&self.config.persistence_root)
             .with_context(|| format!("creating {}", self.config.persistence_root.display()))?;
+        let (mut network_config, config_error) =
+            effective_network_ai_config(&self.config.network_ai_config_path);
+
+        if let Some(error) = config_error.as_ref() {
+            tracing::warn!(%error, "Task3 NetworkAI config invalid; safe Shadow fallback active");
+        }
+
+        let enabled = self.config.enabled && network_config.enabled;
+        let requested_mode = if enabled {
+            network_config.mode
+        } else {
+            NetworkAiRuntimeMode::Shadow
+        };
+
+        // D15.3: Active mode is fail-closed.
+        //
+        // Merely setting `mode = active` in configuration must not grant
+        // production route-apply authority. Active mode becomes effective
+        // only when fresh production safety evidence proves that the safety
+        // controller evaluated the route and transport application is allowed.
+        //
+        // This is production wiring only; no AI prediction, scoring, RL, or
+        // Task2 trust behaviour is changed here.
+        let mut active_mode_rejection: Option<String> = None;
+
+        let runtime_mode = if requested_mode == NetworkAiRuntimeMode::Active {
+            const ACTIVE_EVIDENCE_MAX_AGE_MS: u64 = 300_000;
+
+            let safety_path = self
+                .config
+                .persistence_root
+                .join("safety_runtime_status.json");
+
+            let safety_evidence = fs::read_to_string(&safety_path)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+
+            let activation_allowed = safety_evidence.as_ref().is_some_and(|value| {
+                let safety_evaluated = value
+                    .get("safety_evaluated")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                let transport_apply_allowed = value
+                    .get("transport_apply_allowed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                let evidence_ts_ms = value.get("ts_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                let evidence_is_fresh = evidence_ts_ms > 0
+                    && evidence_ts_ms <= now_ms
+                    && now_ms.saturating_sub(evidence_ts_ms) <= ACTIVE_EVIDENCE_MAX_AGE_MS;
+
+                safety_evaluated && transport_apply_allowed && evidence_is_fresh
+            });
+
+            if activation_allowed {
+                NetworkAiRuntimeMode::Active
+            } else {
+                let detail = safety_evidence
+                    .as_ref()
+                    .and_then(|value| value.get("reason"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("missing, stale, or incomplete production safety evidence");
+
+                let reason = format!(
+                    "Active mode activation rejected; valid safety proof is required before enabling Active: {}",
+                    detail
+                );
+
+                tracing::warn!(%reason, "Task3 NetworkAI Active activation rejected");
+                active_mode_rejection = Some(reason);
+                NetworkAiRuntimeMode::Shadow
+            }
+        } else {
+            requested_mode
+        };
+
+        // Persist the actual effective runtime configuration. The operator's
+        // requested value remains preserved in network_ai.json.
+        network_config.mode = runtime_mode;
+
+        persist_json(
+            self.config
+                .persistence_root
+                .join("effective_network_ai_config.json"),
+            &network_config,
+        )?;
+
+        if requested_mode == NetworkAiRuntimeMode::Active {
+            persist_json(
+                self.config
+                    .persistence_root
+                    .join("active_mode_activation.json"),
+                &serde_json::json!({
+                    "schema_version": "task3-network-ai-active-activation-v1",
+                    "ts_ms": now_ms,
+                    "requested_mode": requested_mode,
+                    "effective_mode": runtime_mode,
+                    "allowed": runtime_mode == NetworkAiRuntimeMode::Active,
+                    "reason": active_mode_rejection
+                        .clone()
+                        .unwrap_or_else(|| "fresh production safety proof accepted".to_string())
+                }),
+            )?;
+        }
+        let previous_tick_count = self.status.read().await.tick_count;
+        if !enabled {
+            let mode_decision = RuntimeModeDecision {
+                schema_version: NETWORK_AI_RUNTIME_MODE_VERSION.to_string(),
+                mode: runtime_mode,
+                current_route_id: String::new(),
+                selected_route_id: String::new(),
+                applied: false,
+                reason: "Task3 NetworkAI disabled; safe Shadow/no-apply fallback active"
+                    .to_string(),
+            };
+            persist_json(
+                self.config
+                    .persistence_root
+                    .join("runtime_mode_decision.json"),
+                &mode_decision,
+            )?;
+            return Ok(Task3RuntimeStatus {
+                schema_version: STATUS_SCHEMA.to_string(),
+                config_version: network_config.config_version,
+                enabled,
+                mode: runtime_mode,
+                running: true,
+                tick_count: previous_tick_count.saturating_add(1),
+                last_tick_ms: Some(now_ms),
+                latest_mode_decision: Some(mode_decision.clone()),
+                config_error,
+                last_cycle_ms: Some(now_ms),
+                last_success_ms: Some(now_ms),
+                trust_state_available: false,
+                candidate_count: 0,
+                eligible_count: 0,
+                recommended_route: None,
+                active_route: None,
+                transport_apply_attempted: false,
+                last_transport_result: None,
+                last_error: None,
+            });
+        }
 
         // D6 runtime resilience: telemetry collection must never hold the
         // Task3 cycle lock indefinitely. A blocked /proc, /sys, or telemetry
@@ -649,16 +923,38 @@ impl Task3NetworkAiRuntimeService {
             &observation,
         )?;
 
-        let mut history = self.load_history()?;
+        let mut history = self.load_history(&network_config)?;
         history.record_observation(&observation);
         history.save_json(
             self.config
                 .persistence_root
                 .join("route_history_store.json"),
         )?;
+        persist_live_benchmark(
+            self.config.persistence_root.join("benchmark.json"),
+            now_ms,
+            runtime_mode,
+            &observation,
+            &history,
+            observed.confirmed,
+        )?;
 
         let eligible =
             EligibilityFilter.filter_at(topology.route_candidates.clone(), &trust, now_ms);
+        persist_json(
+            self.config.persistence_root.join("route_candidates.json"),
+            &serde_json::json!({
+                "schema_version": "task3-route-candidates-v1",
+                "ts_ms": now_ms,
+                "source": "production Nebula/Circle runtime topology",
+                "candidate_count": topology.route_candidates.len(),
+                "candidates": topology.route_candidates,
+            }),
+        )?;
+        persist_json(
+            self.config.persistence_root.join("eligible_routes.json"),
+            &eligible,
+        )?;
         for candidate in &eligible.eligible {
             if let Some(telemetry) = candidate_telemetry
                 .iter()
@@ -688,7 +984,7 @@ impl Task3NetworkAiRuntimeService {
             task1_signal.as_ref(),
             now_ms,
         );
-        let mut policy = self.load_policy()?;
+        let mut policy = self.load_policy(&network_config)?;
         let decision = policy.choose_exploit(&predictions);
         let selected_route = decision
             .selected_route_id
@@ -706,42 +1002,47 @@ impl Task3NetworkAiRuntimeService {
         //   - StaleTrustState
         //
         // No predictor/RL/AI behaviour is changed here.
-        let sensitive_route_action = if selected_route.is_none() {
-            eligible.rejected.iter().find_map(|rejected| {
-                use sgx_anomaly_engine::network_ai::{EligibilityReason, SensitiveRouteReason};
+        let sensitive_route_action =
+            if runtime_mode == NetworkAiRuntimeMode::Active && selected_route.is_none() {
+                eligible.rejected.iter().find_map(|rejected| {
+                    use sgx_anomaly_engine::network_ai::{EligibilityReason, SensitiveRouteReason};
 
-                let sensitive_reason = match &rejected.reason {
-                    EligibilityReason::UntrustedPeer => {
-                        if rejected.candidate.relay_ids.is_empty() {
-                            SensitiveRouteReason::SecurityExceptionRequired
-                        } else {
-                            SensitiveRouteReason::NewUntrustedRelay
+                    let sensitive_reason = match &rejected.reason {
+                        EligibilityReason::UntrustedPeer => {
+                            if rejected.candidate.relay_ids.is_empty() {
+                                SensitiveRouteReason::SecurityExceptionRequired
+                            } else {
+                                SensitiveRouteReason::NewUntrustedRelay
+                            }
                         }
-                    }
-                    EligibilityReason::QuarantinedPeer => {
-                        SensitiveRouteReason::QuarantinedMemberRecovery
-                    }
-                    EligibilityReason::ProhibitedRoute => {
-                        SensitiveRouteReason::PolicyRuleChangeNeeded
-                    }
-                    EligibilityReason::SecurityControlRequiresTrustedRoute => {
-                        SensitiveRouteReason::SecurityExceptionRequired
-                    }
+                        EligibilityReason::QuarantinedPeer => {
+                            SensitiveRouteReason::QuarantinedMemberRecovery
+                        }
+                        EligibilityReason::ProhibitedRoute => {
+                            SensitiveRouteReason::PolicyRuleChangeNeeded
+                        }
+                        EligibilityReason::SecurityControlRequiresTrustedRoute => {
+                            SensitiveRouteReason::SecurityExceptionRequired
+                        }
 
-                    EligibilityReason::RouteUnavailable
-                    | EligibilityReason::RouteUnhealthy
-                    | EligibilityReason::StaleTrustState
-                    | EligibilityReason::Eligible => return None,
-                };
+                        EligibilityReason::RouteUnavailable
+                        | EligibilityReason::RouteUnhealthy
+                        | EligibilityReason::StaleTrustState
+                        | EligibilityReason::Eligible => return None,
+                    };
 
-                Some((rejected.candidate.clone(), sensitive_reason))
-            })
-        } else {
-            None
-        };
+                    Some((rejected.candidate.clone(), sensitive_reason))
+                })
+            } else {
+                None
+            };
 
         let degradation = state.as_ref().map(|state| {
-            SimpleDegradationPredictor::default().predict(
+            SimpleDegradationPredictor {
+                high_probability_threshold: network_config.degradation_probability_threshold,
+                ..SimpleDegradationPredictor::default()
+            }
+            .predict(
                 &state.active_route_id,
                 history
                     .entries_by_route
@@ -750,6 +1051,7 @@ impl Task3NetworkAiRuntimeService {
                     .unwrap_or(&[]),
             )
         });
+        let degradation_predictions = degradation.into_iter().collect::<Vec<_>>();
 
         let rewards = selected_route
             .as_ref()
@@ -761,7 +1063,13 @@ impl Task3NetworkAiRuntimeService {
                     .find(|candidate| candidate.route_id == prediction.route_id)
                     .map(|candidate| candidate.hop_count)
                     .unwrap_or(0);
-                RouteReward::from_prediction(prediction, hop_count, false, false)
+                RouteReward::from_prediction_with_weights(
+                    prediction,
+                    hop_count,
+                    false,
+                    false,
+                    &network_config.reward_weights,
+                )
             })
             .into_iter()
             .collect::<Vec<_>>();
@@ -793,7 +1101,7 @@ impl Task3NetworkAiRuntimeService {
             &eligible,
             &audit_predictions,
             &rewards,
-            degradation.into_iter().collect(),
+            degradation_predictions.clone(),
             task1_signal.clone(),
             task2_summary.clone(),
             DecisionEvidenceLinks {
@@ -835,6 +1143,236 @@ impl Task3NetworkAiRuntimeService {
             &self.config.persistence_root,
             d2_traffic_contexts,
         )?;
+
+        persist_json(
+            self.config
+                .persistence_root
+                .join("task1_bridge_status.json"),
+            &serde_json::json!({
+                "schema_version": "task3-task1-bridge-status-v1",
+                "ts_ms": now_ms,
+                "signal_available": task1_signal.is_some(),
+                "source_path": task1_signal.as_ref().map(|signal| signal.source_path.clone()),
+                "run_id": task1_signal.as_ref().and_then(|signal| signal.run_id.clone()),
+                "recommendation_ids": task1_signal
+                    .as_ref()
+                    .map(|signal| signal.recommendation_ids.clone())
+                    .unwrap_or_default(),
+                "status": if task1_signal.is_some() {
+                    "fresh Task1 full-ML route signal consumed read-only"
+                } else {
+                    "no fresh Task1 full-ML route signal available"
+                }
+            }),
+        )?;
+        persist_json(
+            self.config
+                .persistence_root
+                .join("task2_bridge_status.json"),
+            &serde_json::json!({
+                "schema_version": "task3-task2-bridge-status-v1",
+                "ts_ms": now_ms,
+                "trust_state_available": !trust.missing,
+                "trust_state_version": eligible.trust_state_version,
+                "summary_path": selected_task2_path.display().to_string(),
+                "summary": task2_summary,
+                "status": if trust.missing {
+                    "Task2 trust unavailable; fail-closed eligibility active"
+                } else {
+                    "Task2 routing trust summary consumed read-only"
+                }
+            }),
+        )?;
+
+        let selected_prediction = selected_route
+            .as_ref()
+            .and_then(|route_id| prediction_for(&predictions, route_id));
+        let current_score = state
+            .as_ref()
+            .map(|state| prediction_score_or_zero(&predictions, &state.active_route_id))
+            .unwrap_or(0.0);
+        let candidate_score = selected_route
+            .as_ref()
+            .map(|route| prediction_score_or_zero(&predictions, route))
+            .unwrap_or(0.0);
+        let mode_decision = RuntimeModeDecision {
+            schema_version: NETWORK_AI_RUNTIME_MODE_VERSION.to_string(),
+            mode: runtime_mode,
+            current_route_id: state
+                .as_ref()
+                .map(|state| state.active_route_id.clone())
+                .unwrap_or_else(|| "unknown-unconfirmed-nebula-route".to_string()),
+            selected_route_id: selected_route.clone().unwrap_or_default(),
+            applied: false,
+            reason: match runtime_mode {
+                NetworkAiRuntimeMode::Shadow => {
+                    active_mode_rejection.clone().unwrap_or_else(|| {
+                        "shadow mode observed and predicted only; route apply is disabled"
+                            .to_string()
+                    })
+                }
+                NetworkAiRuntimeMode::Advisory => {
+                    "advisory mode produced a route recommendation; operator action is required"
+                        .to_string()
+                }
+                NetworkAiRuntimeMode::Active => {
+                    "active mode will continue through D10 safety and production transport"
+                        .to_string()
+                }
+            },
+        };
+        persist_json(
+            self.config
+                .persistence_root
+                .join("runtime_mode_decision.json"),
+            &mode_decision,
+        )?;
+
+        if runtime_mode != NetworkAiRuntimeMode::Active {
+            if runtime_mode == NetworkAiRuntimeMode::Shadow {
+                persist_json(
+                    self.config
+                        .persistence_root
+                        .join("shadow_route_decision.json"),
+                    &ShadowRouteDecision {
+                        schema_version: "network-ai-shadow-decision-v1".to_string(),
+                        decision_id: decision_id.clone(),
+                        mode: runtime_mode,
+                        traffic_class: selected_route
+                            .as_ref()
+                            .and_then(|route_id| {
+                                topology
+                                    .route_candidates
+                                    .iter()
+                                    .find(|candidate| candidate.route_id == *route_id)
+                                    .map(|candidate| candidate.traffic_class)
+                            })
+                            .unwrap_or(TrafficClass::Operational),
+                        task2_trust_version: eligible.trust_state_version.clone(),
+                        eligible_route_ids: eligible
+                            .eligible
+                            .iter()
+                            .map(|candidate| candidate.route_id.clone())
+                            .collect(),
+                        rejected_routes: eligible
+                            .rejected
+                            .iter()
+                            .map(|rejected| ShadowRejectedRoute {
+                                route_id: rejected.route_id.clone(),
+                                reason: format!("{:?}", rejected.reason),
+                            })
+                            .collect(),
+                        selected_route_id: selected_route.clone(),
+                        expected_latency_ms: selected_prediction
+                            .map(|prediction| prediction.expected_latency_ms),
+                        expected_loss_pct: selected_prediction
+                            .map(|prediction| prediction.expected_loss_pct),
+                        expected_throughput_mbps: selected_prediction
+                            .map(|prediction| prediction.expected_throughput_mbps),
+                        confidence: selected_prediction.map(|prediction| prediction.confidence),
+                        selection_reason: selected_prediction
+                            .map(|prediction| prediction.reason.clone())
+                            .unwrap_or_else(|| "no eligible route selected".to_string()),
+                        degradation_probability: degradation_predictions
+                            .first()
+                            .map(|prediction| prediction.probability),
+                        applied: false,
+                    },
+                )?;
+            } else {
+                let safety = state.as_ref().map(|state| {
+                    let mut controller = SafeRuntimeRouteController::default();
+                    controller.safety_guard.config = network_config.safety.clone();
+                    controller.safety_guard.evaluate_with_route_health(
+                        now_ms,
+                        &state.as_switch_state(),
+                        selected_route.as_deref(),
+                        current_score,
+                        candidate_score,
+                        false,
+                    )
+                });
+                persist_json(
+                    self.config
+                        .persistence_root
+                        .join("advisory_route_recommendation.json"),
+                    &AdvisoryRouteRecommendation {
+                        schema_version: "network-ai-advisory-recommendation-v1".to_string(),
+                        recommendation_id: decision_id.clone(),
+                        mode: runtime_mode,
+                        current_route_id: state
+                            .as_ref()
+                            .map(|state| state.active_route_id.clone())
+                            .unwrap_or_else(|| "unknown-unconfirmed-nebula-route".to_string()),
+                        recommended_route_id: selected_route.clone(),
+                        expected_improvement_pct: if current_score > 0.0 {
+                            ((candidate_score - current_score) / current_score) * 100.0
+                        } else {
+                            0.0
+                        },
+                        confidence: selected_prediction.map(|prediction| prediction.confidence),
+                        reason: selected_prediction
+                            .map(|prediction| prediction.reason.clone())
+                            .unwrap_or_else(|| "no eligible route selected".to_string()),
+                        safety_verdict: safety
+                            .as_ref()
+                            .map(|decision| format!("{:?}", decision.verdict))
+                            .unwrap_or_else(|| "unconfirmed_current_route".to_string()),
+                        safety_allowed_if_activated: safety
+                            .as_ref()
+                            .map(|decision| decision.allowed)
+                            .unwrap_or(false),
+                        safety_reason: safety
+                            .map(|decision| decision.reason)
+                            .unwrap_or_else(|| observed.diagnostic.clone()),
+                        applied: false,
+                        operator_next_step: "Switch to active mode only after reviewing safety and Task2 trust evidence".to_string(),
+                    },
+                )?;
+            }
+
+            return Ok(Task3RuntimeStatus {
+                schema_version: STATUS_SCHEMA.to_string(),
+                config_version: network_config.config_version,
+                enabled,
+                mode: runtime_mode,
+                running: true,
+                tick_count: previous_tick_count.saturating_add(1),
+                last_tick_ms: Some(now_ms),
+                latest_mode_decision: Some(mode_decision.clone()),
+                config_error,
+                last_cycle_ms: Some(now_ms),
+                last_success_ms: Some(now_ms),
+                trust_state_available: !trust.missing,
+                candidate_count: topology.route_candidates.len(),
+                eligible_count: eligible.eligible.len(),
+                recommended_route: selected_route,
+                active_route: if observed.confirmed {
+                    state.as_ref().map(|state| state.active_route_id.clone())
+                } else {
+                    None
+                },
+                transport_apply_attempted: false,
+                last_transport_result: Some(ProductionRouteApplyResult {
+                    attempted: false,
+                    applied: false,
+                    requested_route_id: String::new(),
+                    previous_route_id: state
+                        .as_ref()
+                        .map(|state| state.active_route_id.clone())
+                        .unwrap_or_default(),
+                    observed_route_id: if observed.confirmed {
+                        Some(observed.route_id.clone())
+                    } else {
+                        None
+                    },
+                    rollback_attempted: false,
+                    rollback_applied: false,
+                    reason: mode_decision.reason.clone(),
+                }),
+                last_error: None,
+            });
+        }
 
         // D12 production wiring:
         // Security/policy-sensitive route actions are handed to Task2.
@@ -1178,7 +1716,8 @@ impl Task3NetworkAiRuntimeService {
             } else {
                 // D10: Safety must be evaluated BEFORE the real transport
                 // adapter is allowed to change the active Nebula route.
-                let controller = SafeRuntimeRouteController::default();
+                let mut controller = SafeRuntimeRouteController::default();
+                controller.safety_guard.config = network_config.safety.clone();
 
                 let current_score = prediction_score_or_zero(&predictions, &state.active_route_id);
                 let candidate_score = prediction_score_or_zero(&predictions, route_id);
@@ -1240,6 +1779,30 @@ impl Task3NetworkAiRuntimeService {
                 reason: "no eligible AI route recommendation".to_string(),
             }
         };
+        let mode_decision = RuntimeModeDecision {
+            schema_version: NETWORK_AI_RUNTIME_MODE_VERSION.to_string(),
+            mode: runtime_mode,
+            current_route_id: transport_result.previous_route_id.clone(),
+            selected_route_id: transport_result.requested_route_id.clone(),
+            applied: transport_result.applied,
+            reason: if transport_result.attempted {
+                format!(
+                    "active mode delegated to D10 safety and production transport: {}",
+                    transport_result.reason
+                )
+            } else {
+                format!(
+                    "active mode did not apply a route: {}",
+                    transport_result.reason
+                )
+            },
+        };
+        persist_json(
+            self.config
+                .persistence_root
+                .join("runtime_mode_decision.json"),
+            &mode_decision,
+        )?;
 
         let apply_request = RuntimeRouteApplyRequest {
             ts_ms: now_ms,
@@ -1323,7 +1886,14 @@ impl Task3NetworkAiRuntimeService {
 
         Ok(Task3RuntimeStatus {
             schema_version: STATUS_SCHEMA.to_string(),
+            config_version: network_config.config_version,
+            enabled,
+            mode: runtime_mode,
             running: true,
+            tick_count: previous_tick_count.saturating_add(1),
+            last_tick_ms: Some(now_ms),
+            latest_mode_decision: Some(mode_decision),
+            config_error,
             last_cycle_ms: Some(now_ms),
             last_success_ms: Some(now_ms),
             trust_state_available: !trust.missing,
@@ -1370,7 +1940,7 @@ impl Task3NetworkAiRuntimeService {
         })
     }
 
-    fn load_history(&self) -> Result<RouteHistoryStore> {
+    fn load_history(&self, network_config: &EngineNetworkAiConfig) -> Result<RouteHistoryStore> {
         let path = self
             .config
             .persistence_root
@@ -1378,16 +1948,28 @@ impl Task3NetworkAiRuntimeService {
         if path.exists() {
             RouteHistoryStore::load_json(path)
         } else {
-            Ok(RouteHistoryStore::new(0.5, 200))
+            Ok(RouteHistoryStore::new(
+                0.5,
+                network_config.history_window_entries,
+            ))
         }
     }
 
-    fn load_policy(&self) -> Result<ContextualBanditPolicy> {
+    fn load_policy(
+        &self,
+        network_config: &EngineNetworkAiConfig,
+    ) -> Result<ContextualBanditPolicy> {
         let path = self.config.persistence_root.join("rl_policy.json");
         if path.exists() {
-            ContextualBanditPolicy::load_json(path)
+            let mut policy = ContextualBanditPolicy::load_json(path)?;
+            policy.learning_rate = network_config.rl_learning_rate;
+            policy.epsilon = network_config.rl_epsilon;
+            Ok(policy)
         } else {
-            let policy = ContextualBanditPolicy::new(0.25, 0.0);
+            let policy = ContextualBanditPolicy::new(
+                network_config.rl_learning_rate,
+                network_config.rl_epsilon,
+            );
             policy.save_json(self.config.persistence_root.join("rl_policy.json"))?;
             Ok(policy)
         }
@@ -1510,7 +2092,23 @@ impl Task2TrustProvider for FileTask2TrustProvider {
             let value = match fs::read_to_string(&path) {
                 Ok(raw) => serde_json::from_str::<Value>(&raw)
                     .with_context(|| format!("parsing Task2 trust summary {}", path.display()))?,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    // D20 / Task2 authority boundary:
+                    //
+                    // A missing per-peer routing trust summary must never be
+                    // treated as implicit authorization merely because another
+                    // required peer still has a valid Task2 summary.
+                    //
+                    // Fail closed only for the affected peer so unrelated
+                    // trusted routes can remain usable.
+                    tracing::warn!(
+                        peer = %peer,
+                        path = %path.display(),
+                        "Task2 routing trust summary missing; quarantining peer for Task3 eligibility"
+                    );
+                    snapshot = snapshot.quarantine_peer(peer);
+                    continue;
+                }
                 Err(error) => {
                     return Err(error)
                         .with_context(|| format!("reading Task2 trust summary {}", path.display()))
@@ -2496,6 +3094,90 @@ fn persist_unconfirmed_current_observation(
     persist_json(path, &json)
 }
 
+fn persist_live_benchmark(
+    path: impl AsRef<Path>,
+    now_ms: u64,
+    mode: NetworkAiRuntimeMode,
+    observation: &NetworkObservation,
+    history: &RouteHistoryStore,
+    exact_route_confirmed: bool,
+) -> Result<()> {
+    let stats = history.stats_by_route.get(&observation.current_route_id);
+
+    // D25 benchmark latency distribution is calculated from the retained
+    // production samples for the currently observed route. Do not synthesize
+    // percentile values from the EWMA average.
+    let mut latency_samples: Vec<f64> = history
+        .entries_by_route
+        .get(&observation.current_route_id)
+        .into_iter()
+        .flatten()
+        .map(|entry| entry.rtt_ms)
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .collect();
+
+    latency_samples.sort_by(|a, b| a.total_cmp(b));
+
+    let percentile = |samples: &[f64], percentile: f64| -> Option<f64> {
+        if samples.is_empty() {
+            return None;
+        }
+
+        let rank = percentile.clamp(0.0, 1.0) * ((samples.len() - 1) as f64);
+        let lower = rank.floor() as usize;
+        let upper = rank.ceil() as usize;
+
+        if lower == upper {
+            Some(samples[lower])
+        } else {
+            let weight = rank - lower as f64;
+            Some(samples[lower] + (samples[upper] - samples[lower]) * weight)
+        }
+    };
+
+    let p50_latency_ms = percentile(&latency_samples, 0.50);
+    let p95_latency_ms = percentile(&latency_samples, 0.95);
+    let p99_latency_ms = percentile(&latency_samples, 0.99);
+
+    persist_json(
+        path,
+        &serde_json::json!({
+            "schema_version": "network-ai-live-benchmark-v1",
+            "ts_ms": now_ms,
+            "mode": mode,
+            "source": "production runtime telemetry and route history",
+            "synthetic": false,
+            "route_id": observation.current_route_id,
+            "exact_route_confirmed": exact_route_confirmed,
+            "sample_count": stats.map(|stats| stats.sample_count).unwrap_or(0),
+            "latency_percentile_sample_count": latency_samples.len(),
+            "average_latency_ms": stats.map(|stats| stats.ewma_latency_ms).unwrap_or(observation.rtt_ms),
+            "p50_latency_ms": p50_latency_ms,
+            "p95_latency_ms": p95_latency_ms,
+            "p99_latency_ms": p99_latency_ms,
+            "packet_loss_pct": stats.map(|stats| stats.ewma_loss_pct).unwrap_or(observation.packet_loss_pct),
+            "throughput_mbps": stats.map(|stats| stats.ewma_throughput_mbps).unwrap_or(observation.throughput_mbps),
+            "route_switch_count": history
+                .entries_by_route
+                .values()
+                .flatten()
+                .filter(|entry| entry.switched_route)
+                .count(),
+            "failed_route_count": history
+                .entries_by_route
+                .values()
+                .flatten()
+                .filter(|entry| !entry.route_available || !entry.route_healthy)
+                .count(),
+            "status": if exact_route_confirmed {
+                "live production benchmark evidence captured"
+            } else {
+                "PENDING - D3/D11 dependency: exact active Nebula route remains unconfirmed"
+            }
+        }),
+    )
+}
+
 #[cfg(test)]
 fn transport_route_id(local_node: &str, iface: &str, destination: &str) -> String {
     format!(
@@ -2531,8 +3213,10 @@ fn latest_task1_route_signal(now_ms: u64) -> Option<Task1RouteSignal> {
 
     Some(Task1RouteSignal {
         source_path: full_ml_alerts_path(state_root).display().to_string(),
+        run_id: Some(format!("full-ml-alert-{}", alert.ts)),
         node: alert.node,
         recommendation_count: 1,
+        recommendation_ids: vec![format!("full-ml-alert-{}", alert.ts)],
         max_anomaly_score: Some(alert.score),
         max_model_confidence: Some(alert.model_confidence),
         max_advisory_confidence: Some(alert.advisory_confidence.value),
@@ -2596,6 +3280,13 @@ fn summary_from_value(peer: &str, value: &Value) -> Result<Task2RoutingTrustSumm
             .get("updated_at_ms")
             .and_then(Value::as_u64)
             .ok_or_else(|| anyhow!("Task2 summary missing updated_at_ms"))?,
+        sources: serde_json::from_value(
+            value
+                .get("sources")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+        )
+        .unwrap_or_else(|_| Task2TrustStateSources::default()),
     })
 }
 
@@ -3729,6 +4420,31 @@ mod tests {
         transport: Arc<CountingTransport>,
         observed_confirmed: bool,
     ) -> Task3NetworkAiRuntimeService {
+        service_with_topology_and_mode(
+            root,
+            topo,
+            observed,
+            trust,
+            transport,
+            observed_confirmed,
+            NetworkAiRuntimeMode::Active,
+        )
+    }
+
+    fn service_with_topology_and_mode(
+        root: PathBuf,
+        topo: ProductionTopology,
+        observed: String,
+        trust: TrustStateSnapshot,
+        transport: Arc<CountingTransport>,
+        observed_confirmed: bool,
+        mode: NetworkAiRuntimeMode,
+    ) -> Task3NetworkAiRuntimeService {
+        let config_path = root.join("config").join("network_ai.json");
+        let mut network_ai_config = EngineNetworkAiConfig::default();
+        network_ai_config.mode = mode;
+        persist_json(&config_path, &network_ai_config).unwrap();
+
         Task3NetworkAiRuntimeService::new(
             Task3NetworkAiConfig {
                 enabled: true,
@@ -3736,6 +4452,9 @@ mod tests {
                 persistence_root: root,
                 nebula_base_dir: PathBuf::new(),
                 task2_trust_root: PathBuf::new(),
+                network_ai_config_path: config_path,
+                network_ai_config,
+                config_error: None,
                 allow_transport_apply: true,
             },
             Arc::new(StaticTelemetry),
@@ -3749,6 +4468,90 @@ mod tests {
             Arc::new(EmptyRelayHealth),
             Arc::new(NoopRelayControl),
         )
+    }
+
+    #[tokio::test]
+    async fn shadow_mode_persists_decision_without_transport_apply() {
+        let transport = Arc::new(CountingTransport {
+            calls: AtomicUsize::new(0),
+            applied: true,
+        });
+        let root = temp_root("shadow-no-apply");
+        let topo = topology();
+        let observed = topo
+            .transport_routes
+            .iter()
+            .find(|(_, iface)| iface.as_str() == "if0")
+            .map(|(route, _)| route.clone())
+            .unwrap();
+        let status = service_with_topology_and_mode(
+            root.clone(),
+            topo,
+            observed,
+            TrustStateSnapshot::new("task2")
+                .trust_peer("local")
+                .trust_peer("peer"),
+            transport.clone(),
+            true,
+            NetworkAiRuntimeMode::Shadow,
+        )
+        .run_cycle()
+        .await
+        .unwrap();
+
+        assert_eq!(status.mode, NetworkAiRuntimeMode::Shadow);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+        assert!(!status.transport_apply_attempted);
+        assert!(root.join("shadow_route_decision.json").exists());
+    }
+
+    #[tokio::test]
+    async fn invalid_config_falls_back_to_shadow_without_transport_apply() {
+        let transport = Arc::new(CountingTransport {
+            calls: AtomicUsize::new(0),
+            applied: true,
+        });
+        let root = temp_root("invalid-config-shadow");
+        let config_path = root.join("config").join("network_ai.json");
+        fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        fs::write(&config_path, "{not-json").unwrap();
+
+        let service = Task3NetworkAiRuntimeService::new(
+            Task3NetworkAiConfig {
+                enabled: true,
+                interval: Duration::from_secs(60),
+                persistence_root: root.clone(),
+                nebula_base_dir: PathBuf::new(),
+                task2_trust_root: PathBuf::new(),
+                network_ai_config_path: config_path,
+                network_ai_config: EngineNetworkAiConfig::default(),
+                config_error: None,
+                allow_transport_apply: true,
+            },
+            Arc::new(StaticTelemetry),
+            Arc::new(StaticTopology {
+                topology: topology(),
+            }),
+            Arc::new(StaticTrust {
+                trust: TrustStateSnapshot::new("task2")
+                    .trust_peer("local")
+                    .trust_peer("peer"),
+            }),
+            Arc::new(StaticObservation {
+                route_id: transport_route_id("local", "if0", "peer"),
+                confirmed: true,
+            }),
+            transport.clone(),
+            Arc::new(EmptyRelayHealth),
+            Arc::new(NoopRelayControl),
+        );
+
+        let status = service.run_cycle().await.unwrap();
+
+        assert_eq!(status.mode, NetworkAiRuntimeMode::Shadow);
+        assert!(status.config_error.is_some());
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+        assert!(!status.transport_apply_attempted);
     }
 
     #[tokio::test]

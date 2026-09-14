@@ -682,11 +682,11 @@ Active   = safe eligible route apply with guard
 
 ### Acceptance
 
-- default mode shadow ho
-- config se mode change ho
-- active mode safety proof ke bina enable na ho
-- terminal/API me current mode visible ho
-- shadow mode route change apply na kare
+- [x] default mode shadow ho
+- [x] runtime `--mode shadow|advisory|active` se mode change ho
+- [x] active mode existing D10/D11 safety path ke bina apply na kare
+- [x] terminal aur `runtime_mode_decision.json` me current mode visible ho
+- [x] shadow/advisory route change apply na kare
 
 ---
 
@@ -719,10 +719,10 @@ config/network_ai.example.json
 
 ### Acceptance
 
-- config file load ho
-- invalid config safe error de
-- config version visible ho
-- admin values decision output me traceable hon
+- [x] `config/network_ai.example.json` load ho
+- [x] invalid config safe error de
+- [x] config version visible ho
+- [x] effective admin values runtime evidence me traceable hon
 
 ---
 
@@ -734,10 +734,10 @@ Optimizer Guardian runtime ke sath integrate ho.
 
 ### Work
 
-- runtime module add karna
-- periodic engine tick
-- current decision update
-- start/stop mode support
+- [x] Guardian-facing runtime module add karna
+- [x] configured periodic bounded engine ticks
+- [x] current mode decision/runtime state update
+- [x] start/stop support + restart-safe `runtime.json`
 - no secret leakage
 - restart-safe load
 
@@ -784,11 +784,11 @@ src/api/routes.rs
 
 ### Acceptance
 
-- authenticated endpoints hon
-- status me mode/model/version ho
-- candidates me eligibility reason ho
-- decision endpoint me selected route + reason ho
-- no secret/model key leakage ho
+- [x] authenticated endpoints hon
+- [x] status me mode/model/version ho
+- [x] candidates me eligibility reason ho
+- [x] decision endpoint me selected route + reason ho
+- [x] no secret/model key leakage ho
 
 ---
 
@@ -813,10 +813,10 @@ src/network_ai/task1_bridge.rs
 
 ### Acceptance
 
-- Task1 signal optional ho
-- missing Task1 signal route optimizer ko crash na kare
-- Task1 metadata decision audit me traceable ho
-- Task3 anomaly engine ka duplicate version na banaye
+- [x] Task1 signal optional ho
+- [x] missing/malformed Task1 signal route optimizer ko crash na kare
+- [x] Task1 metadata/run/recommendation trace decision audit me ho
+- [x] Task3 anomaly engine ka duplicate version na banaye
 
 ---
 
@@ -843,10 +843,10 @@ src/network_ai/virtual_shift_bridge.rs
 
 ### Acceptance
 
-- Task3 trust state modify na kare
-- latest authoritative state consume kare
-- stale/missing state safe fallback kare
-- Task2 handoff reason saved ho
+- [x] Task3 trust state modify na kare
+- [x] latest authoritative routing summary, active-policy/apply/identity source traces consume kare
+- [x] stale/missing/malformed state safe fallback kare
+- [x] sensitive-route Task2 handoff reason saved ho (existing D12 handoff service)
 
 ---
 
@@ -871,9 +871,9 @@ First demo me AI route choose kare but apply na kare.
 
 ### Acceptance
 
-- terminal readable table ho
-- decision JSON simple ho
-- senior ko samajh aaye AI ne route kyun choose kiya
+- [x] terminal readable table ho
+- [x] `shadow_route_decision.json` simple ho
+- [x] senior ko selected route, metrics, confidence, rejection aur reason samajh aaye
 
 ---
 
@@ -894,9 +894,9 @@ AI recommendation generate kare, but route apply na ho.
 
 ### Acceptance
 
-- advisory decision saved ho
-- no active route change
-- operator/admin ko clear recommendation mile
+- [x] advisory decision saved ho
+- [x] no active route change
+- [x] operator/admin ko route, improvement, confidence aur read-only safety verdict clear mile
 
 ---
 

@@ -1,6 +1,6 @@
 //! Task 3 Deliverable 6: reward function for route learning.
 
-use super::predictor::RoutePrediction;
+use super::{config::NetworkAiRewardWeights, predictor::RoutePrediction};
 use serde::{Deserialize, Serialize};
 
 pub const NETWORK_AI_REWARD_VERSION: &str = "route-reward-v1";
@@ -43,17 +43,44 @@ impl RouteReward {
         switched_route: bool,
         route_failed: bool,
     ) -> Self {
-        let latency_reward = (100.0 - prediction.expected_latency_ms.min(100.0)).max(0.0) * 0.35;
-        let throughput_reward = prediction.expected_throughput_mbps.min(100.0) * 0.30;
-        let packet_loss_penalty = prediction.expected_loss_pct.min(100.0) * 0.25;
+        Self::from_prediction_with_weights(
+            prediction,
+            hop_count,
+            switched_route,
+            route_failed,
+            &NetworkAiRewardWeights::default(),
+        )
+    }
+
+    pub fn from_prediction_with_weights(
+        prediction: &RoutePrediction,
+        hop_count: u8,
+        switched_route: bool,
+        route_failed: bool,
+        weights: &NetworkAiRewardWeights,
+    ) -> Self {
+        let latency_reward = (100.0 - prediction.expected_latency_ms.min(100.0)).max(0.0)
+            * weights.latency_reward_weight;
+        let throughput_reward =
+            prediction.expected_throughput_mbps.min(100.0) * weights.throughput_reward_weight;
+        let packet_loss_penalty =
+            prediction.expected_loss_pct.min(100.0) * weights.packet_loss_penalty_weight;
         let congestion_penalty = if prediction.expected_throughput_mbps < 10.0 {
-            8.0
+            weights.congestion_penalty
         } else {
             0.0
         };
-        let hop_penalty = hop_count as f64 * 1.5;
-        let route_switch_penalty = if switched_route { 2.0 } else { 0.0 };
-        let failure_penalty = if route_failed { 50.0 } else { 0.0 };
+        let hop_penalty = hop_count as f64 * weights.hop_penalty_weight;
+        let route_switch_penalty = if switched_route {
+            weights.route_switch_penalty
+        } else {
+            0.0
+        };
+        let failure_penalty = if route_failed {
+            weights.failure_penalty
+        } else {
+            0.0
+        };
 
         let components = RewardComponents {
             latency_reward,

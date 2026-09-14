@@ -306,6 +306,42 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         .route("/api/v1/threat/config", get(handlers::threat::get_config))
         .route("/api/v1/threat/config", post(handlers::threat::set_config))
         .route("/api/v1/threat/start", post(handlers::threat::start))
+        .route(
+            "/api/v1/network-ai/status",
+            get(handlers::network_ai::status),
+        )
+        .route(
+            "/api/v1/network-ai/candidates",
+            get(handlers::network_ai::candidates),
+        )
+        .route(
+            "/api/v1/network-ai/decision/current",
+            get(handlers::network_ai::current_decision),
+        )
+        .route(
+            "/api/v1/network-ai/history",
+            get(handlers::network_ai::history),
+        )
+        .route(
+            "/api/v1/network-ai/rewards",
+            get(handlers::network_ai::rewards),
+        )
+        .route(
+            "/api/v1/network-ai/config",
+            get(handlers::network_ai::get_config),
+        )
+        .route(
+            "/api/v1/network-ai/recommendation",
+            get(handlers::network_ai::recommendation),
+        )
+        .route(
+            "/api/v1/network-ai/safety",
+            get(handlers::network_ai::safety),
+        )
+        .route(
+            "/api/v1/network-ai/mode",
+            post(handlers::network_ai::set_mode),
+        )
         .merge(routes::crl_router())
         .merge(routes::advisory_router())
         .merge(routes::task1_ai_router())

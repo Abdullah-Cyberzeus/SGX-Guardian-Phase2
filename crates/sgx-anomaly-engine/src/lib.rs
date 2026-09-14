@@ -5,6 +5,7 @@
 //! See Part B of the plan for the architecture.
 
 pub mod alert;
+pub mod application_host;
 pub mod baseline;
 pub mod edge_acceptance;
 pub mod engine;

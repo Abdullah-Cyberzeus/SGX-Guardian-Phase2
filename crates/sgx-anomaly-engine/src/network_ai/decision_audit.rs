@@ -327,7 +327,7 @@ mod tests {
         assert_eq!(current.decision_id, "decision-1");
         assert_eq!(
             current.rejected_candidates[0].rejection_reason,
-            "QuarantinedPeer"
+            "eligibility_rejected: QuarantinedPeer"
         );
         assert_eq!(
             fs::read_to_string(&paths.decisions_jsonl)

@@ -132,8 +132,10 @@ mod tests {
         });
         let signal = Task1RouteSignal {
             source_path: "test".to_string(),
+            run_id: Some("run-test".to_string()),
             node: "nodeA".to_string(),
             recommendation_count: 1,
+            recommendation_ids: vec!["rec-test".to_string()],
             max_anomaly_score: Some(0.8),
             max_model_confidence: None,
             max_advisory_confidence: None,

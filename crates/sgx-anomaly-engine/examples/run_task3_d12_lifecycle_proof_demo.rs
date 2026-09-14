@@ -4,11 +4,15 @@
 
 use anyhow::Result;
 use sgx_anomaly_engine::network_ai::{
+    persist_decision_audit, DecisionAuditPaths, DecisionAuditRecord, DecisionEvidenceLinks,
+    RouteCandidateInventory, RouteHistoryStore, RoutePredictor, RouteReward, RouteSwitchState,
+    SimpleRouteQualityPredictor,
+};
+use sgx_anomaly_engine::network_ai::{
     read_task2_trust_summary, write_post_task2_decision_audit, EligibilityFilter,
     RuntimeRouteApplyRequest, RuntimeRouteState, SafeRuntimeRouteController,
     SensitiveRouteHandoffService, SensitiveRouteReason, Task3PostTask2DecisionAudit, TrafficClass,
 };
-use sgx_anomaly_engine::network_ai::{RouteCandidateInventory, RouteSwitchState};
 use sgx_anomaly_engine::virtual_shift::{
     ActiveVirtualShiftPolicy, ApprovalService, AttestationState, MemberPolicyApplyResult,
     PolicyApplyStatus, ReviewQueue, RoutingTrustSummaryWriter, VirtualIdentityState,
@@ -177,6 +181,55 @@ fn run_branch(
         branch_dir.join("route_transition_audit.jsonl"),
         branch_dir.join("route_outcomes.jsonl"),
     )?;
+    // D14 audit is written after the fresh Task2 trust read. It records the
+    // same handoff/review IDs and whether this later Task3 cycle applied it.
+    let history = RouteHistoryStore::new(0.5, 16);
+    let predictions = SimpleRouteQualityPredictor::default().predict(&eligible.eligible, &history);
+    let rewards = predictions
+        .predictions
+        .iter()
+        .map(|prediction| {
+            RouteReward::from_prediction_with_weights(
+                prediction,
+                1,
+                true,
+                false,
+                &Default::default(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut d14 = DecisionAuditRecord::from_engine_outputs(
+        format!("task3-d24-{branch}-{}", timestamp + 21),
+        timestamp + 21,
+        &eligible,
+        &predictions,
+        &rewards,
+        vec![],
+        None,
+        Some(latest_summary.clone()),
+        DecisionEvidenceLinks {
+            route_history_path: branch_dir
+                .join("current_route_state.json")
+                .display()
+                .to_string(),
+            observed_outcomes_path: branch_dir
+                .join("route_outcomes.jsonl")
+                .display()
+                .to_string(),
+            rewards_path: branch_dir.join("rewards.jsonl").display().to_string(),
+            degradation_events_path: "not-applicable-d24".to_string(),
+            task1_source_path: None,
+            task2_trust_source_path: Some(summary_path.display().to_string()),
+            task2_trust_version: Some(latest_summary.to_trust_snapshot().version),
+        },
+    );
+    d14.selected_route_id = Some(route_id.to_string());
+    d14.selected_reason = format!(
+        "D24 handoff_plan_id={}; Task2 review_id={} status={:?}; fresh Task3 eligibility={} applied={}",
+        handoff.plan_id, review.recommendation_id, review.status,
+        requested_is_eligible, runtime.audit.apply_result.applied,
+    );
+    persist_decision_audit(&d14, &DecisionAuditPaths::under(&branch_dir))?;
     let decision = Task3PostTask2DecisionAudit {
         schema_version: "task3-d12-lifecycle-proof-v1".to_string(),
         handoff_plan_id: handoff.plan_id,
