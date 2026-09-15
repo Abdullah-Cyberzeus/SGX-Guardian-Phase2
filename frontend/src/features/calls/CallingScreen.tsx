@@ -206,9 +206,9 @@ export function CallingScreen() {
       <ControlButton label={testingAudio ? "Testing…" : "Audio test"} active={testingAudio} disabled={!connected || !supportsAudio} onClick={testAudio}>
         <AudioLines size={22} />
       </ControlButton>
-      <ControlButton label={!supportsVideo ? "Audio only" : cameraEnabled ? "Camera off" : "Camera on"} active={supportsVideo && !cameraEnabled} disabled={!supportsVideo} onClick={toggleCamera}>
-        {supportsVideo && cameraEnabled ? <VideoIcon size={22} /> : <VideoOff size={22} />}
-      </ControlButton>
+      {supportsVideo && <ControlButton label={cameraEnabled ? "Camera off" : "Camera on"} active={!cameraEnabled} onClick={toggleCamera}>
+        {cameraEnabled ? <VideoIcon size={22} /> : <VideoOff size={22} />}
+      </ControlButton>}
       {supportsVideo && <ControlButton label="Share screen" disabled={!connected} onClick={() => { void shareScreen().catch(() => undefined); }}>
         <MonitorUp size={22} />
       </ControlButton>}

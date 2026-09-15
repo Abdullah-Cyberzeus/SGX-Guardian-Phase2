@@ -172,7 +172,9 @@ export function SC03DIDStatus() {
   const navigate = useNavigate();
   const { contactNameForDid } = useContactNames();
   const [deactivating, setDeactivating] = useState(false);
+  const [reactivating, setReactivating] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showReactivateConfirm, setShowReactivateConfirm] = useState(false);
 
   const { data: didStatus, loading: statusLoading, error: statusError, refetch: refetchStatus } = useDIDStatus();
   const { data: resolveData, loading: resolveLoading } = useDIDResolve();
@@ -309,6 +311,26 @@ export function SC03DIDStatus() {
     } finally {
       setDeactivating(false);
       setShowConfirm(false);
+    }
+  };
+
+  const handleReactivate = async () => {
+    setReactivating(true);
+    try {
+      const result = await didService.reactivate(true);
+      if (result.ok) {
+        toast.success("DID reactivated", { description: result.message });
+        await Promise.all([refetchStatus(), refetchDoc(), refetchPeers()]);
+      } else {
+        toast.error("Reactivation failed", { description: result.message });
+      }
+    } catch (err) {
+      toast.error("Failed to reactivate DID", {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setReactivating(false);
+      setShowReactivateConfirm(false);
     }
   };
 
@@ -702,6 +724,78 @@ export function SC03DIDStatus() {
             <ShieldOff size={16} />
             Deactivate DID
           </button>
+        )}
+
+        {/* Reactivate Section */}
+        {didStatus && !isActive && !showReactivateConfirm && (
+          <button
+            onClick={() => setShowReactivateConfirm(true)}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg"
+            style={{
+              backgroundColor: "color-mix(in srgb, var(--chart-2) 12%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--chart-2) 30%, transparent)",
+              color: "var(--chart-2)",
+              cursor: "pointer",
+              fontFamily: "Inter, sans-serif",
+              fontSize: "var(--text-sm)",
+              fontWeight: "var(--font-weight-semibold)",
+            }}
+          >
+            <ShieldCheck size={16} />
+            Reactivate DID
+          </button>
+        )}
+
+        {showReactivateConfirm && (
+          <div
+            className="rounded-lg border p-4 flex flex-col gap-3"
+            style={{
+              backgroundColor: "color-mix(in srgb, var(--chart-2) 8%, transparent)",
+              borderColor: "color-mix(in srgb, var(--chart-2) 30%, transparent)",
+            }}
+          >
+            <div className="flex items-start gap-2">
+              <ShieldCheck size={16} style={{ color: "var(--chart-2)", flexShrink: 0, marginTop: "2px" }} />
+              <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--chart-2)", lineHeight: 1.5 }}>
+                This will mark this Guardian's DID as active again and refresh the local DID Document status.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowReactivateConfirm(false)}
+                className="flex-1 py-2 rounded-lg"
+                style={{
+                  backgroundColor: "var(--muted)",
+                  border: "1px solid var(--border)",
+                  color: "var(--foreground)",
+                  cursor: "pointer",
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "var(--text-sm)",
+                  fontWeight: "var(--font-weight-medium)",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReactivate}
+                disabled={reactivating}
+                className="flex-1 py-2 rounded-lg flex items-center justify-center gap-2"
+                style={{
+                  backgroundColor: "var(--chart-2)",
+                  border: "none",
+                  color: "white",
+                  cursor: reactivating ? "not-allowed" : "pointer",
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "var(--text-sm)",
+                  fontWeight: "var(--font-weight-semibold)",
+                  opacity: reactivating ? 0.7 : 1,
+                }}
+              >
+                {reactivating && <Loader2 size={14} className="animate-spin" />}
+                {reactivating ? "Reactivating..." : "Confirm Reactivate"}
+              </button>
+            </div>
+          </div>
         )}
 
         {showConfirm && (

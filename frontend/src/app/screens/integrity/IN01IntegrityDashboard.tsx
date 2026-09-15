@@ -350,6 +350,9 @@ function PCRRegisterCard({
 
 // Verification History Card
 function VerificationCard({ result }: { result: PCRVerificationResult }) {
+  const isBaselineEvent = result.eventType === "baseline";
+  const resultPassed = result.status === "pass" || result.status === "passed";
+  const baselineAction = result.action === "updated" ? "Updated" : "Created";
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     return date.toLocaleDateString("en-US", {
@@ -371,7 +374,9 @@ function VerificationCard({ result }: { result: PCRVerificationResult }) {
     >
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          {result.status === "pass" ? (
+          {isBaselineEvent ? (
+            <FileCheck size={20} style={{ color: "var(--primary)" }} />
+          ) : resultPassed ? (
             <ShieldCheck size={20} style={{ color: "var(--chart-2)" }} />
           ) : (
             <ShieldX size={20} style={{ color: "var(--destructive)" }} />
@@ -385,7 +390,7 @@ function VerificationCard({ result }: { result: PCRVerificationResult }) {
                 color: "var(--foreground)",
               }}
             >
-              Integrity Check
+              {isBaselineEvent ? `Baseline ${baselineAction}` : "Integrity Check"}
             </p>
             <p
               style={{
@@ -398,7 +403,7 @@ function VerificationCard({ result }: { result: PCRVerificationResult }) {
             </p>
           </div>
         </div>
-        <StatusBadge status={result.status} />
+        <StatusBadge status={isBaselineEvent ? "pass" : result.status} />
       </div>
 
       <div
@@ -412,21 +417,44 @@ function VerificationCard({ result }: { result: PCRVerificationResult }) {
             color: "var(--muted-foreground)",
           }}
         >
-          PCR Verification
+          {isBaselineEvent ? "Baseline Snapshot" : "PCR Verification"}
         </span>
         <span
           style={{
             fontFamily: "Inter, sans-serif",
             fontSize: "var(--text-sm)",
             fontWeight: "var(--font-weight-semibold)",
-            color: result.status === "pass" ? "var(--chart-2)" : "var(--destructive)",
+            color: isBaselineEvent || resultPassed ? "var(--chart-2)" : "var(--destructive)",
           }}
         >
-          {result.matchCount != null && result.totalCount != null
+          {isBaselineEvent
+            ? `${result.registers ?? result.baselineRegisters?.length ?? 0} PCRs stored`
+            : result.matchCount != null && result.totalCount != null
             ? `${result.matchCount}/${result.totalCount} Match`
             : result.reason || (result.status === "pass" ? "Verified" : "Verification failed")}
         </span>
       </div>
+
+      {isBaselineEvent && result.hash && (
+        <div className="mt-3 flex flex-col gap-2">
+          <HashDisplay hash={result.hash} label="Baseline Hash" />
+          {result.previousHash && result.previousHash !== result.hash && (
+            <HashDisplay hash={result.previousHash} label="Previous Hash" />
+          )}
+          <div
+            className="flex flex-wrap gap-2"
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: "var(--text-xs)",
+              color: "var(--muted-foreground)",
+            }}
+          >
+            {result.node && <span>Node: {result.node}</span>}
+            {result.keyVersion != null && <span>DKP v{result.keyVersion}</span>}
+            {result.signingBackend && <span>{result.signingBackend}</span>}
+          </div>
+        </div>
+      )}
 
       {(result.nonceValid != null || result.signatureValid != null || result.pcrMatch != null || result.bootChainOk != null || result.freshnessOk != null) && (
         <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">

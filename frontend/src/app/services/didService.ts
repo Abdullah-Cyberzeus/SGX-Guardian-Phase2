@@ -129,6 +129,10 @@ export const didService = {
   deactivate: (reason?: string, confirm = false) =>
     api.post<DIDDeactivateResponse>('/did/deactivate', { reason, confirm }),
 
+  // POST /api/v1/did/reactivate
+  reactivate: (confirm = false) =>
+    api.post<DIDDeactivateResponse>('/did/reactivate', { confirm }),
+
   // GET /api/v1/did/document
   getDocument: () => api.get<DIDDocumentSummary>('/did/document'),
 

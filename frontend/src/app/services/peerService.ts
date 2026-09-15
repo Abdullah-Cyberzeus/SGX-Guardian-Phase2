@@ -13,6 +13,7 @@ export function formatTimeAgo(isoDate: string): string {
 export interface Peer {
   id: string;
   peerId: string;
+  nodeId?: string;
   displayName: string;
   fullName?: string;
   deviceName: string;
@@ -47,6 +48,7 @@ export interface AttestResponse {
 interface PeersResponse {
   peers: Array<{
     peerId: string;
+    nodeId?: string;
     displayName?: string;
     fullName?: string;
     deviceName?: string;
@@ -106,6 +108,7 @@ function normalizePeers(peers: PeersResponse['peers']): Peer[] {
     return {
       id: `peer_${String(i + 1).padStart(3, '0')}`,
       peerId: p.peerId,
+      nodeId: p.nodeId,
       displayName: browserName || p.displayName || deviceName || p.peerId,
       fullName: p.fullName || browserName,
       deviceName,

@@ -82,6 +82,65 @@ impl TpmDkpManager {
         })
     }
 
+    /// Load the currently active TPM DKP without provisioning, repairing, or
+    /// rotating anything. Unlike `init`, missing metadata or a missing
+    /// persistent handle is always an error here — never a trigger to
+    /// provision a new signing key. Callers that must sign with an
+    /// already-provisioned identity (e.g. baseline creation) should use this
+    /// instead of `init`.
+    pub fn load_active(cfg: &TpmConfig, base_path: &str) -> Result<Self, TpmError> {
+        if !should_attempt(cfg) {
+            return Err(TpmError::NotAvailable(format!(
+                "TPM device {} is not present",
+                cfg.device
+            )));
+        }
+
+        let metadata_path = format!("{}/keys/dkp_metadata.json", base_path);
+        let public_key_path = format!("{}/keys/dkp_pub.der", base_path);
+        let cli = Tpm2Cli::new(cfg.clone());
+        if !cli.available() {
+            return Err(TpmError::NotAvailable(format!(
+                "cannot reach TPM on {}",
+                cfg.device
+            )));
+        }
+
+        let history = DkpKeyHistory::load(&metadata_path).map_err(|e| {
+            TpmError::Key(format!(
+                "No active TPM DKP metadata at {}: {}",
+                metadata_path, e
+            ))
+        })?;
+        let active = history
+            .active_key()
+            .ok_or_else(|| TpmError::Key("TPM DKP metadata has no active key".into()))?;
+        let handle = parse_handle(&active.key_id).ok_or_else(|| {
+            TpmError::Key(format!(
+                "TPM DKP metadata has an unparsable handle: {}",
+                active.key_id
+            ))
+        })?;
+        if !cli.handle_exists(handle) {
+            return Err(TpmError::Key(format!(
+                "TPM DKP metadata points to {}, but that persistent handle is missing",
+                active.key_id
+            )));
+        }
+
+        cli.readpublic_der(handle, &public_key_path)?;
+        info!(
+            "Active TPM DKP confirmed (v{}) at {}",
+            active.version, active.key_id
+        );
+        Ok(Self {
+            history,
+            metadata_path,
+            public_key_path,
+            config: cfg.clone(),
+        })
+    }
+
     pub fn active_version(&self) -> u32 {
         self.history
             .active_key()

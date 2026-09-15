@@ -4,7 +4,8 @@ import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import type { NotificationItem } from "../../../api/notifications";
 import { PageHeader } from "../../components/PageHeader";
-import { notificationIcon, notificationRoute, relativeTime, severityColor } from "../../components/notifications/notificationVisuals";
+import { notificationBody, notificationIcon, notificationRoute, relativeTime, severityColor } from "../../components/notifications/notificationVisuals";
+import { useContactNames } from "../../contexts/ContactNameContext";
 import { useNotifications } from "../../contexts/NotificationContext";
 
 type Filter = "all" | "unread" | "read";
@@ -12,6 +13,7 @@ type Filter = "all" | "unread" | "read";
 export function NT01Notifications() {
   const navigate = useNavigate();
   const { items, unreadCount, connected, refresh, markRead, markAllRead } = useNotifications();
+  const { displayForDid } = useContactNames();
   const [filter, setFilter] = useState<Filter>("all");
   const [refreshing, setRefreshing] = useState(false);
   const pageSize = 10;
@@ -94,6 +96,7 @@ export function NT01Notifications() {
               const Icon = notificationIcon(item.kind);
               const color = severityColor(item.severity);
               const route = notificationRoute(item.kind, item.refId);
+              const body = notificationBody(item.kind, item.body, item.actorDid, displayForDid);
               return (
                 <button key={item.id} onClick={() => void openNotification(item)} className="relative w-full flex items-start gap-3 p-4 md:p-5 text-left transition-colors hover:bg-muted/40" style={{ border: 0, borderBottom: index < visibleItems.length - 1 ? "1px solid var(--border)" : undefined, background: item.read ? "transparent" : "color-mix(in srgb, var(--primary) 6%, transparent)", cursor: "pointer" }}>
                   <div className="shrink-0 w-10 h-10 rounded-xl grid place-items-center" style={{ color, background: `color-mix(in srgb, ${color} 16%, transparent)` }}><Icon size={19} /></div>
@@ -102,7 +105,7 @@ export function NT01Notifications() {
                       <strong className="text-sm" style={{ color: "var(--foreground)" }}>{item.title}</strong>
                       <span className="text-[10px] uppercase rounded-full px-2 py-0.5" style={{ color, background: `color-mix(in srgb, ${color} 12%, transparent)` }}>{item.severity}</span>
                     </div>
-                    {item.body && <p className="text-sm mt-1 leading-relaxed" style={{ color: "var(--muted-foreground)" }}>{item.body}</p>}
+                    {body && <p className="text-sm mt-1 leading-relaxed" style={{ color: "var(--muted-foreground)" }}>{body}</p>}
                     <p className="text-xs mt-2" style={{ color: "var(--muted-foreground)" }}>{relativeTime(item.createdAt)} · {new Date(item.createdAt).toLocaleString()}{route ? " · Open details" : ""}</p>
                   </div>
                   {!item.read && <span className="absolute top-5 right-4 w-2 h-2 rounded-full" style={{ background: "var(--primary)" }} aria-label="Unread" />}

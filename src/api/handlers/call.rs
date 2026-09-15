@@ -176,6 +176,20 @@ async fn trusted_call_target(
     })
 }
 
+fn ensure_local_guardian_did_active() -> Result<(), ErrorResponse> {
+    let did_path = std::env::var("SGX_GUARDIAN_DID_PATH")
+        .unwrap_or_else(|_| crate::did::DEFAULT_DID_PATH.to_string());
+    let record = crate::did::DidRecord::load(&did_path).map_err(|error| ErrorResponse {
+        error: format!("Failed to load local DID status: {error}"),
+    })?;
+    if record.deactivated_at.is_some() {
+        return Err(ErrorResponse {
+            error: "DID is deactivated. Reactivate this Guardian DID before starting calls.".into(),
+        });
+    }
+    Ok(())
+}
+
 pub(crate) fn browser_call_actor_id(
     state: &AppState,
     session: &Option<Extension<AuthenticatedSession>>,
@@ -356,6 +370,11 @@ pub async fn initiate_browser_call(
             .into_response();
     }
     let actor_id = browser_call_actor_id(&state, &session);
+    if actor_id == state.node_id {
+        if let Err(error) = ensure_local_guardian_did_active() {
+            return (StatusCode::FORBIDDEN, Json(error)).into_response();
+        }
+    }
     if request
         .target_peer_id
         .trim()
@@ -494,6 +513,11 @@ pub async fn accept_browser_call(
     Json(request): Json<BrowserAcceptCallRequest>,
 ) -> impl IntoResponse {
     let actor_id = browser_call_actor_id(&state, &session);
+    if actor_id == state.node_id {
+        if let Err(error) = ensure_local_guardian_did_active() {
+            return (StatusCode::FORBIDDEN, Json(error)).into_response();
+        }
+    }
     let virtual_id = match local_virtual_id_for_actor(&state, &actor_id) {
         Ok(value) => value,
         Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, Json(error)).into_response(),
@@ -1345,6 +1369,15 @@ pub async fn initiate_call(
         )
             .into_response();
     }
+    if req
+        .initiator_device_id
+        .trim()
+        .eq_ignore_ascii_case(state.node_id.trim())
+    {
+        if let Err(error) = ensure_local_guardian_did_active() {
+            return (StatusCode::FORBIDDEN, Json(error)).into_response();
+        }
+    }
 
     // Create nonce
     let nonce = Uuid::new_v4().to_string();
@@ -1529,6 +1562,15 @@ pub async fn accept_call(
             }),
         )
             .into_response();
+    }
+    if req
+        .device_id
+        .trim()
+        .eq_ignore_ascii_case(state.node_id.trim())
+    {
+        if let Err(error) = ensure_local_guardian_did_active() {
+            return (StatusCode::FORBIDDEN, Json(error)).into_response();
+        }
     }
 
     // Create acceptance answer

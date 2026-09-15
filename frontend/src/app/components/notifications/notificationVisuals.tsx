@@ -1,9 +1,14 @@
 import { AlertTriangle, ShieldAlert, Cpu, WifiOff, MessageCircle, PhoneIncoming, UserPlus, FileText, Bell } from "lucide-react";
 import type { ComponentType } from "react";
 
+function isAlertKind(kind: string): boolean {
+  const compact = kind.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return compact.startsWith("alert") || compact === "securityalert" || compact === "threatalert" || compact === "security";
+}
+
 export function notificationIcon(kind: string): ComponentType<{ size?: number }> {
   if (kind === "AlertHigh") return ShieldAlert;
-  if (kind.startsWith("Alert")) return AlertTriangle;
+  if (isAlertKind(kind)) return AlertTriangle;
   if (kind === "DeviceDiscovered" || kind === "DevicePendingApproval") return Cpu;
   if (kind === "GuardianOffline") return WifiOff;
   if (kind === "CircleNewMessage") return MessageCircle;
@@ -37,13 +42,25 @@ export function notificationRoute(kind: string, refId?: string): string | null {
   if (kind === "CircleNewMessage") return "/chats";
   if (kind === "CircleIncomingCall") return "/calls";
   if (kind === "CircleFileShared") return "/storage";
-  if (!refId) return null;
+  if (!refId) return isAlertKind(kind) ? "/alerts" : null;
   const encodedRef = encodeURIComponent(refId);
-  if (kind.startsWith("Alert")) return `/alerts/${encodedRef}`;
+  if (isAlertKind(kind)) return `/alerts/${encodedRef}`;
   if (kind === "DeviceDiscovered" || kind === "DevicePendingApproval") return `/devices/${encodedRef}`;
   if (kind === "CircleMemberPendingApproval") return `/network/${encodedRef}/manage`;
   if (kind === "CircleMemberJoined") return `/network/${encodedRef}?tab=members`;
   return null;
+}
+
+export function notificationBody(
+  kind: string,
+  body: string,
+  actorDid: string | undefined,
+  displayForDid: (did?: string | null, fallback?: string) => string,
+): string {
+  if (kind !== "CircleNewMessage" || !actorDid) return body;
+  const fallback = body.match(/^New message from\s+(.+)$/i)?.[1]?.trim() || undefined;
+  const sender = displayForDid(actorDid, fallback);
+  return sender ? `New message from ${sender}` : body;
 }
 
 export function relativeTime(iso: string): string {

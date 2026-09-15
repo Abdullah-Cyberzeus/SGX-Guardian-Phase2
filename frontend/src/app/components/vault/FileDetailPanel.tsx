@@ -33,6 +33,7 @@ import {
 } from "../ui/alert-dialog";
 import { useVault } from "../../contexts/VaultContext";
 import { useAuth } from "../../contexts/AuthContext";
+import { useContactNames } from "../../contexts/ContactNameContext";
 import { iconForKind } from "./FileTypeIcon";
 import { FilePreviewDialog, canPreview } from "./FilePreviewDialog";
 import { formatBytes, kindLabel, type VaultFile } from "./types";
@@ -90,6 +91,7 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
     revokeFile, restoreFile, setFileExpiry, getFileHistory, getFolder, folders,
   } = useVault();
   const { session } = useAuth();
+  const { displayForDid } = useContactNames();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [revokeConfirmOpen, setRevokeConfirmOpen] = useState(false);
   const [restoring, setRestoring] = useState(false);
@@ -592,7 +594,9 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
             ) : (
               history.map((entry, index) => (
                 <div key={index} className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-xs">
-                  <span className="truncate">{entry.downloader_did}</span>
+                  <span className="truncate" title={entry.downloader_did}>
+                    {displayForDid(entry.downloader_did, entry.downloader_did)}
+                  </span>
                   <span className="flex-shrink-0 text-muted-foreground">{new Date(entry.downloaded_at).toLocaleString()}</span>
                 </div>
               ))

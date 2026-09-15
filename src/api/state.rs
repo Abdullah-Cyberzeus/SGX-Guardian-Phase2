@@ -12,6 +12,8 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
+const DEFAULT_SESSION_TTL_SECS: u64 = 8 * 60 * 60;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AuthLockoutConfig {
     pub max_failed_attempts: u32,
@@ -201,7 +203,7 @@ impl AppState {
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
                 .filter(|value| *value > 0)
-                .unwrap_or(3600),
+                .unwrap_or(DEFAULT_SESSION_TTL_SECS),
             auth_lockout: AuthLockoutConfig::from_env(),
             auth_rate_limit: AuthRateLimitConfig::from_env(),
             login_rate_limiter: Arc::new(LoginRateLimiter::default()),
@@ -310,7 +312,7 @@ impl AppState {
             chat_events: broadcast::channel(100).0,
             device_pubkey_point,
             device_did,
-            session_ttl_secs: 3600,
+            session_ttl_secs: DEFAULT_SESSION_TTL_SECS,
             auth_lockout: AuthLockoutConfig::default(),
             auth_rate_limit: AuthRateLimitConfig::default(),
             login_rate_limiter: Arc::new(LoginRateLimiter::default()),
@@ -580,6 +582,6 @@ mod tests {
             "did:guardian:other".to_string(),
             Vec::new(),
         );
-        assert_eq!(state.session_ttl_secs, 3600);
+        assert_eq!(state.session_ttl_secs, DEFAULT_SESSION_TTL_SECS);
     }
 }

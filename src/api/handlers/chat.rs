@@ -320,6 +320,11 @@ pub async fn send_message(
     }
     let sender_did = crate::api::handlers::browser_member::did_from_session(&session)
         .unwrap_or_else(|| state.device_did.clone());
+    if sender_did == state.device_did && local_guardian_did_deactivated()? {
+        return Err(ApiError::Forbidden(
+            "DID is deactivated. Reactivate this Guardian DID before sending messages.".to_string(),
+        ));
+    }
     let sender_label = resolve_actor_label(&state, &sender_did).await;
 
     // Chat attachments are Vault records uploaded before the destination is
@@ -831,6 +836,14 @@ pub async fn send_message(
     }))
 }
 
+fn local_guardian_did_deactivated() -> Result<bool, ApiError> {
+    let did_path = std::env::var("SGX_GUARDIAN_DID_PATH")
+        .unwrap_or_else(|_| crate::did::DEFAULT_DID_PATH.to_string());
+    let record = crate::did::DidRecord::load(&did_path)
+        .map_err(|error| ApiError::Internal(format!("Failed to load local DID status: {error}")))?;
+    Ok(record.deactivated_at.is_some())
+}
+
 #[derive(Deserialize)]
 pub struct TypingRequest {
     pub recipient_did: String,
@@ -853,6 +866,11 @@ pub async fn typing(
 ) -> Result<Json<TypingResponse>, ApiError> {
     let sender_did = crate::api::handlers::browser_member::did_from_session(&session)
         .unwrap_or_else(|| state.device_did.clone());
+    if sender_did == state.device_did && local_guardian_did_deactivated()? {
+        return Err(ApiError::Forbidden(
+            "DID is deactivated. Reactivate this Guardian DID before sending messages.".to_string(),
+        ));
+    }
 
     let hide_typing = match session.as_ref() {
         Some(Extension(authed)) => state

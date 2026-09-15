@@ -8,6 +8,7 @@ import { useNotifications } from "./NotificationContext";
 import { isMemberRole } from "../utils/authorization";
 import { fetchChatPeers } from "../hooks/useApiData";
 import { isWithinDnd, loadLocalNotificationPrefs, playNotificationSound, vibrateForNotification } from "../lib/notificationLocalPrefs";
+import { useContactNames } from "./ContactNameContext";
 
 export interface ChatPreview {
   text: string;
@@ -93,9 +94,22 @@ function seenKey(ownerDid: string | undefined, conversationId: string) {
   return `${ownerDid || "unknown"}::${conversationId}`;
 }
 
+function friendlyPeerFallback(peer: { displayName?: string; fullName?: string; deviceName?: string; peerId?: string; did?: string; ip?: string }) {
+  const blocked = new Set([
+    peer.did?.trim().toLowerCase(),
+    peer.ip?.trim().toLowerCase(),
+    "browser",
+    "pwa member device",
+  ].filter(Boolean));
+  return [peer.displayName, peer.fullName, peer.deviceName, peer.peerId]
+    .map((value) => String(value || "").trim())
+    .find((value) => value && !blocked.has(value.toLowerCase()) && !value.toLowerCase().startsWith("did:"));
+}
+
 export function ChatUnreadProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
   const { prefs } = useNotifications();
+  const { displayForDid } = useContactNames();
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [previews, setPreviews] = useState<Record<string, ChatPreview>>({});
   const [circleCounts, setCircleCounts] = useState<Record<string, number>>({});
@@ -139,8 +153,14 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
     ]).then(async ([peers, circles]) => {
       const verified = peers.filter((peer) => peer.status === "verified" && peer.did && peer.did !== localDid);
       peerNamesRef.current = Object.fromEntries([
-        ...circles.flatMap((circle) => (circle.members ?? []).filter((member) => member.did).map((member) => [member.did!, member.name || member.did!] as const)),
-        ...verified.map((peer) => [peer.did!, peer.peerId || peer.did!] as const),
+        ...circles.flatMap((circle) => (circle.members ?? []).filter((member) => member.did).map((member) => [
+          member.did!,
+          displayForDid(member.did, member.name || member.deviceName || member.email),
+        ] as const)),
+        ...verified.map((peer) => [
+          peer.did!,
+          displayForDid(peer.did, friendlyPeerFallback(peer)),
+        ] as const),
       ]);
       circleNamesRef.current = Object.fromEntries(circles.map((circle) => [circle.id, circle.name]));
       const peerEntries = await Promise.all(verified.map(async (peer) => {
@@ -204,7 +224,7 @@ export function ChatUnreadProvider({ children }: { children: ReactNode }) {
         setCircleChats(groupEntries.filter((entry) => entry[5]).map(([circleId, name, memberCount]) => ({ circleId, name, memberCount })));
       }
     }).catch(() => {});
-  }, [circleIsLocallySeen, circleScope, localDid, peerIsLocallySeen, session?.guardianDid, session?.user.role]);
+  }, [circleIsLocallySeen, circleScope, displayForDid, localDid, peerIsLocallySeen, session?.guardianDid, session?.user.role]);
 
   useEffect(() => { refresh(); }, [refresh]);
 

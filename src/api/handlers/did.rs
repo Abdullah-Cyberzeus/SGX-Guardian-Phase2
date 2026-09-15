@@ -59,6 +59,11 @@ pub struct DeactivateRequest {
     pub confirm: bool,
 }
 
+#[derive(Deserialize)]
+pub struct ReactivateRequest {
+    pub confirm: bool,
+}
+
 #[derive(Debug, Serialize)]
 pub struct DeactivateResponse {
     pub ok: bool,
@@ -278,6 +283,49 @@ pub async fn deactivate(
     }))
 }
 
+pub async fn reactivate(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<ReactivateRequest>,
+) -> Result<Json<DeactivateResponse>, ApiError> {
+    if !body.confirm {
+        log_audit(
+            &s.node_id,
+            AuditCategory::Did,
+            AuditSeverity::Warning,
+            AuditAction::Rejected,
+            "DID reactivation rejected: confirm was not true",
+        );
+        return Err(ApiError::BadRequest(
+            "confirm must be true to reactivate DID".to_string(),
+        ));
+    }
+
+    let did_path = did_path();
+    let changed = did::method::reactivate(&did_path).map_err(|e| did_error(e, &did_path))?;
+    refresh_self_document_status(&s, "active")?;
+    log_audit(
+        &s.node_id,
+        AuditCategory::Did,
+        AuditSeverity::Info,
+        AuditAction::Succeeded,
+        if changed {
+            "DID reactivated by admin"
+        } else {
+            "DID reactivation requested while DID was already active"
+        },
+    );
+
+    Ok(Json(DeactivateResponse {
+        ok: true,
+        message: if changed {
+            "DID reactivated. The local DID document was updated to active.".to_string()
+        } else {
+            "DID is already active.".to_string()
+        },
+        restart_required: false,
+    }))
+}
+
 pub async fn document(
     _state: State<Arc<AppState>>,
 ) -> Result<Json<DidDocumentSummaryResponse>, ApiError> {
@@ -479,6 +527,43 @@ fn load_self_document() -> Result<DidDocument, ApiError> {
         ))),
         Err(err) => Err(did_document_load_error(err, &path)),
     }
+}
+
+fn refresh_self_document_status(state: &AppState, status: &str) -> Result<(), ApiError> {
+    let Some(mut doc) = doc_persistence::load_self().map_err(|err| {
+        let path = doc_persistence::configured_self_doc_path();
+        did_document_load_error(err, &path)
+    })?
+    else {
+        return Ok(());
+    };
+    doc.sgx_status = Some(status.to_string());
+    doc.sgx_updated = chrono::Utc::now().to_rfc3339();
+    doc.sgx_version_id = doc
+        .sgx_version_id
+        .max(doc_persistence::read_self_floor_version())
+        .saturating_add(1);
+    doc.proof = None;
+    let vm_ref = doc
+        .verification_method
+        .first()
+        .map(|vm| vm.id.clone())
+        .ok_or_else(|| ApiError::BadRequest("DID document has no verification method".into()))?;
+    doc_sign::sign_in_place(&mut doc, state.signer.as_ref(), &vm_ref)
+        .map_err(did_document_verify_failure)?;
+    doc_persistence::save_self(&doc).map_err(|err| {
+        ApiError::Internal(format!(
+            "did document save failed after reactivation: {}",
+            err
+        ))
+    })?;
+    doc_persistence::write_self_floor_version(doc.sgx_version_id).map_err(|err| {
+        ApiError::Internal(format!(
+            "did document version counter update failed after reactivation: {}",
+            err
+        ))
+    })?;
+    Ok(())
 }
 
 fn verify_request_path(path: Option<String>) -> Result<PathBuf, ApiError> {

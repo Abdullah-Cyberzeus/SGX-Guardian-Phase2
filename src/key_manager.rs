@@ -148,6 +148,115 @@ impl KeyManager {
             backend: SigningBackend::Software,
         })
     }
+    /// Load the identity keypair from disk without generating, repairing, or
+    /// otherwise modifying it. Unlike `load_or_generate`, a missing or
+    /// corrupt key file is always an error — never a trigger to create a
+    /// replacement identity. Callers that must sign with an
+    /// already-provisioned key (e.g. baseline creation) should use this
+    /// instead of `load_or_generate`.
+    pub fn load_existing(key_path: &str) -> Result<Self> {
+        let path = Path::new(key_path);
+        if !path.exists() {
+            return Err(anyhow!(
+                "No identity key found at {} — run key provisioning explicitly before creating a baseline",
+                key_path
+            ));
+        }
+        let rng = SystemRandom::new();
+        let raw = fs::read(path)?;
+        let keypair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &raw, &rng)
+            .map_err(|_| {
+                anyhow!(
+                    "Identity key at {} is corrupt — run key repair explicitly before creating a baseline",
+                    key_path
+                )
+            })?;
+        Ok(Self {
+            keypair,
+            key_path: key_path.to_string(),
+            backend: SigningBackend::Software,
+        })
+    }
+
+    /// Load the active SE050 DKP for signing without provisioning, repairing,
+    /// or rotating anything. Fails if no DKP has already been provisioned and
+    /// confirmed present. Callers that must sign with an already-provisioned
+    /// identity (e.g. baseline creation) should use this instead of
+    /// `init_with_se050`.
+    #[cfg(feature = "secure-element")]
+    pub fn load_active_se050(
+        se_config: &crate::secure_element::config::SeConfig,
+        base_path: &str,
+    ) -> Result<Self> {
+        use crate::secure_element::dkp::DkpManager;
+
+        let dkp = DkpManager::load_active(se_config, base_path)
+            .map_err(|e| anyhow!("Active SE050 DKP unavailable: {}", e))?;
+        let key_id = dkp.active_key_id();
+        let signer = dkp
+            .create_signer()
+            .map_err(|e| anyhow!("Create SE050 signer: {}", e))?;
+
+        // `keypair` below is only read by the Software backend variant of
+        // `sign`/`pubkey_der` (Hardware signs and exports its public key via
+        // the SE050 signer / dkp_pub.der instead), so an ephemeral,
+        // never-persisted keypair satisfies the struct field without
+        // touching disk.
+        let rng = SystemRandom::new();
+        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
+            .map_err(|_| anyhow!("Generate placeholder keypair"))?;
+        let keypair =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng)
+                .map_err(|_| anyhow!("Load placeholder keypair"))?;
+
+        info!(
+            "KeyManager loaded active SE050 DKP (key_id=0x{:08X})",
+            key_id
+        );
+
+        Ok(Self {
+            keypair,
+            key_path: base_path.to_string(),
+            backend: SigningBackend::Hardware { signer, key_id },
+        })
+    }
+
+    /// Load the active TPM 2.0 DKP for signing without provisioning,
+    /// repairing, or rotating anything. Fails if no DKP has already been
+    /// provisioned and confirmed present. Callers that must sign with an
+    /// already-provisioned identity (e.g. baseline creation) should use this
+    /// instead of `init_with_tpm`.
+    #[cfg(feature = "tpm")]
+    pub fn load_active_tpm(cfg: &crate::tpm::TpmConfig, base_path: &str) -> Result<Self> {
+        use crate::tpm::dkp::TpmDkpManager;
+
+        let dkp = TpmDkpManager::load_active(cfg, base_path)
+            .map_err(|e| anyhow!("Active TPM DKP unavailable: {}", e))?;
+        let dkp_handle = dkp.active_handle();
+        let signer = dkp.create_signer();
+
+        // See the equivalent comment in `load_active_se050`: `keypair` is
+        // only read by the Software backend variant, so an ephemeral,
+        // never-persisted keypair satisfies the struct field here.
+        let rng = SystemRandom::new();
+        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
+            .map_err(|_| anyhow!("Generate placeholder keypair"))?;
+        let keypair =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng)
+                .map_err(|_| anyhow!("Load placeholder keypair"))?;
+
+        info!(
+            "KeyManager loaded active TPM DKP (handle=0x{:08X})",
+            dkp_handle
+        );
+
+        Ok(Self {
+            keypair,
+            key_path: base_path.to_string(),
+            backend: SigningBackend::Tpm { signer, dkp_handle },
+        })
+    }
+
     /// Initialize KeyManager with SE050 hardware backend.
     /// DKP is generated/loaded inside the secure element.
     /// Private key NEVER leaves the chip.

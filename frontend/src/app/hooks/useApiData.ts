@@ -216,6 +216,7 @@ export async function fetchCommunicationPeers(isMember: boolean, guardianDid?: s
       ...existing,
       ...contact,
       peerId: existing.peerId || contact.peerId,
+      nodeId: existing.nodeId || contact.nodeId,
       ip: existing.ip || contact.ip,
       port: existing.port || contact.port,
       callAvailable: contact.callAvailable && existing.callAvailable,

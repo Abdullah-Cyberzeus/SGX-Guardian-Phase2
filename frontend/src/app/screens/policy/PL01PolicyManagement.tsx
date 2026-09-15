@@ -421,7 +421,6 @@ function BackupDiffView({ backupYaml, activeYaml }: { backupYaml: string; active
 // Policy Card
 function PolicyCard({ policy, onVerify }: { policy: SignedPolicy; onVerify: () => void }) {
   const [expanded, setExpanded] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -432,12 +431,6 @@ function PolicyCard({ policy, onVerify }: { policy: SignedPolicy; onVerify: () =
       hour: "2-digit",
       minute: "2-digit",
     });
-  };
-
-  const handleCopyDigest = () => {
-    navigator.clipboard.writeText(policy.digest).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
   };
 
   return (
@@ -520,25 +513,10 @@ function PolicyCard({ policy, onVerify }: { policy: SignedPolicy; onVerify: () =
 
           {/* Digest */}
           <div>
-            <div className="flex items-center justify-between mb-2">
+            <div className="mb-2">
               <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
                 Digest (SHA-256)
               </span>
-              <button
-                onClick={handleCopyDigest}
-                className="flex items-center gap-1 px-2 py-1 rounded"
-                style={{
-                  backgroundColor: copied ? "color-mix(in srgb, var(--chart-2) 15%, transparent)" : "var(--muted)",
-                  border: "none",
-                  cursor: "pointer",
-                  fontFamily: "Inter, sans-serif",
-                  fontSize: "var(--text-xs)",
-                  color: copied ? "var(--chart-2)" : "var(--muted-foreground)",
-                }}
-              >
-                {copied ? <Check size={12} /> : <Copy size={12} />}
-                {copied ? "Copied" : "Copy"}
-              </button>
             </div>
             <code
               style={{

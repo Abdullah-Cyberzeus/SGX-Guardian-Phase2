@@ -45,10 +45,16 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
   const lastGroup = useRef<GroupSession | undefined>(undefined);
   const locallyEndedGroups = useRef(new Set<string>());
   const startingGroup = useRef(false);
+  const localStreamRef = useRef<MediaStream | undefined>(undefined);
+  const recoveringLocalMedia = useRef(false);
   const socketConnected = useRef(false);
   const signalApplyChain = useRef(Promise.resolve());
   const effectiveLocalDevice = groupLocalDevice || localDevice;
   const localParticipantState = effectiveLocalDevice ? group?.participants[effectiveLocalDevice]?.state : undefined;
+
+  useEffect(() => {
+    localStreamRef.current = localStream;
+  }, [localStream]);
 
   useEffect(() => {
     groupCallsApi.iceServers()
@@ -69,14 +75,14 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     }
     setGroup(next);
     if (!next) {
-      if (startingGroup.current && localStream) return;
-      rtc.current.close(); setLocalStream(undefined); setRemoteStreams({}); return;
+      if (startingGroup.current) return;
+      rtc.current.close(); localStreamRef.current = undefined; setLocalStream(undefined); setRemoteStreams({}); return;
     }
     const local = localId ? next.participants[localId] : undefined;
     if (!local || ["kicked", "declined"].includes(local.state)) {
-      rtc.current.close(); setLocalStream(undefined); setRemoteStreams({}); return;
+      rtc.current.close(); localStreamRef.current = undefined; setLocalStream(undefined); setRemoteStreams({}); return;
     }
-    if (local.state === "joined" && localStream && rtc.current.isReadyForPeers()) {
+    if (local.state === "joined" && localStreamRef.current && rtc.current.isReadyForPeers()) {
       rtc.current.setAudio(local.audio_allowed && !muted);
       rtc.current.setVideo(local.video_allowed && cameraEnabled);
       for (const participant of Object.values(next.participants)) {
@@ -176,12 +182,14 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
         throw new Error("Camera and microphone access requires HTTPS or localhost.");
       }
       const { stream, actualMedia, warning } = await rtc.current.prepare(media);
+      localStreamRef.current = stream;
       setLocalStream(stream); setRemoteStreams({}); signalCursor.current = 0;
       connectedPeers.current.clear(); mediaReadySent.current = false;
       if (warning) setError(warning);
       return actualMedia;
     } catch (reason) {
       rtc.current.close();
+      localStreamRef.current = undefined;
       setLocalStream(undefined);
       const message = reason instanceof DOMException && reason.name === "NotAllowedError"
         ? "Camera or microphone permission was denied. Allow access in the browser site settings, then try again."
@@ -190,14 +198,41 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
       throw new Error(message);
     }
   };
+
+  useEffect(() => {
+    if (
+      !group
+      || !effectiveLocalDevice
+      || localParticipantState !== "joined"
+      || localStream
+      || startingGroup.current
+      || recoveringLocalMedia.current
+    ) {
+      return;
+    }
+    recoveringLocalMedia.current = true;
+    void prepare(group.requested_media)
+      .catch(() => undefined)
+      .finally(() => { recoveringLocalMedia.current = false; });
+  // `prepare` is intentionally omitted because it is a local async helper;
+  // this recovery should run only when the active joined session loses media.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group?.group_id, group?.requested_media, effectiveLocalDevice, localParticipantState, localStream]);
+
   const createGroup = async (memberIds: string[], callAll: boolean, media: MediaType[], title = "") => {
-    setError(undefined); startingGroup.current = true; const actualMedia = await prepare(media);
+    setError(undefined); startingGroup.current = true;
     try {
+      const actualMedia = await prepare(media);
       const created = await groupCallsApi.create(title, memberIds, callAll, actualMedia);
       setGroup(created.session);
       setGroup(await groupCallsApi.join(created.session.group_id));
     }
-    catch (reason) { rtc.current.close(); setLocalStream(undefined); throw reason; }
+    catch (reason) {
+      rtc.current.close();
+      localStreamRef.current = undefined;
+      setLocalStream(undefined);
+      throw reason;
+    }
     finally { startingGroup.current = false; }
   };
   const acceptGroup = async () => {
@@ -221,6 +256,7 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     if (effectiveLocalDevice) callHistoryService.recordGroup(left, effectiveLocalDevice);
     lastGroup.current = undefined;
     rtc.current.close();
+    localStreamRef.current = undefined;
     connectedPeers.current.clear();
     mediaReadySent.current = false;
     setLocalStream(undefined);
@@ -235,7 +271,7 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
       const ended = await groupCallsApi.end(groupId);
       if (effectiveLocalDevice) callHistoryService.recordGroup(ended, effectiveLocalDevice);
       lastGroup.current = undefined;
-      rtc.current.close(); setLocalStream(undefined); setRemoteStreams({}); setGroup(undefined);
+      rtc.current.close(); localStreamRef.current = undefined; setLocalStream(undefined); setRemoteStreams({}); setGroup(undefined);
     } catch (reason) {
       locallyEndedGroups.current.delete(groupId);
       throw reason;
@@ -250,6 +286,7 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     rtc.current.setAudio(allowed && !next);
   };
   const toggleCamera = () => {
+    if (!group?.requested_media.includes("video")) return;
     const next = !cameraEnabled; setCameraEnabled(next);
     const allowed = !!(group && effectiveLocalDevice && group.participants[effectiveLocalDevice]?.video_allowed);
     rtc.current.setVideo(allowed && next);
@@ -258,7 +295,7 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
   const value = useMemo(() => ({
     group, incoming, localStream, remoteStreams, error, muted, cameraEnabled, localDevice: effectiveLocalDevice, createGroup,
     acceptGroup, rejoinGroup, declineGroup, leaveGroup, endGroup, moderate, toggleMute, toggleCamera,
-    shareScreen: () => rtc.current.shareScreen(),
+    shareScreen: () => group?.requested_media.includes("video") ? rtc.current.shareScreen() : Promise.resolve(),
   }), [group, incoming, localStream, remoteStreams, error, muted, cameraEnabled, effectiveLocalDevice]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

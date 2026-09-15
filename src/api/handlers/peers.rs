@@ -7,6 +7,8 @@ use std::sync::Arc;
 pub struct Peer {
     #[serde(rename = "peerId")]
     pub peer_id: String,
+    #[serde(rename = "nodeId", skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub did: Option<String>,
     pub ip: String,
@@ -202,6 +204,13 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>,
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string();
+            let node_id = v
+                .get("node_id")
+                .or_else(|| v.get("nodeId"))
+                .and_then(|x| x.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
             let status = v
                 .get("status")
                 .and_then(|x| x.as_str())
@@ -231,6 +240,7 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>,
             };
             Peer {
                 peer_id,
+                node_id,
                 did,
                 ip,
                 status,
