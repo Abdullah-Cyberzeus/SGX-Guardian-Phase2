@@ -2866,6 +2866,16 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                             }
                         }
 
+                        // The listener verified the caller too. Persist its observed
+                        // overlay address so inbound call and gRPC authorization can
+                        // recognize peers that initiated mutual attestation.
+                        write_trusted_peer(
+                            &remote.to_string(),
+                            &remote_ip,
+                            &incoming,
+                            current_rotation_reason_for_peer(&incoming.subject_did),
+                        );
+
                         let mut reply =
                             AttestationService::create_signed_evidence(&km, &policy.yaml)?;
                         if let Ok(Some(vc)) = crate::vc::persistence::load_own_any() {

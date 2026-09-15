@@ -1901,9 +1901,11 @@ function ScheduleTab() {
   const handleSave = async () => {
     const currentTasks = form.scan_schedules ?? [];
     const pendingTask = normalizeScheduleTask(draftTask);
-    const tasksToSave = !draftChanged || editingIndex === null
+    const tasksToSave = !draftChanged
       ? currentTasks
-      : currentTasks.map((task, index) => index === editingIndex ? pendingTask : task);
+      : editingIndex === null
+        ? [...currentTasks, pendingTask]
+        : currentTasks.map((task, index) => index === editingIndex ? pendingTask : task);
     await persistSchedule({ ...form, scan_schedules: tasksToSave });
   };
 
@@ -1925,11 +1927,12 @@ function ScheduleTab() {
     setDraftChanged(true);
   };
   const commitDraftTask = () => {
-    if (editingIndex === null) return;
     const nextTask = normalizeScheduleTask(draftTask);
     setForm((current) => {
       const next = (current.scan_schedules ?? []).slice();
-      if (editingIndex >= 0 && editingIndex < next.length) {
+      if (editingIndex === null) {
+        next.push(nextTask);
+      } else if (editingIndex >= 0 && editingIndex < next.length) {
         next[editingIndex] = nextTask;
       }
       return { ...current, scan_schedules: next };
@@ -2078,11 +2081,22 @@ function ScheduleTab() {
         </div>
       </div>
 
-      {editingIndex !== null && (
-        <div className="flex flex-col gap-3 rounded-lg border p-3" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
-          <div className="flex items-center justify-between gap-2">
-            <label style={labelStyle}>Edit schedule task</label>
-          </div>
+      <div className="flex flex-col gap-3 rounded-lg border p-3" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
+        <div className="flex items-center justify-between gap-2">
+          <label style={labelStyle}>{editingIndex === null ? "Add schedule task" : "Edit schedule task"}</label>
+          <button
+            type="button"
+            onClick={() => {
+              setDraftTask(createDefaultScheduleTask());
+              setEditingIndex(null);
+              setDraftChanged(false);
+            }}
+            className="px-2 py-1 rounded-md"
+            style={{ backgroundColor: "var(--muted)", border: "1px solid var(--border)", color: "var(--muted-foreground)", cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)" }}
+          >
+            Reset
+          </button>
+        </div>
 
         <div className="flex flex-col gap-1">
           <label style={labelStyle}>Intensity</label>
@@ -2203,7 +2217,8 @@ function ScheduleTab() {
           </select>
         </div>
 
-          <div className="flex items-center justify-end gap-2">
+        <div className="flex items-center justify-end gap-2">
+          {editingIndex !== null && (
             <button
               type="button"
               onClick={() => {
@@ -2216,6 +2231,8 @@ function ScheduleTab() {
             >
               Cancel
             </button>
+          )}
+          {editingIndex !== null && (
             <button
               type="button"
               onClick={commitDraftTask}
@@ -2224,9 +2241,9 @@ function ScheduleTab() {
             >
               Update task
             </button>
-          </div>
+          )}
         </div>
-      )}
+      </div>
 
       <button
         onClick={handleSave}
