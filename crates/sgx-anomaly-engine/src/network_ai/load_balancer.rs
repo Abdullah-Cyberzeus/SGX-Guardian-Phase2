@@ -11,6 +11,7 @@ pub const NETWORK_AI_RELAY_BALANCER_VERSION: &str = "network-ai-relay-balancer-v
 pub struct RelayBalanceConfig {
     pub overload_utilization_pct: f64,
     pub minimum_overload_factor: f64,
+    pub missing_health_factor: f64,
     pub recovery_ramp_seconds: u64,
     pub high_priority_best_route_floor: f64,
 }
@@ -20,6 +21,7 @@ impl Default for RelayBalanceConfig {
         Self {
             overload_utilization_pct: 80.0,
             minimum_overload_factor: 0.25,
+            missing_health_factor: 0.50,
             recovery_ramp_seconds: 120,
             high_priority_best_route_floor: 0.60,
         }
@@ -33,7 +35,9 @@ pub struct RelayRuntimeHealth {
     pub route_id: String,
     pub available: bool,
     pub healthy: bool,
-    pub utilization_pct: f64,
+    /// `None` means utilization telemetry was not supplied; it is never
+    /// interpreted as an idle (0%) relay.
+    pub utilization_pct: Option<f64>,
     pub recovered_at_ms: Option<u64>,
 }
 
@@ -104,20 +108,37 @@ impl MultiRelayLoadBalancer {
                 if health.is_some_and(|health| !health.available || !health.healthy) {
                     return None;
                 }
-                let utilization = health.map(|health| health.utilization_pct).unwrap_or(0.0);
-                let overload_factor = self.overload_factor(utilization);
+                let utilization = health.and_then(|health| health.utilization_pct);
+                let health_factor = if utilization.is_some() {
+                    1.0
+                } else {
+                    self.config.missing_health_factor.clamp(0.0, 1.0)
+                };
+                let overload_factor = utilization
+                    .map(|value| self.overload_factor(value))
+                    .unwrap_or(1.0);
                 let recovery_factor = self.recovery_factor(
                     health.and_then(|health| health.recovered_at_ms),
                     now_ms,
                 );
-                let usable_score = prediction.quality_score.max(0.0) * overload_factor * recovery_factor;
+                let usable_score = prediction.quality_score.max(0.0)
+                    * overload_factor
+                    * recovery_factor
+                    * health_factor;
+                let health_reason = utilization
+                    .map(|value| format!("utilization={value:.1}%"))
+                    .unwrap_or_else(|| {
+                        format!(
+                            "runtime_health_missing; utilization=unknown; health_factor={health_factor:.2}"
+                        )
+                    });
                 Some((
                     candidate.route_id.clone(),
                     usable_score,
                     overload_factor,
                     recovery_factor,
                     format!(
-                        "{}; utilization={utilization:.1}%, overload_factor={overload_factor:.2}, recovery_factor={recovery_factor:.2}",
+                        "{}; {health_reason}, overload_factor={overload_factor:.2}, recovery_factor={recovery_factor:.2}",
                         prediction.reason
                     ),
                 ))
@@ -246,8 +267,8 @@ mod tests {
             route_id: "relay-nodeA-via-nodeC-nodeB".to_string(),
             rtt_ms: 15.0,
             packet_loss_pct: 0.5,
-            throughput_mbps: 55.0,
-            bandwidth_utilization_pct: 40.0,
+            throughput_mbps: Some(55.0),
+            bandwidth_utilization_pct: Some(40.0),
             route_available: true,
             route_healthy: true,
             switched_route: false,
@@ -257,8 +278,8 @@ mod tests {
             route_id: "relay-nodeA-via-nodeD-nodeB".to_string(),
             rtt_ms: 30.0,
             packet_loss_pct: 2.0,
-            throughput_mbps: 30.0,
-            bandwidth_utilization_pct: 50.0,
+            throughput_mbps: Some(30.0),
+            bandwidth_utilization_pct: Some(50.0),
             route_available: true,
             route_healthy: true,
             switched_route: false,
@@ -313,8 +334,8 @@ mod tests {
                 route_id: route_id.to_string(),
                 rtt_ms: rtt,
                 packet_loss_pct: 0.5,
-                throughput_mbps: 60.0,
-                bandwidth_utilization_pct: 20.0,
+                throughput_mbps: Some(60.0),
+                bandwidth_utilization_pct: Some(20.0),
                 route_available: true,
                 route_healthy: true,
                 switched_route: false,
@@ -331,21 +352,21 @@ mod tests {
                     route_id: "relay-nodeA-via-nodeC-nodeB".into(),
                     available: true,
                     healthy: true,
-                    utilization_pct: 98.0,
+                    utilization_pct: Some(98.0),
                     recovered_at_ms: None,
                 },
                 RelayRuntimeHealth {
                     route_id: "relay-nodeA-via-nodeD-nodeB".into(),
                     available: true,
                     healthy: true,
-                    utilization_pct: 20.0,
+                    utilization_pct: Some(20.0),
                     recovered_at_ms: Some(59_000),
                 },
                 RelayRuntimeHealth {
                     route_id: "relay-nodeA-via-nodeC-nodeD-nodeB".into(),
                     available: false,
                     healthy: false,
-                    utilization_pct: 0.0,
+                    utilization_pct: Some(0.0),
                     recovered_at_ms: None,
                 },
             ],
@@ -387,5 +408,53 @@ mod tests {
         );
         assert!(weights.weights[0].weight >= 0.60);
         assert_eq!(weights.weights[0].rank, 1);
+    }
+
+    #[test]
+    fn missing_runtime_health_is_penalized_and_explained() {
+        let inventory = RouteCandidateInventory::from_relays(
+            "nodeA",
+            "nodeB",
+            TrafficClass::Operational,
+            ["nodeC", "nodeD"],
+        );
+        let history = RouteHistoryStore::new(1.0, 10);
+        let predictions =
+            SimpleRouteQualityPredictor::default().predict(&inventory.candidates, &history);
+        let weights = MultiRelayLoadBalancer::default().calculate_with_health(
+            &inventory.candidates,
+            &predictions,
+            TrafficClass::Operational,
+            &[
+                RelayRuntimeHealth {
+                    route_id: "relay-nodeA-via-nodeC-nodeB".into(),
+                    available: true,
+                    healthy: true,
+                    utilization_pct: Some(0.0),
+                    recovered_at_ms: None,
+                },
+                RelayRuntimeHealth {
+                    route_id: "relay-nodeA-via-nodeD-nodeB".into(),
+                    available: true,
+                    healthy: true,
+                    utilization_pct: None,
+                    recovered_at_ms: None,
+                },
+            ],
+            1_000,
+        );
+        let healthy = weights
+            .weights
+            .iter()
+            .find(|weight| weight.route_id == "relay-nodeA-via-nodeC-nodeB")
+            .unwrap();
+        let missing = weights
+            .weights
+            .iter()
+            .find(|weight| weight.route_id == "relay-nodeA-via-nodeD-nodeB")
+            .unwrap();
+        assert!(missing.weight < healthy.weight);
+        assert!(missing.reason.contains("runtime_health_missing"));
+        assert!(healthy.reason.contains("utilization=0.0%"));
     }
 }

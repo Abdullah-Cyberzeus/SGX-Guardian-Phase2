@@ -1216,13 +1216,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // ── Kill any stale nebula daemon from a previous run ────────────────────
-        // (Prevents "address already in use" on UDP 4242)
-        let _ = std::process::Command::new("pkill")
-            .args(["-f", "nebula -config"])
-            .output();
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
         println!("\n🗺️  Resolving overlay IP and CA assignment...");
 
         let mut nebula_ip: String;
@@ -1759,18 +1752,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 continue;
                             }
 
-                            let config_path =
-                                format!("{}/nebula.yaml", nebula_dir_for_registry_sync);
-                            if let Err(e) = NebulaDaemon::start(&config_path).await {
-                                eprintln!(
-                                "⚠️  Failed to restart Guardian Mesh after relay/lighthouse update: {}",
-                                e
+                            // Registry synchronization updates the persisted
+                            // Nebula configuration for the next daemon startup.
+                            // It must never interrupt the currently running
+                            // encrypted overlay dataplane.
+                            tracing::info!(
+                                "Guardian Mesh registry synchronized; live Nebula daemon left unchanged"
                             );
-                            } else {
-                                println!(
-                                    "🔄 Guardian Mesh reloaded after relay/lighthouse registry update"
-                                );
-                            }
                         }
                         Err(e) => {
                             eprintln!(
@@ -1850,16 +1838,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                                 continue;
                             }
-                            let config_path =
-                                format!("{}/nebula.yaml", nebula_dir_for_local_reload);
-                            if let Err(e) = NebulaDaemon::start(&config_path).await {
-                                eprintln!(
-                                "⚠️ nodeA failed to reload Guardian Mesh after local registry update: {}",
-                                e
+                            // Persist registry/config changes without touching
+                            // the running Nebula process. Runtime overlay
+                            // continuity takes precedence over live config reload.
+                            tracing::info!(
+                                "nodeA Guardian Mesh registry updated; live Nebula daemon left unchanged"
                             );
-                            } else {
-                                // println!("🔄 nodeA reloaded Nebula after local registry update");
-                            }
                         }
                         Err(e) => {
                             eprintln!(

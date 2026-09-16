@@ -8,6 +8,7 @@ pub mod api;
 pub mod audit;
 pub mod candidates;
 pub mod config;
+pub mod cycle;
 pub mod decision_audit;
 pub mod degradation;
 pub mod eligibility;
@@ -21,6 +22,7 @@ pub mod route_adapter;
 pub mod runtime;
 pub mod runtime_mode;
 pub mod safety;
+pub mod storage;
 pub mod task1_bridge;
 pub mod telemetry_adapter;
 pub mod virtual_shift_bridge;
@@ -33,6 +35,10 @@ pub use audit::{
 };
 pub use candidates::{RouteCandidate, RouteCandidateInventory};
 pub use config::{NetworkAiConfig, NetworkAiRewardWeights, NETWORK_AI_CONFIG_VERSION};
+pub use cycle::{
+    NetworkAiCompleteCycleOutput, NetworkAiCycleInput, NetworkAiCycleOutput, NetworkAiEngine,
+    NetworkAiFeedbackCycleOutput, NetworkAiRouteActionPlan,
+};
 pub use decision_audit::{
     persist_decision_audit, DecisionAuditPaths, DecisionAuditRecord, DecisionEvidenceLinks,
     RejectedCandidateAudit, NETWORK_AI_DECISION_AUDIT_VERSION,
@@ -48,7 +54,8 @@ pub use features::{
     NetworkAiFeatureBuilder, NetworkAiFeatureVector, NETWORK_AI_FEATURE_SCHEMA_VERSION,
 };
 pub use history::{
-    ObservedRouteOutcome, RouteHistoryEntry, RouteHistoryStore, RoutePerformanceStats,
+    ObservedRouteOutcome, RouteHistoryEntry, RouteHistoryStore, RouteObservationInput,
+    RoutePerformanceStats,
 };
 pub use load_balancer::{
     MultiRelayLoadBalancer, RelayBalanceConfig, RelayRuntimeHealth, RelayWeight, RelayWeightSet,
@@ -58,7 +65,7 @@ pub use predictor::{
     RoutePrediction, RoutePredictionSet, RoutePredictor, RouteQualityComponents,
     SimpleRouteQualityPredictor, NETWORK_AI_PREDICTOR_VERSION,
 };
-pub use reward::{RewardComponents, RouteReward, NETWORK_AI_REWARD_VERSION};
+pub use reward::{ObservedRewardInput, RewardComponents, RouteReward, NETWORK_AI_REWARD_VERSION};
 pub use rl::{
     ContextualBanditPolicy, RouteActionValue, RouteLearningDecision, NETWORK_AI_RL_VERSION,
 };
@@ -79,6 +86,7 @@ pub use safety::{
     RouteApplyResult, RouteSafetyConfig, RouteSafetyDecision, RouteSafetyGuard, RouteSwitchState,
     SafetyVerdict,
 };
+pub use storage::{Task3EvidenceStage, Task3RunLayout};
 pub use task1_bridge::{
     read_optional_task1_route_signal, read_task1_route_signal, OptionalTask1RouteSignal,
     Task1RouteSignal,

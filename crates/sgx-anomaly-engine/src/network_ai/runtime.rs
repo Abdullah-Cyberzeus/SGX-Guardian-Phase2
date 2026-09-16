@@ -7,21 +7,24 @@
 use super::{
     persist_decision_audit, read_optional_task1_route_signal, read_optional_task2_trust_summary,
     ContextualBanditPolicy, DecisionAuditPaths, DecisionAuditRecord, DecisionEvidenceLinks,
-    DegradationPredictor, EligibilityFilter, EligibleRouteSet, NetworkAiConfig,
-    NetworkAiRuntimeMode, NetworkTelemetryAdapter, NetworkTelemetryContext,
-    RouteCandidateInventory, RouteHistoryStore, RouteReward, RouteSafetyGuard,
-    RuntimeModeController, RuntimeModeDecision, RuntimeRouteApplyRequest, RuntimeRouteState,
-    SafeRuntimeRouteController, SimpleDegradationPredictor, SimpleRouteQualityPredictor,
-    TrafficClass,
+    EligibleRouteSet, NetworkAiConfig, NetworkAiCycleInput, NetworkAiEngine, NetworkAiRuntimeMode,
+    NetworkTelemetryAdapter, NetworkTelemetryContext, ObservedRewardInput, RouteCandidateInventory,
+    RouteHistoryStore, RouteSafetyGuard, RuntimeModeController, RuntimeModeDecision,
+    RuntimeRouteApplyRequest, RuntimeRouteState, SafeRuntimeRouteController, TrafficClass,
 };
 use crate::telemetry::RawSample;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 pub const NETWORK_AI_RUNTIME_VERSION: &str = "network-ai-runtime-v1";
+
+// A timestamp alone is not a decision identifier: several source ticks can
+// legitimately be processed within the same millisecond.
+static NEXT_SOURCE_DECISION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NetworkAiRuntimeState {
@@ -56,6 +59,9 @@ pub struct NetworkAiSourceTickInput {
     pub task2_trust_summary_path: Option<std::path::PathBuf>,
     pub evidence_root: std::path::PathBuf,
     pub requested_route_id: Option<String>,
+    /// Authoritative transport/health feedback for the currently active
+    /// route. This is deliberately separate from candidate telemetry.
+    pub current_route_failed: bool,
     pub sensitive_handoff: Option<super::SensitiveRouteHandoffContext>,
 }
 
@@ -158,6 +164,13 @@ impl NetworkAiRuntime {
         input: NetworkAiSourceTickInput,
     ) -> Result<NetworkAiRuntimeTickResult> {
         let now = input.raw.ts_ms;
+        let learning_root = input.evidence_root.join("runtime_learning").join(format!(
+            "{}-to-{}",
+            input.source_node, input.destination_node
+        ));
+        let history_path = learning_root.join("route_history_store.json");
+        let policy_path = learning_root.join("rl_policy.json");
+        let audit_paths = DecisionAuditPaths::under(&input.evidence_root);
         let task1 = read_optional_task1_route_signal(input.task1_recommendation_path.as_deref());
         let task2 = read_optional_task2_trust_summary(input.task2_trust_summary_path.as_deref());
         let observation = NetworkTelemetryAdapter::default().observe(
@@ -182,133 +195,121 @@ impl NetworkAiRuntime {
             .unwrap_or_else(|| {
                 super::TrustStateSnapshot::missing("task2-routing-trust-state-missing")
             });
-        let eligible = EligibilityFilter.filter_at(inventory.candidates, &trust, now);
-        let mut history = RouteHistoryStore::new(0.5, self.config.history_window_entries);
+        let mut history =
+            RouteHistoryStore::load_or_new(&history_path, 0.5, self.config.history_window_entries)?;
         history.record_observation(&observation);
-        let predictions = SimpleRouteQualityPredictor::default().predict_with_task1_signal(
-            &eligible.eligible,
-            &history,
-            task1.signal.as_ref(),
-            now,
-        );
-        let degradation = eligible
-            .eligible
-            .iter()
-            .map(|route| {
-                SimpleDegradationPredictor {
-                    high_probability_threshold: self.config.degradation_probability_threshold,
-                    ..Default::default()
-                }
-                .predict(
-                    &route.route_id,
-                    history
-                        .entries_by_route
-                        .get(&route.route_id)
-                        .map(Vec::as_slice)
-                        .unwrap_or(&[]),
-                )
-            })
-            .collect::<Vec<_>>();
-        let rewards = predictions
-            .predictions
-            .iter()
-            .map(|prediction| {
-                RouteReward::from_prediction_with_weights(
-                    prediction,
-                    0,
-                    true,
-                    false,
-                    &self.config.reward_weights,
-                )
-            })
-            .collect::<Vec<_>>();
-        let mut policy =
-            ContextualBanditPolicy::new(self.config.rl_learning_rate, self.config.rl_epsilon);
-        for reward in &rewards {
-            policy.update_with_reward(reward);
-        }
-        let chosen = policy.choose_exploit(&predictions);
-        let current = self.route_state.active_route_id.clone();
-        let current_score = predictions
-            .predictions
-            .iter()
-            .find(|p| p.route_id == current)
-            .map(|p| p.quality_score)
-            .unwrap_or(0.0);
-        let candidate_score = chosen
-            .selected_route_id
-            .as_ref()
-            .and_then(|id| predictions.predictions.iter().find(|p| &p.route_id == id))
-            .map(|p| p.quality_score)
-            .unwrap_or(current_score);
-        let requested = input
-            .requested_route_id
-            .clone()
-            .unwrap_or_else(|| chosen.selected_route_id.clone().unwrap_or(current.clone()));
-        let request = RuntimeRouteApplyRequest {
-            ts_ms: now,
-            requested_route_id: requested.clone(),
-            current_score,
-            candidate_score,
-            current_route_failed: false,
-            transport_apply_succeeds: true,
-            selected_by: chosen.decision_mode,
-            observed_rtt_ms: observation.rtt_ms,
-            observed_packet_loss_pct: observation.packet_loss_pct,
-            observed_throughput_mbps: observation.throughput_mbps,
-            observed_bandwidth_utilization_pct: observation.bandwidth_utilization_pct,
-            observed_reward: None,
-        };
-        let mut audit = DecisionAuditRecord::from_engine_outputs(
-            format!("runtime-source-{}", now),
-            now,
-            &eligible,
-            &predictions,
-            &rewards,
-            degradation,
-            task1.signal,
-            task2.summary,
-            DecisionEvidenceLinks {
-                route_history_path: "runtime-memory".into(),
-                observed_outcomes_path: "runtime-route-outcomes.jsonl".into(),
-                rewards_path: "rewards.jsonl".into(),
-                degradation_events_path: "degradation_events.jsonl".into(),
-                task1_source_path: input
-                    .task1_recommendation_path
-                    .map(|p| p.display().to_string()),
-                task2_trust_source_path: input
-                    .task2_trust_summary_path
-                    .map(|p| p.display().to_string()),
-                task2_trust_version: Some(eligible.trust_state_version.clone()),
-            },
-        );
-        let execution = self.mode_controller.execute_with_sensitive_handoff(
-            self.state.mode,
-            &mut self.route_state,
-            &eligible,
-            &request,
-            input.sensitive_handoff.as_ref(),
+        history.save_json(&history_path)?;
+        let mut policy = ContextualBanditPolicy::load_or_new(
+            &policy_path,
+            self.config.rl_learning_rate,
+            self.config.rl_epsilon,
         )?;
+        let current = self.route_state.active_route_id.clone();
+        let current_hop_count = inventory
+            .candidates
+            .iter()
+            .find(|route| route.route_id == current)
+            .map(|route| route.hop_count)
+            .unwrap_or(0);
+        let feedback = input.current_route_failed.then(|| ObservedRewardInput {
+            route_id: current.clone(),
+            rtt_ms: Some(observation.rtt_ms),
+            packet_loss_pct: Some(observation.packet_loss_pct),
+            throughput_mbps: Some(observation.throughput_mbps),
+            bandwidth_utilization_pct: Some(observation.bandwidth_utilization_pct),
+            hop_count: current_hop_count,
+            switched_route: false,
+            route_failed: true,
+        });
+        let engine = NetworkAiEngine::new(&self.config);
+        let route_switch_state = self.route_state.as_switch_state();
+        let decision_id = format!(
+            "runtime-source-{}-{}-{}-{}",
+            input.source_node,
+            input.destination_node,
+            now,
+            NEXT_SOURCE_DECISION_SEQUENCE.fetch_add(1, Ordering::SeqCst)
+        );
+        let evidence = DecisionEvidenceLinks {
+            route_history_path: history_path.display().to_string(),
+            observed_outcomes_path: input
+                .evidence_root
+                .join("runtime-route-outcomes.jsonl")
+                .display()
+                .to_string(),
+            rewards_path: audit_paths.rewards_jsonl.display().to_string(),
+            degradation_events_path: audit_paths.degradation_events_jsonl.display().to_string(),
+            task1_source_path: input
+                .task1_recommendation_path
+                .as_ref()
+                .map(|p| p.display().to_string()),
+            task2_trust_source_path: input
+                .task2_trust_summary_path
+                .as_ref()
+                .map(|p| p.display().to_string()),
+            task2_trust_version: Some(trust.version.clone()),
+        };
+        let mode = self.state.mode;
+        let execution_controller = &self.mode_controller;
+        let runtime_state = &mut self.route_state;
+        let handoff_context = input.sensitive_handoff.as_ref();
+        let complete = engine.run_complete_cycle(
+            NetworkAiCycleInput {
+                now_ms: now,
+                traffic_class: input.traffic_class,
+                candidates: inventory.candidates,
+                history: &history,
+                task1_signal: task1.signal.as_ref(),
+                trust_state: trust,
+                relay_health: vec![],
+            },
+            &mut policy,
+            feedback.as_slice(),
+            &self.config.reward_weights,
+            &route_switch_state,
+            input.requested_route_id.clone(),
+            input.current_route_failed,
+            &ObservedRewardInput {
+                route_id: current.clone(),
+                rtt_ms: Some(observation.rtt_ms),
+                packet_loss_pct: Some(observation.packet_loss_pct),
+                throughput_mbps: Some(observation.throughput_mbps),
+                bandwidth_utilization_pct: Some(observation.bandwidth_utilization_pct),
+                hop_count: current_hop_count,
+                switched_route: false,
+                route_failed: false,
+            },
+            true,
+            decision_id,
+            task1.signal.clone(),
+            task2.summary.clone(),
+            evidence,
+            |eligible, request| {
+                execution_controller.execute_with_sensitive_handoff(
+                    mode,
+                    runtime_state,
+                    eligible,
+                    request,
+                    handoff_context,
+                )
+            },
+            |audit| persist_decision_audit(audit, &audit_paths),
+        )?;
+        policy.save_json(&policy_path)?;
         self.state.tick_count += 1;
         self.state.last_tick_ms = Some(now);
-        self.state.latest_mode_decision = Some(execution.decision.clone());
-        if let Some(handoff) = &execution.sensitive_handoff {
-            audit.selected_route_id = Some(requested);
-            audit.selected_reason = format!(
-                "D12 sensitive handoff: {}",
-                handoff.audit_record.ai_justification
-            );
+        self.state.latest_mode_decision = Some(complete.execution.decision.clone());
+        if let Some(handoff) = &complete.execution.sensitive_handoff {
             std::fs::write(
                 input.evidence_root.join("runtime_sensitive_handoff.json"),
                 serde_json::to_vec_pretty(&handoff.audit_record)?,
             )?;
         }
-        persist_decision_audit(&audit, &DecisionAuditPaths::under(&input.evidence_root))?;
         Ok(NetworkAiRuntimeTickResult {
             runtime_state: self.state.clone(),
-            applied: execution.decision.applied,
+            applied: complete.execution.decision.applied,
             active_route_id: self.route_state.active_route_id.clone(),
-            reason: execution.decision.reason,
+            reason: complete.execution.decision.reason,
         })
     }
 
@@ -533,6 +534,7 @@ mod tests {
                 task2_trust_summary_path: Some(trust),
                 evidence_root: root.clone(),
                 requested_route_id: Some("relay-nodeA-via-nodeZ-nodeB".into()),
+                current_route_failed: false,
                 sensitive_handoff: Some(SensitiveRouteHandoffContext {
                     task2_review_root: root.join("task2_reviews"),
                     task2_role_config: roles.display().to_string(),
@@ -558,6 +560,87 @@ mod tests {
         let history = fs::read_to_string(root.join("decisions.jsonl")).unwrap();
         assert!(current.contains("D12 sensitive handoff"));
         assert!(history.contains("D12 sensitive handoff"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_ticks_persist_learning_failed_feedback_and_collision_safe_audits() {
+        let root =
+            std::env::temp_dir().join(format!("network-ai-source-learning-{}", std::process::id()));
+        let make_input = || NetworkAiSourceTickInput {
+            raw: RawSample {
+                ts_ms: 500_000,
+                nebula_mbps: 40.0,
+                relay_ratio: 0.2,
+                cot_latency_avg_ms: 12.0,
+                ..Default::default()
+            },
+            source_node: "nodeA".into(),
+            destination_node: "nodeB".into(),
+            relay_nodes: vec!["nodeC".into()],
+            traffic_class: TrafficClass::Operational,
+            task1_recommendation_path: None,
+            task2_trust_summary_path: None,
+            evidence_root: root.clone(),
+            requested_route_id: None,
+            current_route_failed: true,
+            sensitive_handoff: None,
+        };
+        let mut first = NetworkAiRuntime::new(NetworkAiConfig::default(), route_state());
+        first.start();
+        first.tick_from_sources(make_input()).unwrap();
+
+        let learning_root = root.join("runtime_learning").join("nodeA-to-nodeB");
+        let policy_path = learning_root.join("rl_policy.json");
+        let history_path = learning_root.join("route_history_store.json");
+        assert!(history_path.exists());
+        let first_policy = ContextualBanditPolicy::load_json(&policy_path).unwrap();
+        assert!(first_policy.action_values["direct-nodeA-nodeB"].q_value < 0.0);
+        assert_eq!(
+            first_policy.action_values["direct-nodeA-nodeB"].update_count,
+            1
+        );
+
+        let mut restarted = NetworkAiRuntime::new(NetworkAiConfig::default(), route_state());
+        restarted.start();
+        restarted.tick_from_sources(make_input()).unwrap();
+        let second_policy = ContextualBanditPolicy::load_json(&policy_path).unwrap();
+        assert_eq!(
+            second_policy.action_values["direct-nodeA-nodeB"].update_count,
+            2
+        );
+        assert!(
+            second_policy.action_values["direct-nodeA-nodeB"].q_value
+                < first_policy.action_values["direct-nodeA-nodeB"].q_value
+        );
+
+        let history = RouteHistoryStore::load_json(&history_path).unwrap();
+        assert_eq!(
+            history
+                .stats_for("direct-nodeA-nodeB")
+                .unwrap()
+                .sample_count,
+            2
+        );
+        let decisions: Vec<DecisionAuditRecord> = fs::read_to_string(root.join("decisions.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(decisions.len(), 2);
+        assert_ne!(decisions[0].decision_id, decisions[1].decision_id);
+        let reward_rows: Vec<serde_json::Value> = fs::read_to_string(root.join("rewards.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(reward_rows
+            .iter()
+            .any(|row| row["decision_id"] == decisions[1].decision_id));
+        assert_eq!(
+            reward_rows[1]["rewards"][0]["route_id"],
+            "direct-nodeA-nodeB"
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

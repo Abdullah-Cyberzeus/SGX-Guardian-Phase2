@@ -4,18 +4,23 @@ use sgx_anomaly_engine::network_ai::{
     append_degradation_prediction_jsonl, append_observation_jsonl, persist_current_observation,
     persist_decision_audit, read_optional_task1_route_signal, read_optional_task2_trust_summary,
     ContextualBanditPolicy, DecisionAuditPaths, DecisionAuditRecord, DecisionEvidenceLinks,
-    DegradationPredictor, EligibilityFilter, EligibleRouteSet, MultiRelayLoadBalancer,
-    NetworkAiConfig, NetworkAiRuntimeMode, NetworkTelemetryAdapter, NetworkTelemetryContext,
-    RouteCandidateInventory, RouteHistoryEntry, RouteHistoryStore, RouteKind, RouteReward,
-    RouteSafetyGuard, RouteSwitchState, RuntimeModeController, RuntimeRouteApplyRequest,
-    RuntimeRouteState, SafeRuntimeRouteController, SimpleDegradationPredictor,
-    SimpleRouteQualityPredictor, Task1RouteSignal, Task2RoutingTrustSummary, TrafficClass,
-    TrustStateSnapshot,
+    EligibilityFilter, EligibleRouteSet, MultiRelayLoadBalancer, NetworkAiConfig,
+    NetworkAiRuntimeMode, NetworkTelemetryAdapter, NetworkTelemetryContext, ObservedRewardInput,
+    RelayRuntimeHealth, RouteCandidateInventory, RouteHistoryStore, RouteKind,
+    RouteObservationInput, RouteReward, RouteSafetyGuard, RouteSwitchState, RuntimeModeController,
+    RuntimeRouteApplyRequest, RuntimeRouteState, SafeRuntimeRouteController,
+    SimpleDegradationPredictor, SimpleRouteQualityPredictor, Task1RouteSignal,
+    Task2RoutingTrustSummary, TrafficClass, TrustStateSnapshot,
 };
 use sgx_anomaly_engine::telemetry::RawSample;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static LAST_RUNTIME_TIMESTAMP_MS: AtomicU64 = AtomicU64::new(0);
+static NEXT_DECISION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Serialize)]
 struct CandidateInventoryReport {
@@ -97,6 +102,78 @@ fn arg_value(args: &[String], flag: &str) -> Option<String> {
         .map(|window| window[1].clone())
 }
 
+/// Real wall-clock time for normal demo/runtime execution. The atomic floor
+/// prevents two rapid decisions from receiving the same millisecond ID.
+fn runtime_now_ms() -> u64 {
+    let wall_clock_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let mut last = LAST_RUNTIME_TIMESTAMP_MS.load(Ordering::Relaxed);
+    loop {
+        let next = wall_clock_ms.max(last.saturating_add(1));
+        match LAST_RUNTIME_TIMESTAMP_MS.compare_exchange_weak(
+            last,
+            next,
+            Ordering::SeqCst,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return next,
+            Err(current) => last = current,
+        }
+    }
+}
+
+fn decision_id(
+    source_node: &str,
+    destination_node: &str,
+    issued_at_ms: u64,
+    sequence: u64,
+) -> String {
+    format!("task3-decision-{source_node}-{destination_node}-{issued_at_ms}-{sequence}")
+}
+
+/// Production decision IDs deliberately use runtime issuance time rather than
+/// caller-supplied telemetry time, which can be fixed during deterministic replay.
+fn next_runtime_decision_id(source_node: &str, destination_node: &str) -> String {
+    decision_id(
+        source_node,
+        destination_node,
+        runtime_now_ms(),
+        NEXT_DECISION_SEQUENCE.fetch_add(1, Ordering::SeqCst),
+    )
+}
+
+/// Reads externally supplied measured route outcomes. JSON may be one object,
+/// an array, or JSONL; the optimizer never invents these measurements itself.
+fn load_route_observation_inputs(path: &Path) -> Result<Vec<RouteObservationInput>> {
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("reading route observations {}", path.display()))?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    if trimmed.starts_with('[') {
+        return serde_json::from_str(trimmed)
+            .with_context(|| format!("parsing route observation array {}", path.display()));
+    }
+    let rows = trimmed
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    if rows.len() == 1 {
+        return Ok(vec![serde_json::from_str(rows[0]).with_context(|| {
+            format!("parsing route observation {}", path.display())
+        })?]);
+    }
+    rows.into_iter()
+        .map(|row| {
+            serde_json::from_str(row)
+                .with_context(|| format!("parsing route observation row in {}", path.display()))
+        })
+        .collect()
+}
+
 fn parse_traffic_class(value: &str) -> TrafficClass {
     match value.to_ascii_lowercase().as_str() {
         "security-control" | "security" | "control" | "policy" | "vshift_alert" => {
@@ -146,7 +223,7 @@ fn print_eligible_routes(routes: &EligibleRouteSet) {
 
 fn usage() {
     eprintln!(
-        "Usage: cargo run --example run_task3_network_optimizer_demo -- [--config path] [--mode shadow|advisory|active] [--traffic-class operational|security-control] [--source-node nodeA] [--destination-node nodeB] [--out-dir data/network_ai] [--task1-recommendation path] [--task2-trust-state path] [--current-route-failed]"
+        "Usage: cargo run --example run_task3_network_optimizer_demo -- [--config path] [--mode shadow|advisory|active] [--traffic-class operational|security-control] [--source-node nodeA] [--destination-node nodeB] [--out-dir data/network_ai] [--task1-recommendation path] [--task2-trust-state path] [--history-store path] [--rl-policy-store path] [--route-observations path] [--timestamp-ms ms] [--current-route-failed]"
     );
 }
 
@@ -221,14 +298,23 @@ fn main() -> Result<()> {
     let task2_bridge = read_optional_task2_trust_summary(task2_trust_state_path.as_deref());
     let task2_trust_summary = task2_bridge.summary.clone();
 
+    let timestamp_ms = arg_value(&args, "--timestamp-ms")
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .context("--timestamp-ms must be an unsigned integer")
+        })
+        .transpose()?
+        .unwrap_or_else(runtime_now_ms);
     let raw = RawSample {
-        ts_ms: 1788433000000,
+        ts_ms: timestamp_ms,
         nebula_mbps: 42.0,
         relay_ratio: 0.25,
         cot_latency_avg_ms: 18.5,
         conn_total: 7,
         ..Default::default()
     };
+    let runtime_decision_id = next_runtime_decision_id(&source_node, &destination_node);
 
     let telemetry_ctx = NetworkTelemetryContext {
         traffic_class,
@@ -277,13 +363,18 @@ fn main() -> Result<()> {
     let history_path = out_dir.join("route_observations.jsonl");
     let candidates_path = out_dir.join("candidate_inventory.json");
     let eligible_path = out_dir.join("eligible_routes.json");
-    let route_history_path = out_dir.join("route_history_store.json");
+    let route_history_path = arg_value(&args, "--history-store")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| out_dir.join("route_history_store.json"));
+    let route_observation_input_path = arg_value(&args, "--route-observations").map(PathBuf::from);
     let route_outcomes_path = out_dir.join("route_outcomes.jsonl");
     let prediction_path = out_dir.join("route_predictions.json");
     let degradation_path = out_dir.join("degradation_predictions.json");
     let degradation_events_path = out_dir.join("degradation_predictions.jsonl");
     let rewards_path = out_dir.join("route_rewards.json");
-    let rl_policy_path = out_dir.join("rl_policy.json");
+    let rl_policy_path = arg_value(&args, "--rl-policy-store")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| out_dir.join("rl_policy.json"));
     let rl_decision_path = out_dir.join("rl_decision.json");
     let safety_decision_path = out_dir.join("route_safety_decision.json");
     let apply_result_path = out_dir.join("route_apply_result.json");
@@ -315,52 +406,20 @@ fn main() -> Result<()> {
     )?;
     write_json(&eligible_path, &eligible_routes)?;
 
-    let mut history_store = RouteHistoryStore::new(0.5, network_config.history_window_entries);
+    let history_loaded = route_history_path.exists();
+    let mut history_store = RouteHistoryStore::load_or_new(
+        &route_history_path,
+        0.5,
+        network_config.history_window_entries,
+    )?;
+    let supplied_route_observations = route_observation_input_path
+        .as_deref()
+        .map(load_route_observation_inputs)
+        .transpose()?;
     history_store.record_observation(&observation);
-    history_store.record(RouteHistoryEntry {
-        ts_ms: raw.ts_ms + 1000,
-        route_id: format!("direct-{source_node}-{destination_node}"),
-        rtt_ms: 34.0,
-        packet_loss_pct: 3.8,
-        throughput_mbps: 28.0,
-        bandwidth_utilization_pct: 42.0,
-        route_available: true,
-        route_healthy: true,
-        switched_route: false,
-    });
-    history_store.record(RouteHistoryEntry {
-        ts_ms: raw.ts_ms + 1000,
-        route_id: format!("relay-{source_node}-via-nodeC-{destination_node}"),
-        rtt_ms: 14.0,
-        packet_loss_pct: 0.4,
-        throughput_mbps: 55.0,
-        bandwidth_utilization_pct: 58.0,
-        route_available: true,
-        route_healthy: true,
-        switched_route: true,
-    });
-    history_store.record(RouteHistoryEntry {
-        ts_ms: raw.ts_ms + 2000,
-        route_id: format!("relay-{source_node}-via-nodeC-{destination_node}"),
-        rtt_ms: 17.0,
-        packet_loss_pct: 0.7,
-        throughput_mbps: 52.0,
-        bandwidth_utilization_pct: 92.0,
-        route_available: true,
-        route_healthy: true,
-        switched_route: false,
-    });
-    history_store.record(RouteHistoryEntry {
-        ts_ms: raw.ts_ms + 1000,
-        route_id: format!("relay-{source_node}-via-nodeD-{destination_node}"),
-        rtt_ms: 0.0,
-        packet_loss_pct: 100.0,
-        throughput_mbps: 0.0,
-        bandwidth_utilization_pct: 100.0,
-        route_available: false,
-        route_healthy: false,
-        switched_route: false,
-    });
+    for supplied in supplied_route_observations.as_ref().into_iter().flatten() {
+        history_store.record_measured_observation(supplied.clone());
+    }
     history_store.save_json(&route_history_path)?;
 
     let predictor = SimpleRouteQualityPredictor::default();
@@ -376,47 +435,48 @@ fn main() -> Result<()> {
         high_probability_threshold: network_config.degradation_probability_threshold,
         ..SimpleDegradationPredictor::default()
     };
-    let degradation_predictions = history_store
-        .entries_by_route
-        .iter()
-        .map(|(route_id, entries)| degradation_predictor.predict(route_id, entries))
-        .collect::<Vec<_>>();
+    let degradation_predictions = degradation_predictor.predict_all_routes(&history_store);
     write_json(&degradation_path, &degradation_predictions)?;
     for prediction in &degradation_predictions {
         append_degradation_prediction_jsonl(&degradation_events_path, prediction)?;
     }
 
-    let rewards = predictions
-        .predictions
+    let current_route_id = format!("direct-{source_node}-{destination_node}");
+    let current_hop_count = inventory
+        .candidates
         .iter()
-        .map(|prediction| {
-            let hop_count = inventory
-                .candidates
-                .iter()
-                .find(|candidate| candidate.route_id == prediction.route_id)
-                .map(|candidate| candidate.hop_count)
-                .unwrap_or(0);
-            RouteReward::from_prediction_with_weights(
-                prediction,
-                hop_count,
-                true,
-                false,
-                &network_config.reward_weights,
-            )
-        })
-        .collect::<Vec<_>>();
-    write_json(&rewards_path, &rewards)?;
-
-    let mut rl_policy =
-        ContextualBanditPolicy::new(network_config.rl_learning_rate, network_config.rl_epsilon);
-    for reward in &rewards {
+        .find(|candidate| candidate.route_id == current_route_id)
+        .map(|candidate| candidate.hop_count)
+        .unwrap_or(0);
+    let mut rl_policy = ContextualBanditPolicy::load_or_new(
+        &rl_policy_path,
+        network_config.rl_learning_rate,
+        network_config.rl_epsilon,
+    )?;
+    rl_policy.learning_rate = network_config.rl_learning_rate;
+    rl_policy.epsilon = network_config.rl_epsilon;
+    // A failed active route is actual feedback. Apply it before choosing the
+    // next route so its Q-value cannot continue to win on predicted quality.
+    let failed_current_reward = current_route_failed.then(|| {
+        RouteReward::from_observed_outcome_with_weights(
+            &ObservedRewardInput {
+                route_id: current_route_id.clone(),
+                rtt_ms: Some(observation.rtt_ms),
+                packet_loss_pct: Some(observation.packet_loss_pct),
+                throughput_mbps: Some(observation.throughput_mbps),
+                bandwidth_utilization_pct: Some(observation.bandwidth_utilization_pct),
+                hop_count: current_hop_count,
+                switched_route: false,
+                route_failed: true,
+            },
+            &network_config.reward_weights,
+        )
+    });
+    if let Some(reward) = &failed_current_reward {
         rl_policy.update_with_reward(reward);
     }
     let rl_decision = rl_policy.choose_exploit(&predictions);
-    rl_policy.save_json(&rl_policy_path)?;
-    write_json(&rl_decision_path, &rl_decision)?;
 
-    let current_route_id = format!("direct-{source_node}-{destination_node}");
     let current_score = predictions
         .predictions
         .iter()
@@ -444,10 +504,25 @@ fn main() -> Result<()> {
         .selected_route_id
         .clone()
         .unwrap_or_else(|| current_route_id.clone());
-    let selected_reward = rewards
+    let requested_hop_count = inventory
+        .candidates
         .iter()
-        .find(|reward| reward.route_id == requested_route_id)
-        .map(|reward| reward.total_reward);
+        .find(|candidate| candidate.route_id == requested_route_id)
+        .map(|candidate| candidate.hop_count)
+        .unwrap_or(0);
+    let observed_reward = RouteReward::from_observed_outcome_with_weights(
+        &ObservedRewardInput {
+            route_id: requested_route_id.clone(),
+            rtt_ms: Some(observation.rtt_ms),
+            packet_loss_pct: Some(observation.packet_loss_pct),
+            throughput_mbps: Some(observation.throughput_mbps),
+            bandwidth_utilization_pct: Some(observation.bandwidth_utilization_pct),
+            hop_count: requested_hop_count,
+            switched_route: requested_route_id != current_route_id,
+            route_failed: false,
+        },
+        &network_config.reward_weights,
+    );
     let mut runtime_state = RuntimeRouteState::from_switch_state(&switch_state);
     let apply_request = RuntimeRouteApplyRequest {
         ts_ms: raw.ts_ms,
@@ -461,7 +536,8 @@ fn main() -> Result<()> {
         observed_packet_loss_pct: observation.packet_loss_pct,
         observed_throughput_mbps: observation.throughput_mbps,
         observed_bandwidth_utilization_pct: observation.bandwidth_utilization_pct,
-        observed_reward: selected_reward,
+        observed_reward: (runtime_mode == NetworkAiRuntimeMode::Active)
+            .then_some(observed_reward.total_reward),
     };
     let advisory_safety = RouteSafetyGuard {
         config: network_config.safety.clone(),
@@ -504,12 +580,62 @@ fn main() -> Result<()> {
         },
     )?;
     let runtime_result = mode_execution.route_result;
+    let mut rewards = failed_current_reward.into_iter().collect::<Vec<_>>();
+    if let Some(result) = &runtime_result {
+        // Only an attempted, safety-allowed Active decision has a post-action
+        // outcome. A Shadow/Advisory recommendation must not train the bandit.
+        if result.audit.safety_decision.allowed {
+            let actual = if result.audit.apply_result.applied {
+                observed_reward.clone()
+            } else {
+                RouteReward::from_observed_outcome_with_weights(
+                    &ObservedRewardInput {
+                        route_id: apply_request.requested_route_id.clone(),
+                        rtt_ms: Some(apply_request.observed_rtt_ms),
+                        packet_loss_pct: Some(apply_request.observed_packet_loss_pct),
+                        throughput_mbps: Some(apply_request.observed_throughput_mbps),
+                        bandwidth_utilization_pct: Some(
+                            apply_request.observed_bandwidth_utilization_pct,
+                        ),
+                        hop_count: requested_hop_count,
+                        switched_route: apply_request.requested_route_id != current_route_id,
+                        route_failed: true,
+                    },
+                    &network_config.reward_weights,
+                )
+            };
+            if !(current_route_failed && apply_request.requested_route_id == current_route_id) {
+                rl_policy.update_with_reward(&actual);
+                rewards.push(actual);
+            }
+        }
+    }
+    write_json(&rewards_path, &rewards)?;
+    rl_policy.save_json(&rl_policy_path)?;
+    write_json(&rl_decision_path, &rl_decision)?;
     if let Some(result) = &runtime_result {
         write_json(&safety_decision_path, &result.audit.safety_decision)?;
         write_json(&apply_result_path, &result.audit.apply_result)?;
     }
-    let relay_weights =
-        MultiRelayLoadBalancer::default().calculate(&eligible_routes.eligible, &predictions);
+    let runtime_health = eligible_routes
+        .eligible
+        .iter()
+        .filter(|route| matches!(route.kind, RouteKind::Relay | RouteKind::MultiHopRelay))
+        .map(|route| RelayRuntimeHealth {
+            route_id: route.route_id.clone(),
+            available: route.observed_available,
+            healthy: route.observed_healthy,
+            utilization_pct: Some(observation.bandwidth_utilization_pct),
+            recovered_at_ms: None,
+        })
+        .collect::<Vec<_>>();
+    let relay_weights = MultiRelayLoadBalancer::default().calculate_with_health(
+        &eligible_routes.eligible,
+        &predictions,
+        traffic_class,
+        &runtime_health,
+        raw.ts_ms,
+    );
     write_json(&relay_weights_path, &relay_weights)?;
     if runtime_mode == NetworkAiRuntimeMode::Shadow {
         let selected_prediction = predictions.predictions.iter().find(|prediction| {
@@ -524,10 +650,7 @@ fn main() -> Result<()> {
             &shadow_decision_path,
             &ShadowRouteDecision {
                 schema_version: "network-ai-shadow-decision-v1",
-                decision_id: format!(
-                    "task3-shadow-{source_node}-{destination_node}-{}",
-                    raw.ts_ms
-                ),
+                decision_id: format!("task3-shadow-{runtime_decision_id}"),
                 mode: runtime_mode,
                 traffic_class,
                 priority: format!("{:?}", observation.priority_class),
@@ -572,7 +695,7 @@ fn main() -> Result<()> {
             &advisory_recommendation_path,
             &AdvisoryRouteRecommendation {
                 schema_version: "network-ai-advisory-recommendation-v1",
-                recommendation_id: format!("task3-advisory-{source_node}-{destination_node}-{}", raw.ts_ms),
+                recommendation_id: format!("task3-advisory-{runtime_decision_id}"),
                 mode: runtime_mode,
                 current_route_id: current_route_id.clone(),
                 recommended_route_id: rl_decision.selected_route_id.clone(),
@@ -613,10 +736,7 @@ fn main() -> Result<()> {
         },
     )?;
     let decision_audit = DecisionAuditRecord::from_engine_outputs(
-        format!(
-            "task3-decision-{source_node}-{destination_node}-{}",
-            raw.ts_ms
-        ),
+        runtime_decision_id,
         raw.ts_ms,
         &eligible_routes,
         &predictions,
@@ -712,6 +832,14 @@ fn main() -> Result<()> {
 
     println!();
     println!("5. HISTORICAL ROUTE PERFORMANCE STORE");
+    print_kv("History loaded from disk", history_loaded);
+    print_kv(
+        "Supplied observations",
+        supplied_route_observations
+            .as_ref()
+            .map(Vec::len)
+            .unwrap_or(0),
+    );
     println!(
         "{:<48} {:<8} {:<10} {:<10} {:<11} Success",
         "Route", "Samples", "EWMA RTT", "EWMA Loss", "EWMA Mbps"
@@ -913,9 +1041,10 @@ fn main() -> Result<()> {
     }
     print_kv(
         "Outcome reward fed",
-        selected_reward
-            .map(|v| format!("{v:.2}"))
-            .unwrap_or_else(|| "none".to_string()),
+        rewards
+            .first()
+            .map(|reward| format!("{:.2}", reward.total_reward))
+            .unwrap_or_else(|| "none (no Active post-decision outcome)".to_string()),
     );
 
     if runtime_mode == NetworkAiRuntimeMode::Shadow {
@@ -1010,4 +1139,17 @@ fn main() -> Result<()> {
     print_kv("Task2 bridge status", task2_bridge_path.display());
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decision_id;
+
+    #[test]
+    fn deterministic_decision_ids_are_distinguishable_within_one_millisecond() {
+        let first = decision_id("nodeA", "nodeB", 1_789_000_000_000, 0);
+        let second = decision_id("nodeA", "nodeB", 1_789_000_000_000, 1);
+        assert_ne!(first, second);
+        assert_eq!(first, "task3-decision-nodeA-nodeB-1789000000000-0");
+    }
 }

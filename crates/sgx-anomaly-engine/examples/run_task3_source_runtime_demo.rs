@@ -36,6 +36,7 @@ fn main() -> Result<()> {
         ),
         evidence_root: "data/network_ai/d17_source_runtime_demo".into(),
         requested_route_id: None,
+        current_route_failed: false,
         sensitive_handoff: None,
     })?;
     println!(

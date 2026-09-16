@@ -50,7 +50,7 @@ impl NetworkAiFeatureBuilder {
                     .entries_by_route
                     .get(&candidate.route_id)
                     .and_then(|entries| entries.last())
-                    .map(|entry| entry.bandwidth_utilization_pct)
+                    .and_then(|entry| entry.bandwidth_utilization_pct)
                     .unwrap_or(0.0);
                 (
                     s.ewma_latency_ms,
@@ -124,8 +124,8 @@ mod tests {
             route_id: candidate.route_id.clone(),
             rtt_ms: 50.0,
             packet_loss_pct: 2.0,
-            throughput_mbps: 30.0,
-            bandwidth_utilization_pct: 20.0,
+            throughput_mbps: Some(30.0),
+            bandwidth_utilization_pct: Some(20.0),
             route_available: true,
             route_healthy: true,
             switched_route: false,

@@ -14,11 +14,44 @@ pub struct RouteHistoryEntry {
     pub route_id: String,
     pub rtt_ms: f64,
     pub packet_loss_pct: f64,
-    pub throughput_mbps: f64,
-    pub bandwidth_utilization_pct: f64,
+    pub throughput_mbps: Option<f64>,
+    pub bandwidth_utilization_pct: Option<f64>,
     pub route_available: bool,
     pub route_healthy: bool,
     pub switched_route: bool,
+}
+
+/// A measured route outcome supplied by the telemetry/runtime boundary.
+///
+/// This deliberately contains no predictor or demo defaults: callers provide
+/// the observation that was actually measured for the route.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RouteObservationInput {
+    pub ts_ms: u64,
+    pub route_id: String,
+    pub rtt_ms: f64,
+    pub packet_loss_pct: f64,
+    pub throughput_mbps: Option<f64>,
+    pub bandwidth_utilization_pct: Option<f64>,
+    pub route_available: bool,
+    pub route_healthy: bool,
+    pub switched_route: bool,
+}
+
+impl From<RouteObservationInput> for RouteHistoryEntry {
+    fn from(value: RouteObservationInput) -> Self {
+        Self {
+            ts_ms: value.ts_ms,
+            route_id: value.route_id,
+            rtt_ms: value.rtt_ms,
+            packet_loss_pct: value.packet_loss_pct,
+            throughput_mbps: value.throughput_mbps,
+            bandwidth_utilization_pct: value.bandwidth_utilization_pct,
+            route_available: value.route_available,
+            route_healthy: value.route_healthy,
+            switched_route: value.switched_route,
+        }
+    }
 }
 
 /// An append-only record of the outcome observed after a route decision.
@@ -92,14 +125,22 @@ impl RouteHistoryStore {
             route_id: observation.current_route_id.clone(),
             rtt_ms: observation.rtt_ms,
             packet_loss_pct: observation.packet_loss_pct,
-            throughput_mbps: observation.throughput_mbps,
-            bandwidth_utilization_pct: observation.bandwidth_utilization_pct,
+            throughput_mbps: Some(observation.throughput_mbps),
+            bandwidth_utilization_pct: Some(observation.bandwidth_utilization_pct),
             route_available: observation.route_available,
             route_healthy: observation.rtt_ms.is_finite()
                 && observation.packet_loss_pct.is_finite()
                 && observation.throughput_mbps.is_finite(),
             switched_route: false,
         })
+    }
+
+    /// Records one externally supplied, measured route observation.
+    pub fn record_measured_observation(
+        &mut self,
+        observation: RouteObservationInput,
+    ) -> RoutePerformanceStats {
+        self.record(observation.into())
     }
 
     pub fn record(&mut self, entry: RouteHistoryEntry) -> RoutePerformanceStats {
@@ -116,7 +157,7 @@ impl RouteHistoryStore {
                 switch_count: 0,
                 ewma_latency_ms: entry.rtt_ms,
                 ewma_loss_pct: entry.packet_loss_pct,
-                ewma_throughput_mbps: entry.throughput_mbps,
+                ewma_throughput_mbps: entry.throughput_mbps.unwrap_or(0.0),
                 success_rate: 0.0,
                 last_seen_ts_ms: entry.ts_ms,
             });
@@ -124,14 +165,18 @@ impl RouteHistoryStore {
         if stats.sample_count == 0 {
             stats.ewma_latency_ms = entry.rtt_ms;
             stats.ewma_loss_pct = entry.packet_loss_pct;
-            stats.ewma_throughput_mbps = entry.throughput_mbps;
+            if let Some(throughput) = entry.throughput_mbps {
+                stats.ewma_throughput_mbps = throughput;
+            }
         } else {
             let alpha = self.ewma_alpha;
             stats.ewma_latency_ms = alpha * entry.rtt_ms + (1.0 - alpha) * stats.ewma_latency_ms;
             stats.ewma_loss_pct =
                 alpha * entry.packet_loss_pct + (1.0 - alpha) * stats.ewma_loss_pct;
-            stats.ewma_throughput_mbps =
-                alpha * entry.throughput_mbps + (1.0 - alpha) * stats.ewma_throughput_mbps;
+            if let Some(throughput) = entry.throughput_mbps {
+                stats.ewma_throughput_mbps =
+                    alpha * throughput + (1.0 - alpha) * stats.ewma_throughput_mbps;
+            }
         }
 
         stats.sample_count += 1;
@@ -180,6 +225,21 @@ impl RouteHistoryStore {
         serde_json::from_str(&json).context("parsing route history store")
     }
 
+    /// Restores the durable per-route learning state when it already exists,
+    /// otherwise creates a fresh store for the first optimizer run.
+    pub fn load_or_new(
+        path: impl AsRef<Path>,
+        ewma_alpha: f64,
+        max_entries_per_route: usize,
+    ) -> Result<Self> {
+        let path = path.as_ref();
+        if path.exists() {
+            Self::load_json(path)
+        } else {
+            Ok(Self::new(ewma_alpha, max_entries_per_route))
+        }
+    }
+
     /// Persists one applied/observed outcome without rewriting existing audit rows.
     pub fn append_observed_outcome_jsonl(
         path: impl AsRef<Path>,
@@ -222,8 +282,8 @@ mod tests {
             route_id: route_id.to_string(),
             rtt_ms,
             packet_loss_pct: loss,
-            throughput_mbps: throughput,
-            bandwidth_utilization_pct: 25.0,
+            throughput_mbps: Some(throughput),
+            bandwidth_utilization_pct: Some(25.0),
             route_available: true,
             route_healthy: true,
             switched_route: false,
@@ -243,6 +303,52 @@ mod tests {
         assert!((stats.ewma_loss_pct - 2.0).abs() < 1e-9);
         assert!((stats.ewma_throughput_mbps - 30.0).abs() < 1e-9);
         assert_eq!(stats.success_rate, 1.0);
+    }
+
+    #[test]
+    fn load_or_new_preserves_learning_across_optimizer_restarts() {
+        let root =
+            std::env::temp_dir().join(format!("network-ai-history-restart-{}", std::process::id()));
+        let path = root.join("route_history_store.json");
+        let mut first = RouteHistoryStore::load_or_new(&path, 0.5, 10).unwrap();
+        first.record(entry("route-a", 100, 20.0, 1.0, 50.0));
+        first.save_json(&path).unwrap();
+
+        let mut restarted = RouteHistoryStore::load_or_new(&path, 0.5, 10).unwrap();
+        assert_eq!(restarted.stats_for("route-a").unwrap().sample_count, 1);
+        assert_eq!(
+            restarted.stats_for("route-a").unwrap().ewma_latency_ms,
+            20.0
+        );
+        restarted.record(entry("route-a", 200, 40.0, 3.0, 30.0));
+        assert_eq!(restarted.stats_for("route-a").unwrap().sample_count, 2);
+        assert_eq!(
+            restarted.stats_for("route-a").unwrap().ewma_latency_ms,
+            30.0
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn records_caller_supplied_measured_route_observation() {
+        let mut store = RouteHistoryStore::new(0.5, 10);
+        let stats = store.record_measured_observation(RouteObservationInput {
+            ts_ms: 321,
+            route_id: "relay-measured".to_string(),
+            rtt_ms: 12.5,
+            packet_loss_pct: 0.2,
+            throughput_mbps: Some(88.0),
+            bandwidth_utilization_pct: Some(61.0),
+            route_available: true,
+            route_healthy: true,
+            switched_route: true,
+        });
+
+        assert_eq!(stats.route_id, "relay-measured");
+        assert_eq!(stats.sample_count, 1);
+        assert_eq!(stats.ewma_latency_ms, 12.5);
+        assert_eq!(stats.switch_count, 1);
     }
 
     #[test]

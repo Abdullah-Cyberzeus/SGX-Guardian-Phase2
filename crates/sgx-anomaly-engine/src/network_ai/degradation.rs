@@ -3,7 +3,7 @@
 //! This predictor warns before a route reaches a hard failure threshold. It is
 //! deterministic and emits contributor labels so the decision remains auditable.
 
-use super::history::RouteHistoryEntry;
+use super::history::{RouteHistoryEntry, RouteHistoryStore};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
@@ -41,6 +41,18 @@ impl Default for SimpleDegradationPredictor {
     }
 }
 
+impl SimpleDegradationPredictor {
+    /// Evaluates every route from the retained history store so degradation
+    /// detection can survive optimizer restarts.
+    pub fn predict_all_routes(&self, history: &RouteHistoryStore) -> Vec<DegradationPrediction> {
+        history
+            .entries_by_route
+            .iter()
+            .map(|(route_id, entries)| self.predict(route_id, entries))
+            .collect()
+    }
+}
+
 impl DegradationPredictor for SimpleDegradationPredictor {
     fn predict(&self, route_id: &str, recent: &[RouteHistoryEntry]) -> DegradationPrediction {
         if recent.len() < 2 {
@@ -69,12 +81,19 @@ impl DegradationPredictor for SimpleDegradationPredictor {
             contributors.push("rising_packet_loss".to_string());
         }
 
-        if first.throughput_mbps > 0.0 && last.throughput_mbps < first.throughput_mbps * 0.75 {
-            probability += 0.25;
-            contributors.push("falling_throughput".to_string());
+        if let (Some(first_throughput), Some(last_throughput)) =
+            (first.throughput_mbps, last.throughput_mbps)
+        {
+            if first_throughput > 0.0 && last_throughput < first_throughput * 0.75 {
+                probability += 0.25;
+                contributors.push("falling_throughput".to_string());
+            }
         }
 
-        if last.bandwidth_utilization_pct >= 85.0 {
+        if last
+            .bandwidth_utilization_pct
+            .is_some_and(|utilization| utilization >= 85.0)
+        {
             probability += 0.20;
             contributors.push("high_relay_utilization".to_string());
         }
@@ -150,8 +169,8 @@ mod tests {
             route_id: "direct-nodeA-nodeB".to_string(),
             rtt_ms,
             packet_loss_pct: loss,
-            throughput_mbps: throughput,
-            bandwidth_utilization_pct: 30.0,
+            throughput_mbps: Some(throughput),
+            bandwidth_utilization_pct: Some(30.0),
             route_available: true,
             route_healthy: true,
             switched_route: false,
@@ -229,7 +248,7 @@ mod tests {
         ));
         let path = tmp_root.join("degradation.jsonl");
         let mut saturated = entry(2_000, 21.0, 0.6, 41.0);
-        saturated.bandwidth_utilization_pct = 92.0;
+        saturated.bandwidth_utilization_pct = Some(92.0);
         let prediction = SimpleDegradationPredictor::default().predict(
             "direct-nodeA-nodeB",
             &[entry(1_000, 20.0, 0.5, 40.0), saturated],
@@ -242,5 +261,40 @@ mod tests {
             .unwrap()
             .contains("high_relay_utilization"));
         let _ = std::fs::remove_dir_all(tmp_root);
+    }
+
+    #[test]
+    fn retained_history_changes_degradation_prediction_after_restart() {
+        let root = std::env::temp_dir().join(format!(
+            "network-ai-retained-degradation-{}",
+            std::process::id()
+        ));
+        let path = root.join("route_history_store.json");
+        let predictor = SimpleDegradationPredictor::default();
+        let mut first_cycle = RouteHistoryStore::new(0.5, 10);
+        first_cycle.record(entry(1_000, 20.0, 0.5, 60.0));
+        first_cycle.record(entry(2_000, 21.0, 0.6, 61.0));
+        first_cycle.save_json(&path).unwrap();
+
+        let mut second_cycle = RouteHistoryStore::load_json(&path).unwrap();
+        let before = predictor
+            .predict_all_routes(&second_cycle)
+            .into_iter()
+            .find(|prediction| prediction.route_id == "direct-nodeA-nodeB")
+            .unwrap()
+            .probability;
+        second_cycle.record(entry(3_000, 50.0, 6.0, 30.0));
+        let after = predictor
+            .predict_all_routes(&second_cycle)
+            .into_iter()
+            .find(|prediction| prediction.route_id == "direct-nodeA-nodeB")
+            .unwrap();
+
+        assert!(after.probability > before);
+        assert!(after.contributors.contains(&"rising_rtt".to_string()));
+        assert!(after
+            .contributors
+            .contains(&"falling_throughput".to_string()));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

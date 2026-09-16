@@ -166,6 +166,17 @@ impl ContextualBanditPolicy {
             .with_context(|| format!("reading RL policy {}", path.display()))?;
         serde_json::from_str(&json).context("parsing RL policy")
     }
+
+    /// Restores durable Q-values after a process restart, or creates the
+    /// initial policy for a route pair that has not been observed before.
+    pub fn load_or_new(path: impl AsRef<Path>, learning_rate: f64, epsilon: f64) -> Result<Self> {
+        let path = path.as_ref();
+        if path.exists() {
+            Self::load_json(path)
+        } else {
+            Ok(Self::new(learning_rate, epsilon))
+        }
+    }
 }
 
 impl Default for ContextualBanditPolicy {
@@ -261,6 +272,100 @@ mod tests {
 
         assert_eq!(value.update_count, 1);
         assert!((value.q_value - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn observed_outcome_reward_updates_q_value_not_prediction_estimate() {
+        let mut policy = ContextualBanditPolicy::new(1.0, 0.0);
+        let observed =
+            RouteReward::from_observed_outcome(&crate::network_ai::ObservedRewardInput {
+                route_id: "route-a".to_string(),
+                rtt_ms: Some(95.0),
+                packet_loss_pct: Some(40.0),
+                throughput_mbps: Some(2.0),
+                bandwidth_utilization_pct: Some(95.0),
+                hop_count: 1,
+                switched_route: true,
+                route_failed: true,
+            });
+
+        let value = policy.update_with_reward(&observed);
+
+        assert_eq!(value.q_value, observed.total_reward);
+        assert!(value.q_value < 0.0);
+    }
+
+    #[test]
+    fn failed_current_route_is_penalized_before_later_route_selection() {
+        let predictions = RoutePredictionSet {
+            model_version: NETWORK_AI_PREDICTOR_VERSION.to_string(),
+            feature_schema_version: "network-ai-v1".to_string(),
+            predictions: vec![
+                prediction("failed-direct", 20.0),
+                prediction("healthy-relay", 10.0),
+            ],
+            selected_route_id: Some("failed-direct".to_string()),
+        };
+        let mut policy = ContextualBanditPolicy::new(1.0, 0.0);
+        assert_eq!(
+            policy
+                .choose_exploit(&predictions)
+                .selected_route_id
+                .as_deref(),
+            Some("failed-direct")
+        );
+
+        let failed = RouteReward::from_observed_outcome(&crate::network_ai::ObservedRewardInput {
+            route_id: "failed-direct".to_string(),
+            rtt_ms: Some(95.0),
+            packet_loss_pct: Some(40.0),
+            throughput_mbps: Some(2.0),
+            bandwidth_utilization_pct: Some(95.0),
+            hop_count: 0,
+            switched_route: false,
+            route_failed: true,
+        });
+        assert!(failed.components.failure_penalty > 0.0);
+        let updated = policy.update_with_reward(&failed);
+        assert!(updated.q_value < 0.0);
+        assert_eq!(
+            policy
+                .choose_exploit(&predictions)
+                .selected_route_id
+                .as_deref(),
+            Some("healthy-relay")
+        );
+    }
+
+    #[test]
+    fn load_or_new_preserves_q_values_and_update_counts_across_restarts() {
+        let root =
+            std::env::temp_dir().join(format!("network-ai-rl-restart-{}", std::process::id()));
+        let path = root.join("rl_policy.json");
+        let reward = RouteReward::from_observed_outcome(&crate::network_ai::ObservedRewardInput {
+            route_id: "route-a".to_string(),
+            rtt_ms: Some(20.0),
+            packet_loss_pct: Some(1.0),
+            throughput_mbps: Some(40.0),
+            bandwidth_utilization_pct: Some(30.0),
+            hop_count: 1,
+            switched_route: false,
+            route_failed: false,
+        });
+
+        let mut first = ContextualBanditPolicy::load_or_new(&path, 0.5, 0.0).unwrap();
+        let first_value = first.update_with_reward(&reward);
+        first.save_json(&path).unwrap();
+
+        let mut restarted = ContextualBanditPolicy::load_or_new(&path, 0.5, 0.0).unwrap();
+        let restored = restarted.action_values.get("route-a").unwrap();
+        assert_eq!(restored.update_count, 1);
+        assert_eq!(restored.q_value, first_value.q_value);
+        let evolved = restarted.update_with_reward(&reward);
+        assert_eq!(evolved.update_count, 2);
+        assert_ne!(evolved.q_value, first_value.q_value);
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

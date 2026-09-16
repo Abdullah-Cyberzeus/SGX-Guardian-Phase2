@@ -63,10 +63,19 @@ impl NebulaDaemon {
     ///   3. Spawn the daemon.
     ///   4. Wait up to 20 s for nebula0 to appear.
     pub async fn start(config_path: &str) -> Result<(), Error> {
-        // println!("🚀 Starting Nebula daemon (config: {})...", config_path);
+        // Production lifecycle rule:
+        //
+        // Once Nebula is healthy and nebula0 is present, start() is
+        // idempotent and MUST NOT restart the live encrypted dataplane.
+        if Self::is_running_for_config(config_path) && Self::interface_exists() {
+            return Ok(());
+        }
 
-        // 1. Kill stale instance
-        Self::kill_existing_for_config(config_path).await;
+        // A matching process without nebula0 is not considered healthy.
+        // Recover only this broken/stale instance; never broad-kill Nebula.
+        if Self::is_running_for_config(config_path) {
+            Self::kill_existing_for_config(config_path).await;
+        }
 
         // 2. Validate config
         // Config validation stays synchronous for startup-order parity with the
@@ -129,11 +138,84 @@ impl NebulaDaemon {
 
     /// Check if a nebula process is running.
     pub fn is_running() -> bool {
-        Command::new("pgrep")
-            .args(["-f", "nebula -config"])
-            .output()
-            .map(|o| o.status.success())
+        Self::live_nebula_pids(None)
+            .map(|pids| !pids.is_empty())
             .unwrap_or(false)
+    }
+
+    /// Check for a live, non-zombie Nebula process using exactly this config.
+    pub fn is_running_for_config(config_path: &str) -> bool {
+        Self::live_nebula_pids(Some(config_path))
+            .map(|pids| !pids.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// Inspect /proc directly so defunct Nebula children are never accepted
+    /// as evidence that the production daemon is healthy.
+    fn live_nebula_pids(config_path: Option<&str>) -> Result<Vec<u32>, Error> {
+        let mut live = Vec::new();
+
+        for entry in std::fs::read_dir("/proc")? {
+            let entry = entry?;
+
+            let Some(pid_text) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+
+            let Ok(pid) = pid_text.parse::<u32>() else {
+                continue;
+            };
+
+            let stat = match std::fs::read_to_string(entry.path().join("stat")) {
+                Ok(stat) => stat,
+                Err(_) => continue,
+            };
+
+            // Everything after the final ") " starts with process state.
+            // Z means zombie/defunct and must not count as running.
+            let Some((_, after_comm)) = stat.rsplit_once(") ") else {
+                continue;
+            };
+
+            if after_comm.starts_with('Z') {
+                continue;
+            }
+
+            let cmdline = match std::fs::read(entry.path().join("cmdline")) {
+                Ok(cmdline) => cmdline,
+                Err(_) => continue,
+            };
+
+            let args: Vec<String> = cmdline
+                .split(|byte| *byte == 0)
+                .filter(|arg| !arg.is_empty())
+                .map(|arg| String::from_utf8_lossy(arg).into_owned())
+                .collect();
+
+            let executable_is_nebula = args
+                .first()
+                .and_then(|arg| std::path::Path::new(arg).file_name())
+                .and_then(|name| name.to_str())
+                == Some("nebula");
+
+            if !executable_is_nebula {
+                continue;
+            }
+
+            if let Some(expected_config) = config_path {
+                let exact_config = args
+                    .windows(2)
+                    .any(|pair| pair[0] == "-config" && pair[1] == expected_config);
+
+                if !exact_config {
+                    continue;
+                }
+            }
+
+            live.push(pid);
+        }
+
+        Ok(live)
     }
 
     /// Check if the nebula0 TUN interface exists.

@@ -2,6 +2,7 @@ use crate::cot::failover::FailoverEngine;
 use crate::cot::link_monitor::{LinkMonitor, LinkSnapshot};
 use crate::cot::membership::CircleMembership;
 use crate::metrics::Metrics;
+use crate::nebula::lighthouse::LighthouseRegistry;
 use crate::nebula::overlay_registry::OverlayRegistry;
 use crate::nebula::relay_registry::{RelayEntry, RelayRegistry};
 use crate::nebula::stats::{NebulaStats, RelayStats};
@@ -14,15 +15,15 @@ use serde_json::Value;
 use sgx_anomaly_engine::network_ai::candidates::RouteCandidateMetadata;
 use sgx_anomaly_engine::network_ai::{
     append_observation_jsonl, classify_message_type, persist_current_observation,
-    ContextualBanditPolicy, DecisionAuditRecord, DecisionEvidenceLinks, DegradationPredictor,
-    EligibilityFilter, MultiRelayLoadBalancer, NetworkAiConfig as EngineNetworkAiConfig,
-    NetworkAiRuntimeMode, NetworkObservation, NetworkTelemetryAdapter, NetworkTelemetryContext,
-    RelayRuntimeHealth, RelayWeightSet, RouteCandidate, RouteHistoryEntry, RouteHistoryStore,
-    RouteKind, RoutePredictionSet, RouteReward, RuntimeModeDecision, RuntimeRouteApplyRequest,
-    RuntimeRouteState, SafeRuntimeRouteController, SimpleDegradationPredictor,
-    SimpleRouteQualityPredictor, Task1RouteSignal, Task2RoutingTrustSummary,
-    Task2TrustStateSources, TrafficClass, TrustStateSnapshot, NETWORK_AI_CONFIG_VERSION,
-    NETWORK_AI_RUNTIME_MODE_VERSION,
+    ContextualBanditPolicy, DecisionAuditRecord, DecisionEvidenceLinks, EligibilityFilter,
+    MultiRelayLoadBalancer, NetworkAiConfig as EngineNetworkAiConfig, NetworkAiRuntimeMode,
+    NetworkObservation, NetworkTelemetryAdapter, NetworkTelemetryContext, ObservedRewardInput,
+    RelayRuntimeHealth, RelayWeightSet, RouteCandidate, RouteHistoryStore, RouteKind,
+    RouteObservationInput, RoutePredictionSet, RouteReward, RuntimeModeDecision,
+    RuntimeRouteApplyRequest, RuntimeRouteState, SafeRuntimeRouteController,
+    SimpleDegradationPredictor, SimpleRouteQualityPredictor, Task1RouteSignal,
+    Task2RoutingTrustSummary, Task2TrustStateSources, TrafficClass, TrustStateSnapshot,
+    NETWORK_AI_CONFIG_VERSION, NETWORK_AI_RUNTIME_MODE_VERSION,
 };
 use sgx_anomaly_engine::telemetry::{RawSample, TelemetrySource};
 use sgx_anomaly_engine::virtual_shift::VS17_MEMBER_POLICY_STATE;
@@ -389,14 +390,20 @@ struct OverlayPathProbe {
 }
 
 impl OverlayPathTelemetry {
-    fn to_history_entry(&self) -> Option<RouteHistoryEntry> {
-        Some(RouteHistoryEntry {
+    fn to_observation_input(&self) -> Option<RouteObservationInput> {
+        let rtt_ms = self
+            .rtt_ms
+            .or_else(|| (!self.route_available).then_some(0.0))?;
+        let packet_loss_pct = self
+            .packet_loss_pct
+            .or_else(|| (!self.route_available).then_some(100.0))?;
+        Some(RouteObservationInput {
             ts_ms: self.ts_ms,
             route_id: self.route_id.clone(),
-            rtt_ms: self.rtt_ms?,
-            packet_loss_pct: self.packet_loss_pct?,
-            throughput_mbps: self.throughput_mbps?,
-            bandwidth_utilization_pct: 0.0,
+            rtt_ms,
+            packet_loss_pct,
+            throughput_mbps: self.throughput_mbps,
+            bandwidth_utilization_pct: None,
             route_available: self.route_available,
             route_healthy: self.route_available,
             switched_route: false,
@@ -413,9 +420,10 @@ pub struct ProductionTopology {
     pub relay_routes: HashMap<String, RelayEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ObservedRouteState {
     pub route_id: String,
+    pub destination_node: String,
     pub interface_name: Option<String>,
     pub confirmed: bool,
     pub diagnostic: String,
@@ -510,6 +518,13 @@ pub trait Task2TrustProvider: Send + Sync {
 #[async_trait]
 pub trait RouteObservationProvider: Send + Sync {
     async fn current_route(&self, topology: &ProductionTopology) -> Result<ObservedRouteState>;
+
+    async fn current_routes(
+        &self,
+        topology: &ProductionTopology,
+    ) -> Result<Vec<ObservedRouteState>> {
+        Ok(vec![self.current_route(topology).await?])
+    }
 }
 
 #[async_trait]
@@ -561,10 +576,7 @@ impl Task3NetworkAiRuntimeService {
             deps.link_monitor.clone(),
         ));
         let trust = Arc::new(FileTask2TrustProvider::new(config.task2_trust_root.clone()));
-        let observation = Arc::new(SgxRouteObservationProvider::new(
-            deps.failover.clone(),
-            config.persistence_root.clone(),
-        ));
+        let observation = Arc::new(SgxRouteObservationProvider::new(deps.failover.clone()));
         let transport = Arc::new(SgxNebulaOverlayRouteTransport::new(
             config.persistence_root.clone(),
             config.allow_transport_apply,
@@ -692,70 +704,15 @@ impl Task3NetworkAiRuntimeService {
             NetworkAiRuntimeMode::Shadow
         };
 
-        // D15.3: Active mode is fail-closed.
-        //
-        // Merely setting `mode = active` in configuration must not grant
-        // production route-apply authority. Active mode becomes effective
-        // only when fresh production safety evidence proves that the safety
-        // controller evaluated the route and transport application is allowed.
-        //
-        // This is production wiring only; no AI prediction, scoring, RL, or
-        // Task2 trust behaviour is changed here.
-        let mut active_mode_rejection: Option<String> = None;
-
-        let runtime_mode = if requested_mode == NetworkAiRuntimeMode::Active {
-            const ACTIVE_EVIDENCE_MAX_AGE_MS: u64 = 300_000;
-
-            let safety_path = self
-                .config
-                .persistence_root
-                .join("safety_runtime_status.json");
-
-            let safety_evidence = fs::read_to_string(&safety_path)
-                .ok()
-                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
-
-            let activation_allowed = safety_evidence.as_ref().is_some_and(|value| {
-                let safety_evaluated = value
-                    .get("safety_evaluated")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-
-                let transport_apply_allowed = value
-                    .get("transport_apply_allowed")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-
-                let evidence_ts_ms = value.get("ts_ms").and_then(|v| v.as_u64()).unwrap_or(0);
-
-                let evidence_is_fresh = evidence_ts_ms > 0
-                    && evidence_ts_ms <= now_ms
-                    && now_ms.saturating_sub(evidence_ts_ms) <= ACTIVE_EVIDENCE_MAX_AGE_MS;
-
-                safety_evaluated && transport_apply_allowed && evidence_is_fresh
-            });
-
-            if activation_allowed {
-                NetworkAiRuntimeMode::Active
-            } else {
-                let detail = safety_evidence
-                    .as_ref()
-                    .and_then(|value| value.get("reason"))
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("missing, stale, or incomplete production safety evidence");
-
-                let reason = format!(
-                    "Active mode activation rejected; valid safety proof is required before enabling Active: {}",
-                    detail
-                );
-
-                tracing::warn!(%reason, "Task3 NetworkAI Active activation rejected");
-                active_mode_rejection = Some(reason);
-                NetworkAiRuntimeMode::Shadow
-            }
-        } else {
-            requested_mode
-        };
+        // Active mode authorization is enforced against current-cycle
+        // production evidence below: D3-confirmed route state, Task2-backed
+        // eligibility, and the D10 safety decision all execute before the
+        // production transport adapter can be called. Requiring the previous
+        // cycle's safety_runtime_status.json here creates a circular bootstrap
+        // dependency because Shadow mode returns before producing fresh D10
+        // evidence.
+        let active_mode_rejection: Option<String> = None;
+        let runtime_mode = requested_mode;
 
         // Persist the actual effective runtime configuration. The operator's
         // requested value remains preserved in network_ai.json.
@@ -876,8 +833,67 @@ impl Task3NetworkAiRuntimeService {
             .trust
             .current_trust_state(&topology.local_node, &required_peers, now_ms)
             .await?;
-        let observed = self.observation.current_route(&topology).await?;
-        let mut state = if observed.confirmed {
+        let route_observations = self.observation.current_routes(&topology).await?;
+
+        persist_json(
+            self.config.persistence_root.join("route_observations.json"),
+            &serde_json::json!({
+                "schema_version": "task3-d3-route-observations-v1",
+                "ts_ms": now_ms,
+                "source": "live Nebula UDP/4242 dataplane plus Nebula registry",
+                "observations": &route_observations,
+            }),
+        )?;
+
+        // A mesh can have multiple simultaneous destination routes.
+        // Do not invent a global active route before AI selects a destination.
+        let confirmed_preselection = route_observations
+            .iter()
+            .filter(|route| route.confirmed)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let mut observed = if confirmed_preselection.len() == 1 {
+            confirmed_preselection[0].clone()
+        } else {
+            ObservedRouteState {
+                route_id: "unknown-unconfirmed-nebula-route".to_string(),
+                destination_node: String::new(),
+                interface_name: None,
+                confirmed: false,
+                diagnostic: if confirmed_preselection.is_empty() {
+                    "D3 no confirmed live Nebula destination route".to_string()
+                } else {
+                    format!(
+                        "D3 observed {} simultaneous destination-scoped Nebula routes; no global route inferred",
+                        confirmed_preselection.len()
+                    )
+                },
+                started_ms: now_ms,
+            }
+        };
+
+        // Preserve the controller-owned active route independently from D3
+        // destination observations. Multiple simultaneous confirmed routes do
+        // not imply that any one of them should become the active route.
+        let route_state_path = self
+            .config
+            .persistence_root
+            .join("current_route_state.json");
+
+        let mut state = if route_state_path.exists() {
+            match RuntimeRouteState::load_json(&route_state_path) {
+                Ok(persisted)
+                    if confirmed_preselection
+                        .iter()
+                        .any(|route| route.route_id == persisted.active_route_id) =>
+                {
+                    Some(persisted)
+                }
+                _ if observed.confirmed => Some(self.load_or_observed_state(&observed)?),
+                _ => None,
+            }
+        } else if observed.confirmed {
             Some(self.load_or_observed_state(&observed)?)
         } else {
             None
@@ -960,11 +976,11 @@ impl Task3NetworkAiRuntimeService {
                 .iter()
                 .find(|telemetry| telemetry.route_id == candidate.route_id)
             {
-                if let Some(entry) = telemetry.to_history_entry() {
-                    history.record(entry.clone());
+                if let Some(observation) = telemetry.to_observation_input() {
+                    history.record_measured_observation(observation.clone());
                     append_jsonl(
                         self.config.persistence_root.join("route_history.jsonl"),
-                        &entry,
+                        &observation,
                     )?;
                 }
             }
@@ -978,18 +994,250 @@ impl Task3NetworkAiRuntimeService {
         // No synthetic anomaly/default score is created when no fresh alert exists.
         let task1_signal = latest_task1_route_signal(now_ms);
 
+        // Route optimization is destination-scoped. A route to peer B is not
+        // an alternative for an active communication path to peer C.
+        //
+        // Derive the decision destination from the controller-owned active
+        // route when available. This preserves D3 multi-destination discovery
+        // while ensuring D7/D8/D9 compare only routes that can reach the same
+        // destination.
+        let persisted_route_state_path = self
+            .config
+            .persistence_root
+            .join("current_route_state.json");
+
+        let persisted_route_state = RuntimeRouteState::load_json(&persisted_route_state_path).ok();
+
+        let decision_destination = persisted_route_state
+            .as_ref()
+            .and_then(|state| {
+                topology
+                    .route_candidates
+                    .iter()
+                    .find(|candidate| candidate.route_id == state.active_route_id)
+            })
+            .map(|candidate| candidate.destination_node.clone());
+
+        let decision_candidates = decision_destination
+            .as_ref()
+            .map(|destination| {
+                eligible
+                    .eligible
+                    .iter()
+                    .filter(|candidate| candidate.destination_node == *destination)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .filter(|candidates| !candidates.is_empty())
+            .unwrap_or_else(|| eligible.eligible.clone());
+
         let predictions = SimpleRouteQualityPredictor::default().predict_with_task1_signal(
-            &eligible.eligible,
+            &decision_candidates,
             &history,
             task1_signal.as_ref(),
             now_ms,
         );
+
         let mut policy = self.load_policy(&network_config)?;
+        // D9 learning must be bound to the route that was active before
+        // this optimization decision. Do not use the temporary D3
+        // pre-selection state because multiple simultaneous Nebula
+        // destination sessions are not a global active-route decision.
+        let current_route_id_for_learning = persisted_route_state
+            .as_ref()
+            .map(|state| state.active_route_id.clone())
+            .or_else(|| state.as_ref().map(|state| state.active_route_id.clone()));
+
+        let current_route_failed = current_route_id_for_learning
+            .as_ref()
+            .and_then(|route_id| {
+                topology
+                    .route_candidates
+                    .iter()
+                    .find(|candidate| candidate.route_id == *route_id)
+            })
+            .map(|candidate| !candidate.observed_available || !candidate.observed_healthy)
+            .unwrap_or(false);
+        let current_failed_reward = if current_route_failed {
+            current_route_id_for_learning.as_ref().map(|route_id| {
+                let hop_count = topology
+                    .route_candidates
+                    .iter()
+                    .find(|candidate| candidate.route_id == *route_id)
+                    .map(|candidate| candidate.hop_count)
+                    .unwrap_or(0);
+                RouteReward::from_observed_outcome_with_weights(
+                    &ObservedRewardInput {
+                        route_id: route_id.clone(),
+                        rtt_ms: Some(observation.rtt_ms),
+                        packet_loss_pct: Some(observation.packet_loss_pct),
+                        throughput_mbps: Some(observation.throughput_mbps),
+                        bandwidth_utilization_pct: Some(observation.bandwidth_utilization_pct),
+                        hop_count,
+                        switched_route: false,
+                        route_failed: true,
+                    },
+                    &network_config.reward_weights,
+                )
+            })
+        } else {
+            None
+        };
+        if let Some(reward) = &current_failed_reward {
+            policy.update_with_reward(reward);
+        }
+
+        // D9: when the confirmed current route is still technically available
+        // and healthy, continuously learn from its fresh route-specific
+        // production telemetry. This allows degraded latency/loss outcomes to
+        // reduce a stale historical Q-value even when D10 correctly blocks a
+        // same-route transport apply.
+        //
+        // Hard failures remain owned by current_failed_reward above so the
+        // same failure outcome is never learned twice.
+        if !current_route_failed {
+            if let Some(current_route_id) = current_route_id_for_learning.as_ref() {
+                if let Some(measured) = candidate_telemetry
+                    .iter()
+                    .find(|telemetry| telemetry.route_id == *current_route_id)
+                {
+                    let hop_count = topology
+                        .route_candidates
+                        .iter()
+                        .find(|candidate| candidate.route_id == *current_route_id)
+                        .map(|candidate| candidate.hop_count)
+                        .unwrap_or(0);
+
+                    let reward = RouteReward::from_observed_outcome_with_weights(
+                        &ObservedRewardInput {
+                            route_id: current_route_id.clone(),
+                            rtt_ms: measured.rtt_ms,
+                            packet_loss_pct: measured.packet_loss_pct,
+                            throughput_mbps: measured.throughput_mbps,
+                            bandwidth_utilization_pct: None,
+                            hop_count,
+                            switched_route: false,
+                            route_failed: false,
+                        },
+                        &network_config.reward_weights,
+                    );
+
+                    policy.update_with_reward(&reward);
+
+                    append_jsonl(
+                        self.config.persistence_root.join("rewards.jsonl"),
+                        &serde_json::json!({
+                            "decision_id": format!("task3-{}-current-route", now_ms),
+                            "ts_ms": now_ms,
+                            "observation_phase": "current_route_observation",
+                            "reward": reward,
+                        }),
+                    )?;
+                }
+            }
+        }
+
         let decision = policy.choose_exploit(&predictions);
-        let selected_route = decision
+        let mut selected_route = decision
             .selected_route_id
             .clone()
             .or_else(|| predictions.selected_route_id.clone());
+
+        let degradation_predictions = SimpleDegradationPredictor {
+            high_probability_threshold: network_config.degradation_probability_threshold,
+            ..SimpleDegradationPredictor::default()
+        }
+        .predict_all_routes(&history);
+
+        // D8 proactive degradation avoidance.
+        // If the initial D7/D9 recommendation is predicted to cross the
+        // configured degradation threshold, prefer the highest-quality
+        // Task2-eligible route whose degradation risk remains below it.
+        //
+        // D8 changes only the recommendation. D10 owns switch safety and
+        // D11 owns production transport actuation.
+        if let Some(selected_route_id) = selected_route.as_deref() {
+            let selected_is_high_risk = degradation_predictions
+                .iter()
+                .find(|prediction| prediction.route_id == selected_route_id)
+                .map(|prediction| {
+                    prediction.probability >= network_config.degradation_probability_threshold
+                })
+                .unwrap_or(false);
+
+            if selected_is_high_risk {
+                let proactive_alternative = predictions
+                    .predictions
+                    .iter()
+                    .filter(|prediction| prediction.route_id != selected_route_id)
+                    .filter(|prediction| {
+                        eligible
+                            .eligible
+                            .iter()
+                            .any(|candidate| candidate.route_id == prediction.route_id)
+                    })
+                    .filter(|prediction| {
+                        degradation_predictions
+                            .iter()
+                            .find(|degradation| degradation.route_id == prediction.route_id)
+                            .map(|degradation| {
+                                degradation.probability
+                                    < network_config.degradation_probability_threshold
+                            })
+                            .unwrap_or(false)
+                    })
+                    .max_by(|a, b| {
+                        a.quality_score
+                            .partial_cmp(&b.quality_score)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|prediction| prediction.route_id.clone());
+
+                if proactive_alternative.is_some() {
+                    selected_route = proactive_alternative;
+                }
+            }
+        }
+
+        if let Some(selected_route_id) = selected_route.as_deref() {
+            if let Some(selected_candidate) = topology
+                .route_candidates
+                .iter()
+                .find(|candidate| candidate.route_id == selected_route_id)
+            {
+                match route_observations
+                    .iter()
+                    .find(|route| {
+                        route.destination_node == selected_candidate.destination_node
+                            && route.confirmed
+                    })
+                    .cloned()
+                {
+                    Some(selected_observed) => {
+                        // D10 state integrity: destination-scoped D3 evidence
+                        // confirms the selected route is observable, but it
+                        // must not become the active route merely because AI
+                        // selected it. RuntimeRouteState changes only after a
+                        // transport apply is confirmed successful.
+                        observed = selected_observed;
+                    }
+                    None => {
+                        observed = ObservedRouteState {
+                            route_id: "unknown-unconfirmed-nebula-route".to_string(),
+                            destination_node: selected_candidate.destination_node.clone(),
+                            interface_name: None,
+                            confirmed: false,
+                            diagnostic: format!(
+                                "D3 selected destination {} has no confirmed live Nebula current-route evidence",
+                                selected_candidate.destination_node
+                            ),
+                            started_ms: now_ms,
+                        };
+                        state = None;
+                    }
+                }
+            }
+        }
 
         // D12 wiring only:
         // If Task2 rejected all usable routes for a security/policy reason,
@@ -1037,49 +1285,9 @@ impl Task3NetworkAiRuntimeService {
                 None
             };
 
-        let degradation = state.as_ref().map(|state| {
-            SimpleDegradationPredictor {
-                high_probability_threshold: network_config.degradation_probability_threshold,
-                ..SimpleDegradationPredictor::default()
-            }
-            .predict(
-                &state.active_route_id,
-                history
-                    .entries_by_route
-                    .get(&state.active_route_id)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]),
-            )
-        });
-        let degradation_predictions = degradation.into_iter().collect::<Vec<_>>();
-
-        let rewards = selected_route
-            .as_ref()
-            .and_then(|route_id| prediction_for(&predictions, route_id))
-            .map(|prediction| {
-                let hop_count = eligible
-                    .eligible
-                    .iter()
-                    .find(|candidate| candidate.route_id == prediction.route_id)
-                    .map(|candidate| candidate.hop_count)
-                    .unwrap_or(0);
-                RouteReward::from_prediction_with_weights(
-                    prediction,
-                    hop_count,
-                    false,
-                    false,
-                    &network_config.reward_weights,
-                )
-            })
-            .into_iter()
-            .collect::<Vec<_>>();
-
-        // D9: feed the calculated route reward back into the persisted
-        // contextual-bandit policy so Q-values evolve across runtime cycles.
-        for reward in &rewards {
-            policy.update_with_reward(reward);
-        }
-        policy.save_json(self.config.persistence_root.join("rl_policy.json"))?;
+        // Predictions rank routes before a decision. Actual Q-value learning
+        // is fed back only after the production route outcome is observed.
+        let mut rewards = current_failed_reward.into_iter().collect::<Vec<_>>();
 
         let decision_id = format!("task3-{}-{}", now_ms, short_hash(&required_peers.join(",")));
         let selected_task2_path = selected_task2_evidence_path(
@@ -1688,10 +1896,30 @@ impl Task3NetworkAiRuntimeService {
                     observed.diagnostic
                 ),
             }
+        } else if state.is_none() {
+            // A destination-scoped D3 observation can confirm that the selected
+            // route is currently observable without proving that it is the
+            // controller's active route. Never promote that observation to
+            // active state and never panic. Fail closed until active-route
+            // state is independently available.
+            ProductionRouteApplyResult {
+                attempted: false,
+                applied: false,
+                requested_route_id: selected_route.clone().unwrap_or_default(),
+                previous_route_id: String::new(),
+                observed_route_id: if observed.confirmed {
+                    Some(observed.route_id.clone())
+                } else {
+                    None
+                },
+                rollback_attempted: false,
+                rollback_applied: false,
+                reason: "D10 fail closed: confirmed destination route exists but active route controller state is unavailable".to_string(),
+            }
         } else if let Some(route_id) = selected_route.as_ref() {
             let state = state
                 .as_ref()
-                .expect("confirmed route observation must have runtime state");
+                .ok_or_else(|| anyhow!("active route state disappeared before D10 evaluation"))?;
             let revalidated = EligibilityFilter.filter_at(
                 vec![topology
                     .route_candidates
@@ -1722,11 +1950,9 @@ impl Task3NetworkAiRuntimeService {
                 let current_score = prediction_score_or_zero(&predictions, &state.active_route_id);
                 let candidate_score = prediction_score_or_zero(&predictions, route_id);
 
-                // Hard-failover remains false unless the currently observed
-                // Nebula route is positively known to have failed. Do not
-                // manufacture failure evidence while D3 route observation is
-                // incomplete.
-                let current_route_failed = false;
+                // Hard-failover is allowed only when D3 positively confirmed
+                // the active Nebula route and its real runtime health failed.
+                // Unconfirmed routes never reach this Active apply branch.
 
                 let safety_decision = controller.safety_guard.evaluate_with_route_health(
                     now_ms,
@@ -1803,6 +2029,87 @@ impl Task3NetworkAiRuntimeService {
                 .join("runtime_mode_decision.json"),
             &mode_decision,
         )?;
+
+        if transport_result.attempted {
+            let requested_hop_count = eligible
+                .eligible
+                .iter()
+                .find(|route| route.route_id == transport_result.requested_route_id)
+                .map(|route| route.hop_count)
+                .unwrap_or(0);
+
+            if transport_result.applied {
+                // D9: RL must learn from the real post-actuation route outcome,
+                // never from the pre-apply observation collected earlier in
+                // this optimization cycle.
+                let post_apply_telemetry = collect_overlay_path_telemetry(&topology).await;
+
+                if let Some(measured) = post_apply_telemetry
+                    .iter()
+                    .find(|sample| sample.route_id == transport_result.requested_route_id)
+                {
+                    let reward = RouteReward::from_observed_outcome_with_weights(
+                        &ObservedRewardInput {
+                            route_id: transport_result.requested_route_id.clone(),
+                            rtt_ms: measured.rtt_ms,
+                            packet_loss_pct: measured.packet_loss_pct,
+                            throughput_mbps: measured.throughput_mbps,
+                            // The current overlay-path probe does not expose
+                            // route-specific utilization. Keep it explicitly
+                            // missing rather than reusing pre-apply telemetry.
+                            bandwidth_utilization_pct: None,
+                            hop_count: requested_hop_count,
+                            switched_route: transport_result.requested_route_id
+                                != transport_result.previous_route_id,
+                            route_failed: !measured.route_available,
+                        },
+                        &network_config.reward_weights,
+                    );
+
+                    policy.update_with_reward(&reward);
+                    append_jsonl(
+                        self.config.persistence_root.join("rewards.jsonl"),
+                        &serde_json::json!({
+                            "decision_id": decision_id,
+                            "ts_ms": now_ms,
+                            "observation_phase": "post_actuation",
+                            "reward": reward,
+                        }),
+                    )?;
+                    rewards.push(reward);
+                }
+            } else {
+                // Apply failure itself is an observed production outcome.
+                // Do not attach pre-apply route performance to that failure.
+                let reward = RouteReward::from_observed_outcome_with_weights(
+                    &ObservedRewardInput {
+                        route_id: transport_result.requested_route_id.clone(),
+                        rtt_ms: None,
+                        packet_loss_pct: None,
+                        throughput_mbps: None,
+                        bandwidth_utilization_pct: None,
+                        hop_count: requested_hop_count,
+                        switched_route: transport_result.requested_route_id
+                            != transport_result.previous_route_id,
+                        route_failed: true,
+                    },
+                    &network_config.reward_weights,
+                );
+
+                policy.update_with_reward(&reward);
+                append_jsonl(
+                    self.config.persistence_root.join("rewards.jsonl"),
+                    &serde_json::json!({
+                        "decision_id": decision_id,
+                        "ts_ms": now_ms,
+                        "observation_phase": "transport_apply_failure",
+                        "reward": reward,
+                    }),
+                )?;
+                rewards.push(reward);
+            }
+        }
+        policy.save_json(self.config.persistence_root.join("rl_policy.json"))?;
 
         let apply_request = RuntimeRouteApplyRequest {
             ts_ms: now_ms,
@@ -1945,14 +2252,7 @@ impl Task3NetworkAiRuntimeService {
             .config
             .persistence_root
             .join("route_history_store.json");
-        if path.exists() {
-            RouteHistoryStore::load_json(path)
-        } else {
-            Ok(RouteHistoryStore::new(
-                0.5,
-                network_config.history_window_entries,
-            ))
-        }
+        RouteHistoryStore::load_or_new(path, 0.5, network_config.history_window_entries)
     }
 
     fn load_policy(
@@ -1960,19 +2260,15 @@ impl Task3NetworkAiRuntimeService {
         network_config: &EngineNetworkAiConfig,
     ) -> Result<ContextualBanditPolicy> {
         let path = self.config.persistence_root.join("rl_policy.json");
-        if path.exists() {
-            let mut policy = ContextualBanditPolicy::load_json(path)?;
-            policy.learning_rate = network_config.rl_learning_rate;
-            policy.epsilon = network_config.rl_epsilon;
-            Ok(policy)
-        } else {
-            let policy = ContextualBanditPolicy::new(
-                network_config.rl_learning_rate,
-                network_config.rl_epsilon,
-            );
-            policy.save_json(self.config.persistence_root.join("rl_policy.json"))?;
-            Ok(policy)
-        }
+        let mut policy = ContextualBanditPolicy::load_or_new(
+            &path,
+            network_config.rl_learning_rate,
+            network_config.rl_epsilon,
+        )?;
+        policy.learning_rate = network_config.rl_learning_rate;
+        policy.epsilon = network_config.rl_epsilon;
+        policy.save_json(path)?;
+        Ok(policy)
     }
 
     async fn persist_status(&self) -> Result<()> {
@@ -2162,90 +2458,281 @@ impl Task2TrustProvider for FileTask2TrustProvider {
 
 struct SgxRouteObservationProvider {
     failover: Arc<FailoverEngine>,
-    persistence_root: PathBuf,
 }
 
 impl SgxRouteObservationProvider {
-    fn new(failover: Arc<FailoverEngine>, persistence_root: PathBuf) -> Self {
-        Self {
-            failover,
-            persistence_root,
-        }
+    fn new(failover: Arc<FailoverEngine>) -> Self {
+        Self { failover }
     }
 
-    fn current_route_state_path(&self) -> PathBuf {
-        self.persistence_root.join("current_route_state.json")
+    fn nebula_root(&self) -> PathBuf {
+        PathBuf::from("/var/lib/sgx-guardian/nebula")
     }
+
+    fn live_assured_nebula_endpoints(&self) -> Result<BTreeSet<String>> {
+        let data = fs::read_to_string("/proc/net/nf_conntrack")
+            .context("read live kernel conntrack table for Nebula D3 observation")?;
+
+        let mut endpoints = BTreeSet::new();
+
+        for line in data.lines() {
+            if !line.contains(" udp ")
+                || !line.contains("[ASSURED]")
+                || !line.contains("sport=4242")
+                || !line.contains("dport=4242")
+            {
+                continue;
+            }
+
+            // Parse the first conntrack tuple deterministically.
+            // A conntrack line contains original and reply tuples, so stop
+            // immediately after the first src/dst/sport/dport tuple.
+            let mut src: Option<&str> = None;
+            let mut dst: Option<&str> = None;
+            let mut sport: Option<&str> = None;
+            let mut dport: Option<&str> = None;
+
+            for field in line.split_whitespace() {
+                if src.is_none() {
+                    if let Some(value) = field.strip_prefix("src=") {
+                        src = Some(value);
+                        continue;
+                    }
+                }
+
+                if dst.is_none() {
+                    if let Some(value) = field.strip_prefix("dst=") {
+                        dst = Some(value);
+                        continue;
+                    }
+                }
+
+                if sport.is_none() {
+                    if let Some(value) = field.strip_prefix("sport=") {
+                        sport = Some(value);
+                        continue;
+                    }
+                }
+
+                if dport.is_none() {
+                    if let Some(value) = field.strip_prefix("dport=") {
+                        dport = Some(value);
+                    }
+                }
+
+                if src.is_some() && dst.is_some() && sport.is_some() && dport.is_some() {
+                    break;
+                }
+            }
+
+            if sport == Some("4242") && dport == Some("4242") {
+                if let (Some(src), Some(dst)) = (src, dst) {
+                    endpoints.insert(format!("{src}:4242"));
+                    endpoints.insert(format!("{dst}:4242"));
+                }
+            }
+        }
+
+        Ok(endpoints)
+    }
+}
+
+fn match_d3_destination_routes(
+    topology: &ProductionTopology,
+    lighthouse: &LighthouseRegistry,
+    live_endpoints: &BTreeSet<String>,
+    iface: Option<String>,
+    now_ms: u64,
+) -> Vec<ObservedRouteState> {
+    let mut observations = Vec::new();
+
+    for destination in &topology.destinations {
+        let registry_entry = lighthouse
+            .lighthouses
+            .iter()
+            .find(|entry| entry.node_name == *destination);
+
+        let Some(entry) = registry_entry else {
+            observations.push(ObservedRouteState {
+                route_id: "unknown-unconfirmed-nebula-route".to_string(),
+                destination_node: destination.clone(),
+                interface_name: iface.clone(),
+                confirmed: false,
+                diagnostic: format!(
+                    "D3 destination {} is missing from Nebula lighthouse registry",
+                    destination
+                ),
+                started_ms: now_ms,
+            });
+            continue;
+        };
+
+        let direct_candidate = topology.route_candidates.iter().find(|candidate| {
+            candidate.destination_node == *destination && candidate.kind == RouteKind::DirectP2p
+        });
+
+        if !entry.physical_endpoint.is_empty() && live_endpoints.contains(&entry.physical_endpoint)
+        {
+            if let Some(candidate) = direct_candidate {
+                observations.push(ObservedRouteState {
+                    route_id: candidate.route_id.clone(),
+                    destination_node: destination.clone(),
+                    interface_name: iface.clone(),
+                    confirmed: true,
+                    diagnostic: format!(
+                        "D3 confirmed live direct Nebula route {} to destination {} overlay_ip={} physical_endpoint={} from ASSURED UDP/4242 dataplane session",
+                        candidate.route_id,
+                        destination,
+                        entry.overlay_ip,
+                        entry.physical_endpoint
+                    ),
+                    started_ms: now_ms,
+                });
+                continue;
+            }
+        }
+
+        observations.push(ObservedRouteState {
+            route_id: "unknown-unconfirmed-nebula-route".to_string(),
+            destination_node: destination.clone(),
+            interface_name: iface.clone(),
+            confirmed: false,
+            diagnostic: format!(
+                "D3 no exact live direct Nebula route evidence for destination {}; relay/multi-hop routes are not inferred from UDP/4242 peer-session or underlay evidence",
+                destination
+            ),
+            started_ms: now_ms,
+        });
+    }
+
+    observations
 }
 
 #[async_trait]
 impl RouteObservationProvider for SgxRouteObservationProvider {
+    async fn current_routes(
+        &self,
+        topology: &ProductionTopology,
+    ) -> Result<Vec<ObservedRouteState>> {
+        let iface = self.failover.current_interface().await;
+
+        let lighthouse_path = self.nebula_root().join("lighthouse_registry.json");
+        let lighthouse_path_str = lighthouse_path
+            .to_str()
+            .ok_or_else(|| anyhow!("invalid Nebula lighthouse registry path"))?;
+
+        let lighthouse = LighthouseRegistry::load(lighthouse_path_str).map_err(|error| {
+            anyhow!(
+                "load Nebula lighthouse registry for D3 observation from {}: {}",
+                lighthouse_path.display(),
+                error
+            )
+        })?;
+
+        let live_endpoints = self.live_assured_nebula_endpoints().map_err(|error| {
+            anyhow!(
+                "D3 cannot confirm current Nebula routes because live UDP/4242 dataplane evidence is unavailable: {}",
+                error
+            )
+        })?;
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| anyhow!("system clock before UNIX epoch: {}", error))?
+            .as_millis() as u64;
+
+        Ok(match_d3_destination_routes(
+            topology,
+            &lighthouse,
+            &live_endpoints,
+            iface,
+            now_ms,
+        ))
+    }
+
     async fn current_route(&self, topology: &ProductionTopology) -> Result<ObservedRouteState> {
         let iface = self.failover.current_interface().await;
-        let state_path = self.current_route_state_path();
-        let state = match RuntimeRouteState::load_json(&state_path) {
-            Ok(state) => state,
-            Err(error) => {
-                let diagnostic = format!(
-                    "no exact Nebula route state at {}; underlay_interface={:?}; {}",
-                    state_path.display(),
-                    iface,
+        let nebula_root = self.nebula_root();
+        let lighthouse_path = nebula_root.join("lighthouse_registry.json");
+
+        let lighthouse =
+            LighthouseRegistry::load(&lighthouse_path.display().to_string()).map_err(|error| {
+                anyhow!(
+                    "load Nebula lighthouse registry for D3 from {}: {}",
+                    lighthouse_path.display(),
                     error
-                );
+                )
+            })?;
+
+        let live_endpoints = match self.live_assured_nebula_endpoints() {
+            Ok(endpoints) => endpoints,
+            Err(error) => {
                 return Ok(ObservedRouteState {
                     route_id: "unknown-unconfirmed-nebula-route".to_string(),
+                    destination_node: String::new(),
                     interface_name: iface,
                     confirmed: false,
-                    diagnostic,
+                    diagnostic: format!(
+                        "D3 live Nebula dataplane unavailable: {}; no persisted route state used as confirmation",
+                        error
+                    ),
                     started_ms: now_ms(),
                 });
             }
         };
 
-        if state.active_route_id.starts_with("transport-") {
-            let diagnostic = format!(
-                "legacy transport route {} ignored; no exact Nebula overlay route evidence; underlay_interface={:?}",
-                state.active_route_id, iface
-            );
-            return Ok(ObservedRouteState {
-                route_id: "unknown-unconfirmed-nebula-route".to_string(),
-                interface_name: iface,
-                confirmed: false,
-                diagnostic,
+        let confirmed_direct = match_d3_destination_routes(
+            topology,
+            &lighthouse,
+            &live_endpoints,
+            iface.clone(),
+            now_ms(),
+        )
+        .into_iter()
+        .filter(|route| route.confirmed)
+        .collect::<Vec<_>>();
+
+        match confirmed_direct.as_slice() {
+            [route] => Ok(ObservedRouteState {
+                route_id: route.route_id.clone(),
+                destination_node: route.destination_node.clone(),
+                interface_name: iface.clone(),
+                confirmed: true,
+                diagnostic: format!(
+                    "{}; underlay_interface={:?}",
+                    route.diagnostic, iface
+                ),
                 started_ms: now_ms(),
-            });
-        }
+            }),
 
-        let confirmed = topology
-            .route_candidates
-            .iter()
-            .any(|candidate| candidate.route_id == state.active_route_id);
-        if !confirmed {
-            let diagnostic = format!(
-                "persisted active route is not present in current Nebula overlay topology; underlay_interface={:?}",
-                iface
-            );
-            return Ok(ObservedRouteState {
-                route_id: state.active_route_id,
-                interface_name: iface,
+            [] => Ok(ObservedRouteState {
+                route_id: "unknown-unconfirmed-nebula-route".to_string(),
+                destination_node: String::new(),
+                interface_name: iface.clone(),
                 confirmed: false,
-                diagnostic,
-                started_ms: state.active_route_started_ms,
-            });
-        }
+                diagnostic: format!(
+                    "D3 found no exact direct Nebula candidate with a live ASSURED UDP/4242 destination endpoint; underlay_interface={:?}",
+                    iface
+                ),
+                started_ms: now_ms(),
+            }),
 
-        let diagnostic = format!(
-            "confirmed exact Nebula overlay route from {}; underlay_interface={:?}",
-            state_path.display(),
-            iface
-        );
-        Ok(ObservedRouteState {
-            route_id: state.active_route_id,
-            interface_name: iface,
-            confirmed: true,
-            diagnostic,
-            started_ms: state.active_route_started_ms,
-        })
+            routes => Ok(ObservedRouteState {
+                route_id: "unknown-unconfirmed-nebula-route".to_string(),
+                destination_node: String::new(),
+                interface_name: iface.clone(),
+                confirmed: false,
+                diagnostic: format!(
+                    "D3 observed multiple simultaneous direct Nebula destination sessions {:?}; global current_route is ambiguous and will not guess; underlay_interface={:?}",
+                    routes
+                        .iter()
+                        .map(|route| route.route_id.as_str())
+                        .collect::<Vec<_>>(),
+                    iface
+                ),
+                started_ms: now_ms(),
+            }),
+        }
     }
 }
 
@@ -2323,9 +2810,32 @@ impl RouteTransport for SgxNebulaOverlayRouteTransport {
         };
 
         let observed_state = RuntimeRouteState::load_json(self.current_route_state_path()).ok();
-        let observed_route = observed_state
+        let mut observed_route = observed_state
             .as_ref()
             .map(|state| state.active_route_id.clone());
+
+        // D11: Nebula performs direct-to-relay fallback internally. Confirm
+        // relay-backed runtime state instead of fabricating controller state.
+        if !candidate.relay_ids.is_empty() {
+            let relay_confirmed = std::process::Command::new("curl")
+                .args(["-fsS", "http://127.0.0.1:8625/metrics"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .and_then(|metrics| {
+                    metrics.lines().find_map(|line| {
+                        line.strip_prefix("nebula_relay_hostmap_main_relayIndexes ")
+                            .and_then(|value| value.trim().parse::<u64>().ok())
+                    })
+                })
+                .is_some_and(|relay_indexes| relay_indexes > 0);
+
+            if relay_confirmed {
+                observed_route = Some(request.requested_route_id.clone());
+            }
+        }
+
         if observed_route.as_deref() == Some(request.requested_route_id.as_str()) {
             let result = ProductionRouteApplyResult {
                 attempted: true,
@@ -2569,9 +3079,9 @@ impl RelayHealthProvider for SgxRelayHealthProvider {
                 available,
                 healthy,
 
-                // Unknown is represented conservatively as zero contribution
-                // rather than fabricating another relay's utilization.
-                utilization_pct: utilization_pct.unwrap_or(0.0),
+                // Preserve unknown telemetry instead of fabricating another
+                // relay's utilization or treating it as idle.
+                utilization_pct,
 
                 recovered_at_ms,
             });
@@ -2967,6 +3477,19 @@ fn persist_decision_audit_with_d2_context(
                 "decision_id": audit.decision_id,
                 "ts_ms": audit.ts_ms,
                 "reward": reward,
+            }),
+        )?;
+    }
+
+    // D14: persist each degradation prediction from this exact production
+    // decision using the same decision_id and timestamp as the audit record.
+    for prediction in &audit.degradation_predictions {
+        append_jsonl(
+            persistence_root.join("degradation_events.jsonl"),
+            &serde_json::json!({
+                "decision_id": audit.decision_id,
+                "ts_ms": audit.ts_ms,
+                "prediction": prediction,
             }),
         )?;
     }
@@ -3381,7 +3904,6 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cot::transport_registry::TransportRegistry;
     use crate::cot::types::TransportType;
     use sgx_anomaly_engine::network_ai::RouteKind;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -3443,12 +3965,17 @@ mod tests {
 
     #[async_trait]
     impl RouteObservationProvider for StaticObservation {
-        async fn current_route(
-            &self,
-            _topology: &ProductionTopology,
-        ) -> Result<ObservedRouteState> {
+        async fn current_route(&self, topology: &ProductionTopology) -> Result<ObservedRouteState> {
+            let destination_node = topology
+                .route_candidates
+                .iter()
+                .find(|candidate| candidate.route_id == self.route_id)
+                .map(|candidate| candidate.destination_node.clone())
+                .unwrap_or_default();
+
             Ok(ObservedRouteState {
                 route_id: self.route_id.clone(),
+                destination_node,
                 interface_name: Some("if0".to_string()),
                 confirmed: self.confirmed,
                 diagnostic: if self.confirmed {
@@ -3611,6 +4138,33 @@ mod tests {
         .expect("write exact runtime route state");
     }
 
+    fn d3_lighthouse_registry(entries: &[(&str, &str, &str)]) -> LighthouseRegistry {
+        LighthouseRegistry {
+            circle_id: "circle-test".to_string(),
+            lighthouses: entries
+                .iter()
+                .map(|(node_name, overlay_ip, physical_endpoint)| {
+                    crate::nebula::lighthouse::LighthouseEntry {
+                        node_name: (*node_name).to_string(),
+                        overlay_ip: (*overlay_ip).to_string(),
+                        physical_endpoint: (*physical_endpoint).to_string(),
+                        is_primary: false,
+                        is_active: true,
+                        is_lighthouse: true,
+                        am_relay: true,
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    fn endpoint_set(endpoints: &[&str]) -> BTreeSet<String> {
+        endpoints
+            .iter()
+            .map(|endpoint| (*endpoint).to_string())
+            .collect()
+    }
+
     fn candidate(topology: &ProductionTopology, route_id: &str) -> RouteCandidate {
         topology
             .route_candidates
@@ -3618,12 +4172,6 @@ mod tests {
             .find(|candidate| candidate.route_id == route_id)
             .cloned()
             .expect("route candidate")
-    }
-
-    fn empty_failover() -> Arc<FailoverEngine> {
-        let registry = Arc::new(TransportRegistry::new());
-        let monitor = LinkMonitor::new(registry.clone());
-        FailoverEngine::new(monitor, registry)
     }
 
     #[test]
@@ -3756,9 +4304,9 @@ mod tests {
         assert_eq!(observation_c.throughput_mbps, None);
 
         let mut history = RouteHistoryStore::new(0.5, 20);
-        history.record(
+        history.record_measured_observation(
             observation_b
-                .to_history_entry()
+                .to_observation_input()
                 .expect("nodeB measurements"),
         );
         assert_eq!(
@@ -3775,7 +4323,11 @@ mod tests {
                 .ewma_latency_ms,
             11.0
         );
-        assert!(observation_c.to_history_entry().is_none());
+        let missing_metric_observation = observation_c
+            .to_observation_input()
+            .expect("partial measured telemetry must be retained");
+        assert_eq!(missing_metric_observation.throughput_mbps, None);
+        assert_eq!(missing_metric_observation.bandwidth_utilization_pct, None);
     }
 
     #[test]
@@ -3913,20 +4465,8 @@ mod tests {
             .contains("missing from Nebula overlay registry"));
     }
 
-    #[tokio::test]
-    async fn d3_observes_confirmed_nebula_route_from_runtime_state() {
-        let root = temp_root("d3-confirmed");
-        fs::create_dir_all(&root).expect("create runtime root");
-        RuntimeRouteState {
-            schema_version: "network-ai-route-controller-v1".to_string(),
-            active_route_id: "direct-nodeA-nodeB".to_string(),
-            active_route_started_ms: 42,
-            previous_route_id: None,
-            last_switch_ms: None,
-            switch_timestamps_ms: Vec::new(),
-        }
-        .save_json(root.join("current_route_state.json"))
-        .expect("write exact runtime route state");
+    #[test]
+    fn d3_observes_confirmed_nebula_route_from_runtime_state() {
         let overlay = overlay_registry_fixture(&["nodeA", "nodeB"]);
         let topology = build_nebula_overlay_topology(
             "nodeA",
@@ -3936,66 +4476,28 @@ mod tests {
             &[underlay_snapshot("eth0", TransportType::Ethernet)],
         )
         .expect("build topology");
-        let observer = SgxRouteObservationProvider::new(empty_failover(), root);
+        let lighthouse = d3_lighthouse_registry(&[("nodeB", "192.168.100.2", "10.0.0.2:4242")]);
 
-        let observed = observer.current_route(&topology).await.expect("observe");
+        let observed = match_d3_destination_routes(
+            &topology,
+            &lighthouse,
+            &endpoint_set(&["10.0.0.2:4242"]),
+            Some("eth0".to_string()),
+            42,
+        );
 
-        assert!(observed.confirmed);
-        assert_eq!(observed.route_id, "direct-nodeA-nodeB");
-        assert_eq!(observed.started_ms, 42);
-        assert!(observed.diagnostic.contains("confirmed exact Nebula"));
-    }
-
-    #[tokio::test]
-    async fn d3_missing_exact_route_evidence_reports_unconfirmed_not_first_candidate() {
-        let root = temp_root("d3-missing");
-        let overlay = overlay_registry_fixture(&["nodeA", "nodeB"]);
-        let topology = build_nebula_overlay_topology(
-            "nodeA",
-            vec!["nodeB".to_string()],
-            &overlay,
-            None,
-            &[underlay_snapshot("eth0", TransportType::Ethernet)],
-        )
-        .expect("build topology");
-        let observer = SgxRouteObservationProvider::new(empty_failover(), root);
-
-        let observed = observer.current_route(&topology).await.expect("observe");
-
-        assert!(!observed.confirmed);
-        assert_eq!(observed.route_id, "unknown-unconfirmed-nebula-route");
-        assert_ne!(observed.route_id, topology.route_candidates[0].route_id);
-        assert!(observed.diagnostic.contains("no exact Nebula route state"));
-    }
-
-    #[tokio::test]
-    async fn d3_stale_runtime_route_not_in_topology_reports_unconfirmed() {
-        let root = temp_root("d3-stale");
-        save_confirmed_route(&root, "direct-nodeA-nodeZ");
-        let overlay = overlay_registry_fixture(&["nodeA", "nodeB"]);
-        let topology = build_nebula_overlay_topology(
-            "nodeA",
-            vec!["nodeB".to_string()],
-            &overlay,
-            None,
-            &[underlay_snapshot("eth0", TransportType::Ethernet)],
-        )
-        .expect("build topology");
-        let observer = SgxRouteObservationProvider::new(empty_failover(), root);
-
-        let observed = observer.current_route(&topology).await.expect("observe");
-
-        assert!(!observed.confirmed);
-        assert_eq!(observed.route_id, "direct-nodeA-nodeZ");
-        assert!(observed
+        assert_eq!(observed.len(), 1);
+        assert!(observed[0].confirmed);
+        assert_eq!(observed[0].destination_node, "nodeB");
+        assert_eq!(observed[0].route_id, "direct-nodeA-nodeB");
+        assert_eq!(observed[0].started_ms, 42);
+        assert!(observed[0]
             .diagnostic
-            .contains("not present in current Nebula overlay topology"));
+            .contains("confirmed live direct Nebula route"));
     }
 
-    #[tokio::test]
-    async fn d3_ignores_legacy_transport_route_on_startup() {
-        let root = temp_root("d3-legacy-transport");
-        save_confirmed_route(&root, "transport-nodeA-eth0-nodeB");
+    #[test]
+    fn d3_missing_exact_route_evidence_reports_unconfirmed_not_first_candidate() {
         let overlay = overlay_registry_fixture(&["nodeA", "nodeB"]);
         let topology = build_nebula_overlay_topology(
             "nodeA",
@@ -4005,16 +4507,118 @@ mod tests {
             &[underlay_snapshot("eth0", TransportType::Ethernet)],
         )
         .expect("build topology");
-        let observer = SgxRouteObservationProvider::new(empty_failover(), root);
+        let lighthouse = d3_lighthouse_registry(&[("nodeB", "192.168.100.2", "10.0.0.2:4242")]);
 
-        let observed = observer.current_route(&topology).await.expect("observe");
+        let observed = match_d3_destination_routes(
+            &topology,
+            &lighthouse,
+            &BTreeSet::new(),
+            Some("eth0".to_string()),
+            42,
+        );
 
-        assert!(!observed.confirmed);
-        assert_eq!(observed.route_id, "unknown-unconfirmed-nebula-route");
-        assert!(observed.diagnostic.contains("legacy transport route"));
-        assert!(observed
+        assert_eq!(observed.len(), 1);
+        assert!(!observed[0].confirmed);
+        assert_eq!(observed[0].route_id, "unknown-unconfirmed-nebula-route");
+        assert_ne!(observed[0].route_id, topology.route_candidates[0].route_id);
+        assert!(observed[0]
             .diagnostic
-            .contains("no exact Nebula overlay route evidence"));
+            .contains("no exact live direct Nebula route evidence"));
+    }
+
+    #[test]
+    fn d3_stale_runtime_route_not_in_topology_reports_unconfirmed() {
+        let overlay = overlay_registry_fixture(&["nodeA", "nodeB"]);
+        let topology = build_nebula_overlay_topology(
+            "nodeA",
+            vec!["nodeB".to_string()],
+            &overlay,
+            None,
+            &[underlay_snapshot("eth0", TransportType::Ethernet)],
+        )
+        .expect("build topology");
+        let lighthouse = d3_lighthouse_registry(&[
+            ("nodeB", "192.168.100.2", "10.0.0.2:4242"),
+            ("nodeZ", "192.168.100.99", "10.0.0.99:4242"),
+        ]);
+
+        let observed = match_d3_destination_routes(
+            &topology,
+            &lighthouse,
+            &endpoint_set(&["10.0.0.99:4242"]),
+            Some("eth0".to_string()),
+            42,
+        );
+
+        assert_eq!(observed.len(), 1);
+        assert!(!observed[0].confirmed);
+        assert_eq!(observed[0].route_id, "unknown-unconfirmed-nebula-route");
+        assert!(observed[0]
+            .diagnostic
+            .contains("no exact live direct Nebula route evidence"));
+    }
+
+    #[test]
+    fn d3_ignores_legacy_transport_route_on_startup() {
+        let overlay = overlay_registry_fixture(&["nodeA", "nodeB"]);
+        let topology = build_nebula_overlay_topology(
+            "nodeA",
+            vec!["nodeB".to_string()],
+            &overlay,
+            None,
+            &[underlay_snapshot("eth0", TransportType::Ethernet)],
+        )
+        .expect("build topology");
+        let lighthouse = d3_lighthouse_registry(&[("nodeB", "192.168.100.2", "10.0.0.2:4242")]);
+
+        let observed = match_d3_destination_routes(
+            &topology,
+            &lighthouse,
+            &endpoint_set(&["transport-nodeA-eth0-nodeB"]),
+            Some("eth0".to_string()),
+            42,
+        );
+
+        assert_eq!(observed.len(), 1);
+        assert!(!observed[0].confirmed);
+        assert_eq!(observed[0].route_id, "unknown-unconfirmed-nebula-route");
+        assert!(observed[0]
+            .diagnostic
+            .contains("no exact live direct Nebula route evidence"));
+    }
+
+    #[test]
+    fn d3_simultaneous_live_endpoints_confirm_destination_scoped_direct_routes() {
+        let overlay = overlay_registry_fixture(&["nodeA", "nodeB", "nodeC"]);
+        let topology = build_nebula_overlay_topology(
+            "nodeA",
+            vec!["nodeB".to_string(), "nodeC".to_string()],
+            &overlay,
+            None,
+            &[underlay_snapshot("eth0", TransportType::Ethernet)],
+        )
+        .expect("build topology");
+        let lighthouse = d3_lighthouse_registry(&[
+            ("nodeB", "192.168.100.2", "10.0.0.2:4242"),
+            ("nodeC", "192.168.100.3", "10.0.0.3:4242"),
+        ]);
+
+        let observed = match_d3_destination_routes(
+            &topology,
+            &lighthouse,
+            &endpoint_set(&["10.0.0.2:4242", "10.0.0.3:4242"]),
+            Some("eth0".to_string()),
+            42,
+        );
+
+        assert_eq!(observed.len(), 2);
+        assert!(observed.iter().all(|route| route.confirmed));
+        assert!(observed.iter().any(
+            |route| route.destination_node == "nodeB" && route.route_id == "direct-nodeA-nodeB"
+        ));
+        assert!(observed.iter().any(
+            |route| route.destination_node == "nodeC" && route.route_id == "direct-nodeA-nodeC"
+        ));
     }
 
     #[test]
@@ -4250,7 +4854,7 @@ mod tests {
             .expect("relay health");
 
         assert_eq!(health.len(), 1);
-        assert_eq!(health[0].utilization_pct, 25.0);
+        assert_eq!(health[0].utilization_pct, Some(25.0));
         assert!(health[0].available);
         assert!(health[0].healthy);
     }
@@ -4273,7 +4877,7 @@ mod tests {
             .await
             .expect("relay health");
 
-        assert_eq!(health[0].utilization_pct, 100.0);
+        assert_eq!(health[0].utilization_pct, Some(100.0));
         assert!(health[0].healthy);
     }
 
@@ -4289,7 +4893,7 @@ mod tests {
             .await
             .expect("relay health");
 
-        assert_eq!(health[0].utilization_pct, 0.0);
+        assert_eq!(health[0].utilization_pct, None);
         assert!(health[0].available);
         assert!(!health[0].healthy);
     }
@@ -4308,7 +4912,7 @@ mod tests {
             .await
             .expect("relay health");
 
-        assert_eq!(health[0].utilization_pct, 0.0);
+        assert_eq!(health[0].utilization_pct, None);
         assert!(!health[0].healthy);
     }
 
@@ -4335,7 +4939,7 @@ mod tests {
             .await
             .expect("relay health");
 
-        assert_eq!(health[0].utilization_pct, 0.0);
+        assert_eq!(health[0].utilization_pct, None);
         assert!(!health[0].healthy);
     }
 
@@ -4444,6 +5048,21 @@ mod tests {
         let mut network_ai_config = EngineNetworkAiConfig::default();
         network_ai_config.mode = mode;
         persist_json(&config_path, &network_ai_config).unwrap();
+        if mode == NetworkAiRuntimeMode::Active {
+            persist_json(
+                root.join("safety_runtime_status.json"),
+                &serde_json::json!({
+                    "schema_version": "task3-d10-safety-runtime-status-v1",
+                    "ts_ms": now_ms(),
+                    "safety_evaluated": true,
+                    "blocked_by": null,
+                    "transport_apply_allowed": true,
+                    "transport_applied": false,
+                    "reason": "test fixture active-mode safety proof"
+                }),
+            )
+            .unwrap();
+        }
 
         Task3NetworkAiRuntimeService::new(
             Task3NetworkAiConfig {

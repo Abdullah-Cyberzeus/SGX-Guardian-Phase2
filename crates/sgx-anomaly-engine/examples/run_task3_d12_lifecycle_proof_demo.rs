@@ -18,6 +18,7 @@ use sgx_anomaly_engine::virtual_shift::{
     PolicyApplyStatus, ReviewQueue, RoutingTrustSummaryWriter, VirtualIdentityState,
 };
 use std::collections::BTreeSet;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -28,6 +29,18 @@ fn write_json(path: &Path, value: &impl serde::Serialize) -> Result<()> {
     }
     fs::write(path, serde_json::to_string_pretty(value)?)?;
     Ok(())
+}
+
+fn arg_value(args: &[String], flag: &str) -> Option<PathBuf> {
+    args.windows(2)
+        .find(|pair| pair[0] == flag)
+        .map(|pair| PathBuf::from(&pair[1]))
+}
+
+fn usage() {
+    eprintln!(
+        "Usage: cargo run --example run_task3_d12_lifecycle_proof_demo -- [--out-dir path] [--review-root path] [--node-roles path]"
+    );
 }
 
 fn produce_authoritative_task2_summary(
@@ -92,13 +105,15 @@ fn produce_authoritative_task2_summary(
 fn run_branch(
     out_dir: &Path,
     review_root: &Path,
+    node_roles_path: &Path,
     route_id: &str,
     timestamp: u64,
     approve: bool,
 ) -> Result<Task3PostTask2DecisionAudit> {
     let branch = if approve { "approved" } else { "rejected" };
     let branch_dir = out_dir.join(branch);
-    let handoff = SensitiveRouteHandoffService::new(review_root, "config/node_roles.json")
+    let node_roles_config = node_roles_path.display().to_string();
+    let handoff = SensitiveRouteHandoffService::new(review_root, node_roles_config.clone())
         .handoff(
             timestamp,
             "nodeA",
@@ -109,7 +124,7 @@ fn run_branch(
             0.90,
             branch_dir.join("task3_handoff.json"),
         )?;
-    let queue = ReviewQueue::from_role_config(review_root, "config/node_roles.json")?;
+    let queue = ReviewQueue::from_role_config(review_root, &node_roles_config)?;
     let approval = ApprovalService::new(queue);
     let review = if approve {
         approval.approve(
@@ -248,8 +263,17 @@ fn run_branch(
 }
 
 fn main() -> Result<()> {
-    let out_dir = PathBuf::from("data/network_ai/task3_deliverable_12_lifecycle_proof");
-    let review_root = out_dir.join("task2_owner_review_queue");
+    let args = env::args().collect::<Vec<_>>();
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        usage();
+        return Ok(());
+    }
+    let out_dir = arg_value(&args, "--out-dir")
+        .unwrap_or_else(|| PathBuf::from("data/network_ai/task3_deliverable_12_lifecycle_proof"));
+    let review_root = arg_value(&args, "--review-root")
+        .unwrap_or_else(|| out_dir.join("task2_owner_review_queue"));
+    let node_roles_path =
+        arg_value(&args, "--node-roles").unwrap_or_else(|| PathBuf::from("config/node_roles.json"));
     let base_timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -257,6 +281,7 @@ fn main() -> Result<()> {
     let approved = run_branch(
         &out_dir,
         &review_root,
+        &node_roles_path,
         "relay-nodeA-via-nodeZ-nodeB",
         base_timestamp,
         true,
@@ -264,6 +289,7 @@ fn main() -> Result<()> {
     let rejected = run_branch(
         &out_dir,
         &review_root,
+        &node_roles_path,
         "relay-nodeA-via-nodeY-nodeB",
         base_timestamp.saturating_add(100_000),
         false,
@@ -291,5 +317,33 @@ fn main() -> Result<()> {
         rejected.route_eligible, rejected.route_applied
     );
     println!("Evidence root: {}", out_dir.display());
+    println!("Node roles path: {}", node_roles_path.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn d12_lifecycle_uses_caller_supplied_temporary_role_path() {
+        let root = std::env::temp_dir().join(format!(
+            "task3-d12-configurable-roles-{}",
+            std::process::id()
+        ));
+        let roles = root.join("custom").join("node_roles.json");
+        fs::create_dir_all(roles.parent().unwrap()).unwrap();
+        fs::write(&roles, r#"{"nodeA":"admin","nodeB":"member"}"#).unwrap();
+        let approved = run_branch(
+            &root.join("evidence"),
+            &root.join("reviews"),
+            &roles,
+            "relay-nodeA-via-nodeZ-nodeB",
+            1_789_000_000_000,
+            true,
+        )
+        .unwrap();
+        assert!(approved.route_eligible && approved.route_applied);
+        let _ = fs::remove_dir_all(root);
+    }
 }
