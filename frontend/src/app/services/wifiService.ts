@@ -17,6 +17,7 @@ export type WifiRuntimeState =
 
 export interface WifiModeResponse {
   mode: WifiMode;
+  dual_wifi_supported: boolean;
   status: {
     state: WifiRuntimeState;
     metadata: {

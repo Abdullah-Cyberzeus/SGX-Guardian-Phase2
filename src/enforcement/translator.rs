@@ -193,7 +193,14 @@ fn is_ap_interface(iface: &str) -> bool {
 /// Helper to check if an interface is an uplink interface (Ethernet, either
 /// Wi-Fi radio, or cellular).
 fn is_uplink_interface(iface: &str) -> bool {
-    iface == "wlan0" || iface == "wlan1" || iface == "wwan0" || iface.starts_with("eth")
+    iface == "wlan0"
+        || iface == "wlan1"
+        || iface == "wlp4s0"
+        || iface.starts_with("eth")
+        || iface.starts_with("en")
+        || iface.starts_with("wwan")
+        || iface.starts_with("rmnet")
+        || iface.starts_with("usb")
 }
 
 #[cfg(test)]
@@ -325,5 +332,23 @@ mod tests {
         let translated = translate(&policy).unwrap();
         assert_eq!(translated.nat.len(), 1);
         assert_eq!(translated.nat[0].out_interface.as_deref(), Some("wwan0"));
+    }
+
+    #[test]
+    fn test_translate_masquerade_recognizes_predictable_ethernet_and_wlp4s0_names() {
+        for dst in ["enp2s0", "wlp4s0", "usb0", "rmnet0"] {
+            let policy = dummy_policy(vec![Rule {
+                id: "1".to_string(),
+                action: "masquerade".to_string(),
+                src: "192.168.200.0/24".to_string(),
+                dst: dst.to_string(),
+                protocol: "any".to_string(),
+                port: None,
+            }]);
+
+            let translated = translate(&policy).unwrap();
+            assert_eq!(translated.nat.len(), 1, "expected {dst} to translate");
+            assert_eq!(translated.nat[0].out_interface.as_deref(), Some(dst));
+        }
     }
 }

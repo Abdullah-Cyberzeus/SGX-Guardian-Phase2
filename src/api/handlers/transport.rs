@@ -291,7 +291,7 @@ fn detect_interfaces(sys_net_dir: &str) -> Vec<TransportInterface> {
             .unwrap_or_default();
 
         let ip = ip_by_interface.get(&name).cloned();
-        let available = interface_is_available(transport, &operstate, ip.is_some());
+        let available = interface_is_available(transport, &name, &operstate, ip.is_some());
 
         out.push(TransportInterface {
             name,
@@ -316,14 +316,20 @@ fn detect_interfaces(sys_net_dir: &str) -> Vec<TransportInterface> {
 /// `unknown` while a modem-managed data session is live. A configured IPv4
 /// address is therefore the authoritative availability signal for cellular and
 /// satellite transports. Link-managed Ethernet/Wi-Fi/Bluetooth interfaces still
-/// require both an up operational state and an address.
-fn interface_is_available(transport: TransportType, operstate: &str, has_ip: bool) -> bool {
+/// require both an up operational state and an address — except USB-gadget
+/// Ethernet links (systemd's MAC-address-based "enx*" naming, used when there's
+/// no stable PCI/onboard slot info — e.g. a phone's USB tethering, which acts
+/// exactly like a cellular uplink even though the kernel presents it as
+/// Ethernet). Those share the same operstate-lies-while-live quirk as WWAN
+/// drivers, so they get the same IP-is-authoritative treatment.
+fn interface_is_available(transport: TransportType, name: &str, operstate: &str, has_ip: bool) -> bool {
     if !has_ip {
         return false;
     }
 
     match transport {
         TransportType::Cellular | TransportType::Satellite => true,
+        TransportType::Ethernet if name.to_lowercase().starts_with("enx") => true,
         TransportType::Ethernet | TransportType::WiFi | TransportType::Bluetooth => {
             operstate.eq_ignore_ascii_case("up")
         }
@@ -575,11 +581,13 @@ mod tests {
     fn cellular_with_ipv4_is_available_when_driver_operstate_is_down() {
         assert!(interface_is_available(
             TransportType::Cellular,
+            "wwan0",
             "down",
             true
         ));
         assert!(interface_is_available(
             TransportType::Cellular,
+            "wwan0",
             "unknown",
             true
         ));
@@ -589,6 +597,7 @@ mod tests {
     fn cellular_without_ipv4_is_not_available() {
         assert!(!interface_is_available(
             TransportType::Cellular,
+            "wwan0",
             "up",
             false
         ));
@@ -596,8 +605,41 @@ mod tests {
 
     #[test]
     fn link_managed_interface_still_requires_up_operstate() {
-        assert!(!interface_is_available(TransportType::WiFi, "down", true));
-        assert!(interface_is_available(TransportType::WiFi, "up", true));
+        assert!(!interface_is_available(TransportType::WiFi, "wlan0", "down", true));
+        assert!(interface_is_available(TransportType::WiFi, "wlan0", "up", true));
+    }
+
+    #[test]
+    fn usb_gadget_ethernet_is_available_despite_a_lying_operstate() {
+        // enx* interfaces (systemd's MAC-address-based naming, used for USB
+        // dongles/gadgets like a phone's USB tethering) act like a cellular
+        // uplink even though classify_transport calls them Ethernet — the
+        // kernel's operstate for this class of link is unreliable while live,
+        // same as WWAN, so IP presence alone must decide availability here.
+        assert!(interface_is_available(
+            TransportType::Ethernet,
+            "enx0cf46de8e2ef",
+            "unknown",
+            true
+        ));
+        assert!(!interface_is_available(
+            TransportType::Ethernet,
+            "enx0cf46de8e2ef",
+            "up",
+            false
+        ));
+    }
+
+    #[test]
+    fn onboard_ethernet_still_requires_up_operstate() {
+        // A regular PCI/onboard NIC (enp2s0) must not get the enx exemption —
+        // only the "no stable slot info" USB-gadget naming does.
+        assert!(!interface_is_available(
+            TransportType::Ethernet,
+            "enp2s0",
+            "down",
+            true
+        ));
     }
 
     #[test]

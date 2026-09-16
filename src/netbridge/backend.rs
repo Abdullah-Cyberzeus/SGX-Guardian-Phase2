@@ -5,7 +5,9 @@ use crate::netbridge::types::WifiNetwork;
 /// Current station default. Runtime configuration may select either physical
 /// station interface without changing the backend implementation.
 pub const DEFAULT_NM_UPLINK_INTERFACE: &str = "wlan0";
-pub const NM_UPLINK_INTERFACES: [&str; 2] = ["wlan0", "wlan1"];
+/// `wlp4s0` covers single-radio devices (one Wi-Fi chip, no separate uap0/wlan1
+/// vifs) where the same physical interface is used as the NM station uplink.
+pub const NM_UPLINK_INTERFACES: [&str; 3] = ["wlan0", "wlan1", "wlp4s0"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkDeviceKind {
@@ -135,6 +137,7 @@ mod tests {
     fn only_station_interfaces_are_allowed_nm_targets() {
         assert!(require_nm_uplink("wlan0").is_ok());
         assert!(require_nm_uplink("wlan1").is_ok());
+        assert!(require_nm_uplink("wlp4s0").is_ok());
 
         for protected in ["uap0", "uap1", "wfd0", "eth0", "", "wlan10"] {
             let error = require_nm_uplink(protected).unwrap_err();

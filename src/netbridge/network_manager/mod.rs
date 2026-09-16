@@ -162,6 +162,35 @@ impl NetworkManagerBackend {
         let _ = timeout(self.call_timeout, proxy.call::<_, _, ()>("Disconnect", &())).await;
     }
 
+    /// Sets NetworkManager's runtime `Managed` flag on `interface` and returns
+    /// the previous value, or `None` when NetworkManager doesn't know the device.
+    pub async fn set_device_managed(
+        &self,
+        interface: &str,
+        managed: bool,
+    ) -> Result<Option<bool>, NetworkBackendError> {
+        let Some(device) = self
+            .devices()
+            .await?
+            .into_iter()
+            .find(|device| device.interface == interface)
+        else {
+            return Ok(None);
+        };
+        let previous = device.managed;
+        if previous != managed {
+            let path = OwnedObjectPath::try_from(device.object_path).map_err(|_| {
+                NetworkBackendError::ProfileOperation("invalid device path".to_owned())
+            })?;
+            let proxy = self.interface_proxy(path, NM_DEVICE_INTERFACE).await?;
+            timeout(self.call_timeout, proxy.set_property("Managed", managed))
+                .await
+                .map_err(|_| NetworkBackendError::Timeout)?
+                .map_err(|e| NetworkBackendError::ProfileOperation(e.to_string()))?;
+        }
+        Ok(Some(previous))
+    }
+
     async fn manager_identity(&self) -> Result<(String, u32), NetworkBackendError> {
         let proxy = self.manager_proxy().await?;
         timeout(self.call_timeout, async {

@@ -15,6 +15,10 @@ use tracing::{info, warn};
 pub struct RuntimeManager {
     pub state_machine: Arc<StateMachine>,
     ap: Arc<Mutex<Option<Netbridge>>>,
+    /// AP interface Guardian took away from NetworkManager for hostapd; handed
+    /// back on stop. Without this, NM autoconnects a saved profile on a
+    /// single-radio device and flips the AP back to client mode in a loop.
+    nm_released_ap_iface: Arc<Mutex<Option<String>>>,
     /// Holds the active NetworkManager station session for ClientOnly mode.
     nm_station_session: Arc<Mutex<Option<crate::netbridge::network_manager::StationSession>>>,
     /// Holds the NatManager for HotspotOnly mode (Ethernet uplink NAT).
@@ -37,6 +41,7 @@ impl RuntimeManager {
         RuntimeManager {
             state_machine,
             ap: Arc::new(Mutex::new(None)),
+            nm_released_ap_iface: Arc::new(Mutex::new(None)),
             nm_station_session: Arc::new(Mutex::new(None)),
             nat: Arc::new(Mutex::new(None)),
             routing: Arc::new(RoutingManager::new()),
@@ -57,8 +62,16 @@ impl RuntimeManager {
     /// `ip route show default` — that would return whichever interface the
     /// kernel prefers at that moment, which may not be the selected uplink.
     fn get_uplink_interface(config: &crate::runtime::models::GuardianConfig) -> Option<String> {
-        // 1. Explicit config takes priority — always trust what the operator configured
-        if !config.uplink.interface.is_empty() {
+        // 1. Explicit config takes priority — but only when that interface
+        // actually exists on this box. A configured name that doesn't exist
+        // (e.g. a single-radio device that only ever has "wlan1" as its
+        // frontend-sent default) must fall through to real auto-detection
+        // below instead of building NAT/routing rules around a phantom
+        // interface — that silently produced a hotspot with no forwarding
+        // path at all.
+        if !config.uplink.interface.is_empty()
+            && Self::verify_interface_exists(&config.uplink.interface)
+        {
             return Some(config.uplink.interface.clone());
         }
 
@@ -91,12 +104,97 @@ impl RuntimeManager {
         None
     }
 
+    /// Stops NetworkManager from managing the AP interface while hostapd owns
+    /// it. Only an interface NM was actually managing is recorded, so stop
+    /// restores exactly the prior state and never hands NM an interface it
+    /// wasn't managing before.
+    async fn release_ap_interface_from_nm(&self, interface: &str) {
+        let Ok(backend) = crate::netbridge::network_manager::NetworkManagerBackend::system(
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        else {
+            return;
+        };
+        match backend.set_device_managed(interface, false).await {
+            Ok(Some(true)) => {
+                info!(
+                    "Released {} from NetworkManager while the hotspot runs",
+                    interface
+                );
+                *self.nm_released_ap_iface.lock().await = Some(interface.to_string());
+            }
+            Ok(_) => {}
+            Err(e) => warn!(
+                "Failed to release {} from NetworkManager; it may reclaim the radio: {}",
+                interface, e
+            ),
+        }
+    }
+
+    async fn restore_ap_interface_to_nm(&self) {
+        let Some(interface) = self.nm_released_ap_iface.lock().await.take() else {
+            return;
+        };
+        Self::ensure_nm_manages(&interface).await;
+    }
+
+    /// NM can't activate a station profile on an unmanaged device. Also covers
+    /// a previous run that died while the hotspot held the interface.
+    async fn ensure_nm_manages(interface: &str) {
+        let Ok(backend) = crate::netbridge::network_manager::NetworkManagerBackend::system(
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        else {
+            return;
+        };
+        match backend.set_device_managed(interface, true).await {
+            Ok(Some(false)) => info!("Returned {} to NetworkManager", interface),
+            Ok(_) => {}
+            Err(e) => warn!("Failed to return {} to NetworkManager: {}", interface, e),
+        }
+    }
+
     fn verify_interface_exists(iface: &str) -> bool {
         std::process::Command::new("ip")
             .args(["link", "show", "dev", iface])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
+    }
+
+    /// DualWifi needs two independently-controllable radios: a dedicated AP
+    /// vif (`uap0`) and a separate station interface (`wlan1`). A single-radio
+    /// device (only `wlp4s0`, used as both AP and station in turn) has
+    /// neither, so it can never run hotspot and uplink at the same time —
+    /// this is a hardware limit, not something a config change can work
+    /// around.
+    pub(crate) fn dual_wifi_supported() -> bool {
+        Self::verify_interface_exists("uap0") && Self::verify_interface_exists("wlan1")
+    }
+
+    /// Single-radio devices (one Wi-Fi chip, no separate uap0/wlan1 vifs) fall
+    /// back to this interface when the configured dual-radio interface isn't
+    /// present, so the same HotspotOnly/ClientOnly request works unmodified on
+    /// either device family.
+    const SINGLE_RADIO_FALLBACK_IFACE: &'static str = "wlp4s0";
+
+    /// Resolves the interface to actually use: the configured one if present,
+    /// else the single-radio fallback if that exists instead.
+    pub(crate) fn resolve_interface(configured: &str) -> String {
+        if Self::verify_interface_exists(configured) {
+            return configured.to_string();
+        }
+        if Self::verify_interface_exists(Self::SINGLE_RADIO_FALLBACK_IFACE) {
+            warn!(
+                "Configured interface '{}' not found; falling back to single-radio interface '{}'",
+                configured,
+                Self::SINGLE_RADIO_FALLBACK_IFACE
+            );
+            return Self::SINGLE_RADIO_FALLBACK_IFACE.to_string();
+        }
+        configured.to_string()
     }
 
     /// Default hotspot credentials, used only when the user has never
@@ -299,6 +397,9 @@ impl RuntimeManager {
     }
 
     pub async fn start_hotspot_mode(&self, config: &GuardianConfig) -> Result<(), RuntimeError> {
+        let mut config = config.clone();
+        config.hotspot.interface = Self::resolve_interface(&config.hotspot.interface);
+        let config = &config;
         if !Self::verify_interface_exists(&config.hotspot.interface) {
             self.state_machine
                 .set_error_state(
@@ -340,7 +441,11 @@ impl RuntimeManager {
 
         let mut ap = Netbridge::new(ap_settings, dns_settings);
 
+        self.release_ap_interface_from_nm(&config.hotspot.interface)
+            .await;
+
         if let Err(e) = ap.start().await {
+            self.restore_ap_interface_to_nm().await;
             self.state_machine
                 .set_error_state(
                     format!("Hotspot failed: {}", e),
@@ -410,6 +515,9 @@ impl RuntimeManager {
     }
 
     pub async fn start_client_mode(&self, config: &GuardianConfig) -> Result<(), RuntimeError> {
+        let mut config = config.clone();
+        config.uplink.interface = Self::resolve_interface(&config.uplink.interface);
+        let config = &config;
         if !Self::verify_interface_exists(&config.uplink.interface) {
             self.state_machine
                 .set_error_state(
@@ -430,6 +538,7 @@ impl RuntimeManager {
             "Starting ClientOnly mode via NetworkManager D-Bus backend on {}...",
             config.uplink.interface
         );
+        Self::ensure_nm_manages(&config.uplink.interface).await;
         let backend = match crate::netbridge::network_manager::NetworkManagerBackend::system(
             std::time::Duration::from_secs(5),
         )
@@ -1160,6 +1269,7 @@ impl RuntimeManager {
         if let Some(mut ap) = self.ap.lock().await.take() {
             let _ = ap.stop().await;
         }
+        self.restore_ap_interface_to_nm().await;
         // Clean up HotspotOnly/DualWifi(NM) NAT and policy routing if set. Removing
         // the hotspot-uplink policy rule is a no-op when it was never configured
         // (HotspotOnly), so this is safe to call unconditionally here.
@@ -1279,16 +1389,22 @@ mod tests {
     }
 
     #[test]
-    fn prefers_configured_uplink_interface() {
+    fn prefers_configured_uplink_interface_when_it_exists() {
         let _test_lock = blocking_env_lock();
         set_selected_interface(None);
 
+        // "lo" always exists, unlike the old "eth9" fixture this test used to
+        // use — a configured interface that doesn't exist must fall through
+        // to auto-detection instead (see
+        // get_uplink_interface_does_not_return_a_phantom_configured_name),
+        // which is exactly the bug that silently broke NAT on a single-radio
+        // device whose frontend always sends a non-empty "wlan1" default.
         let mut config = GuardianConfig::default();
-        config.uplink.interface = "eth9".to_string();
+        config.uplink.interface = "lo".to_string();
 
         assert_eq!(
             RuntimeManager::get_uplink_interface(&config).as_deref(),
-            Some("eth9")
+            Some("lo")
         );
     }
 
@@ -1371,6 +1487,38 @@ mod tests {
         // "lo" is guaranteed to exist on any Linux host and querying it is a
         // read-only `ip link show`, so this is safe without root or real hardware.
         assert!(RuntimeManager::verify_interface_exists("lo"));
+    }
+
+    #[test]
+    fn get_uplink_interface_does_not_return_a_phantom_configured_name() {
+        // A configured interface that doesn't exist on this box (e.g. a
+        // single-radio device that only ever receives "wlan1" as the
+        // frontend's default) must never be trusted as-is — that used to
+        // build NAT/routing rules around an interface that was never there.
+        let mut config = GuardianConfig::default();
+        config.uplink.interface = "definitely-not-a-real-iface-zzz".to_string();
+        assert_ne!(
+            RuntimeManager::get_uplink_interface(&config),
+            Some("definitely-not-a-real-iface-zzz".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_interface_keeps_configured_value_when_it_exists() {
+        // "lo" always exists, so it must never be swapped for the single-radio
+        // fallback even if that fallback also happens to exist.
+        assert_eq!(RuntimeManager::resolve_interface("lo"), "lo");
+    }
+
+    #[test]
+    fn resolve_interface_returns_configured_value_unchanged_when_no_fallback_exists_either() {
+        // Neither the configured interface nor the single-radio fallback exist
+        // in this sandbox — resolve_interface must not invent a name, so the
+        // caller's existing "interface missing" error path still fires.
+        assert_eq!(
+            RuntimeManager::resolve_interface("definitely-not-a-real-iface-zzz"),
+            "definitely-not-a-real-iface-zzz"
+        );
     }
 
     #[test]

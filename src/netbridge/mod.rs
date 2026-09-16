@@ -171,9 +171,20 @@ impl Netbridge {
             }
         }
 
-        // Forcefully bring the interface down so it stops broadcasting
+        // Forcefully bring the interface down so it stops broadcasting, then
+        // back up so it's immediately usable again — on a dual-radio board
+        // this is a disposable AP-only vif (uap0) so it doesn't matter, but
+        // on a single-radio device this same interface is the only Wi-Fi
+        // chip: leaving it administratively down after hotspot teardown
+        // silently blocked NetworkManager from scanning or reconnecting it
+        // until something else (e.g. an explicit `nmcli connection up`)
+        // happened to bring it back up itself.
         let _ = tokio::process::Command::new("ip")
             .args(["link", "set", "dev", &self.settings.interface, "down"])
+            .output()
+            .await;
+        let _ = tokio::process::Command::new("ip")
+            .args(["link", "set", "dev", &self.settings.interface, "up"])
             .output()
             .await;
 

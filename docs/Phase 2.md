@@ -84,7 +84,7 @@
 - [6.2 Automated Discovery & Deep Device Profiling](#62-automated-discovery--deep-device-profiling)
 - [6.3 The ConnectedDevice Inventory & Identity Stability](#63-the-connecteddevice-inventory--identity-stability)
 - [6.4 Whitelist Verification & Rogue Device Detection](#64-whitelist-verification--rogue-device-detection)
-- [6.5 AI Threat Prediction & Vulnerability Pipeline](#65-ai-threat-prediction--vulnerability-pipeline)
+- [6.5 Threat Prediction & Vulnerability Pipeline](#65-threat-prediction--vulnerability-pipeline)
 - [6.6 Configurable Scan Intensities & Automated Scheduling](#66-configurable-scan-intensities--automated-scheduling)
 - [6.7 Management and Administrative Controls](#67-management-and-administrative-controls)
 - [6.8 Key Security Defenses](#68-key-security-defenses)
@@ -142,10 +142,10 @@
 
 ### [Feature 11: Suricata IDS/IPS Integration & Industrial Modbus OT Security](#feature-11-suricata-idsips-integration--industrial-modbus-ot-security)
 - [11.1 Executive Summary & Purpose](#111-executive-summary--purpose)
-- [11.2 Architecture Overview & Multi-Interface AF_PACKET Capture](#112-architecture-overview--multi-interface-afpacket-capture)
+- [11.2 Architecture Overview & Multi-Interface AF_PACKET Capture](#112-architecture-overview--multi-interface-af_packet-capture)
 - [11.3 Rule Sets, Emerging Threats & Custom Signature Framework](#113-rule-sets-emerging-threats--custom-signature-framework)
 - [11.4 Asynchronous EVE JSON Log Parsing & Alert Classification](#114-asynchronous-eve-json-log-parsing--alert-classification)
-- [11.5 AI Anomaly Engine Correlation & Cross-System Alert Dispatch](#115-ai-anomaly-engine-correlation--cross-system-alert-dispatch)
+- [11.5 Anomaly Engine Correlation & Cross-System Alert Dispatch](#115-anomaly-engine-correlation--cross-system-alert-dispatch)
 - [11.6 Inline Blocking Mode & nftables Kernel Enforcement](#116-inline-blocking-mode--nftables-kernel-enforcement)
 - [11.7 Automated Signature Updates & Safe Validation Pipeline](#117-automated-signature-updates--safe-validation-pipeline)
 - [11.8 Industrial OT Security: Modbus TCP Protocol Detection Rules](#118-industrial-ot-security-modbus-tcp-protocol-detection-rules)
@@ -179,7 +179,7 @@
 - [13.7 Replay Protection & Cryptographic Proof Verification](#137-replay-protection--cryptographic-proof-verification)
 - [13.8 Multi-Guardian Enrollment & Automated Cert-Bootstrap](#138-multi-guardian-enrollment--automated-cert-bootstrap)
 - [13.9 Paired Device Inventory & Lifecycle Management](#139-paired-device-inventory--lifecycle-management)
-- [13.10 End-to-End Operator Workflow: Create/Login -> Pair -> Dashboard](#1310-end-to-end-operator-workflow-createlogin--pair--dashboard)
+- [13.10 End-to-End Operator Workflow: Create/Login -> Pair -> Dashboard](#1310-end-to-end-operator-workflow-createlogin---pair---dashboard)
 - [13.11 Key Security & Resilience Defenses](#1311-key-security--resilience-defenses)
 - [13.12 Testing and Verification Summary](#1312-testing-and-verification-summary)
 - [13.13 Source Code & File Locations](#1313-source-code--file-locations)
@@ -336,7 +336,7 @@
 - [24.9 Key Security & Resilience Defenses (Defense Matrix DEF-BAK-01 to DEF-BAK-10)](#249-key-security--resilience-defenses-defense-matrix-def-bak-01-to-def-bak-10)
 - [24.10 Testing and Verification Summary (The BAK-Series Validation Suite: BAK-001 to BAK-010)](#2410-testing-and-verification-summary-the-bak-series-validation-suite-bak-001-to-bak-010)
 - [24.11 Source Code & File Locations](#2411-source-code--file-locations)
- 
+
 ### [Feature 25: Notification Preferences, Push Delivery & Real-Time Subscriptions](#feature-25-notification-preferences-push-delivery--real-time-subscriptions)
 - [25.1 Executive Summary & Zero-Trust Event Notification Philosophy](#251-executive-summary--zero-trust-event-notification-philosophy)
 - [25.2 Multi-Category Event Classification & Notification Bus Architecture](#252-multi-category-event-classification--notification-bus-architecture)
@@ -349,7 +349,7 @@
 - [25.9 Key Security & Resilience Defenses (Defense Matrix DEF-NOT-01 to DEF-NOT-10)](#259-key-security--resilience-defenses-defense-matrix-def-not-01-to-def-not-10)
 - [25.10 Testing and Verification Summary (The NOT-Series Validation Suite: NOT-001 to NOT-010)](#2510-testing-and-verification-summary-the-not-series-validation-suite-not-001-to-not-010)
 - [25.11 Source Code & File Locations](#2511-source-code--file-locations)
- 
+
 ### [Feature 26: Custom Alert Rules & Automation Engine (Event-Condition-Action Rule Engine)](#feature-26-custom-alert-rules--automation-engine-event-condition-action-rule-engine)
 - [26.1 Executive Summary & Zero-Trust Event-Condition-Action Architecture](#261-executive-summary--zero-trust-event-condition-action-architecture)
 - [26.2 Event Ingestion Pipeline & Multi-Source Trigger Taxonomy](#262-event-ingestion-pipeline--multi-source-trigger-taxonomy)
@@ -372,7 +372,7 @@
 - [27.5 Quota Enforcement, Threshold Color Bands & Integrity Proofs](#275-quota-enforcement-threshold-color-bands--integrity-proofs)
 - [27.6 Periodic Reset Scheduling & Rollover Lifecycle](#276-periodic-reset-scheduling--rollover-lifecycle)
 - [27.7 Historical Analytics & Bounded Snapshot Ledger (`history.jsonl`)](#277-historical-analytics--bounded-snapshot-ledger-historyjsonl)
-- [27.8 REST API Reference & Operator Management Console](#278-rest-api-reference--operator-management-console)
+- [27.8 REST API Reference & Administrative Management Endpoints](#278-rest-api-reference--administrative-management-endpoints)
 - [27.9 Key Security & Resilience Defenses (Defense Matrix DEF-USG-01 to DEF-USG-10)](#279-key-security--resilience-defenses-defense-matrix-def-usg-01-to-def-usg-10)
 - [27.10 Testing and Verification Summary (The DUSAGE-Series Validation Suite: DUSAGE-001 to DUSAGE-009)](#2710-testing-and-verification-summary-the-dusage-series-validation-suite-dusage-001-to-dusage-009)
 - [27.11 Source Code & File Locations](#2711-source-code--file-locations)
@@ -397,7 +397,7 @@
 
 In a secure, distributed network, devices must know exactly who they are talking to. Previously, the SG-X Guardian system used email addresses to name devices and manage group memberships. While easy to read, email addresses can be faked, require an internet connection to verify, and are not physically tied to the hardware.
 
-To solve this, the SG-X Guardian system now implements the **W3C Decentralized Identifiers (DID)** standard using a dedicated method called **`did:guardian`**. 
+To solve this, the SG-X Guardian system now implements the **W3C Decentralized Identifiers (DID)** standard using a dedicated method called **`did:guardian`**.
 
 Every Guardian device automatically creates its own permanent, globally unique identity. This identity is calculated directly from the device's physical security chip and internal serial number. It acts like a digital fingerprint that never changes, cannot be stolen or moved to another machine, and can be verified completely offline.
 
@@ -487,7 +487,7 @@ Whenever device Alice wants to send data to device Bob:
 4. Alice uses Bob's verified public key to set up an encrypted communication channel.
 
 ### 1.5.3 Updating Security Keys Without Changing the Identity
-In high-security environments, operational cryptographic keys should be rotated periodically. 
+In high-security environments, operational cryptographic keys should be rotated periodically.
 - With the `did:guardian` method, a device can generate a new communication key at any time.
 - The new key is added to its identity profile, the profile version is incremented, and the old key is archived as retired.
 - **Most importantly, the device's DID remains completely unchanged.** Devices do not need to be re-enrolled or re-invited to the network when keys rotate.
@@ -795,7 +795,7 @@ The DID Document creation, publishing, and verification features are implemented
 The **DID Resolution Service** is the decentralized directory and discovery engine of the SG-X Guardian platform. In a zero-trust network where devices must authenticate peer-to-peer without relying on centralized phonebooks or cloud servers, resolution bridges the gap between an abstract device identity and a live, encrypted connection.
 
 **The Core Capability:**
-To establish a secure, authenticated channel with another edge node, a Guardian device requires only one piece of information: the peer's permanent **DID**. 
+To establish a secure, authenticated channel with another edge node, a Guardian device requires only one piece of information: the peer's permanent **DID**.
 
 The resolution service automatically:
 - Accepts a DID as input.
@@ -895,7 +895,7 @@ When resolving peers for secure communication channels, the resolver can enforce
 
 ## 3.7 Establishing Secure Peer Channels
 
-The DID Resolution Service is the foundational enabler for all peer-to-peer security in SG-X Guardian. 
+The DID Resolution Service is the foundational enabler for all peer-to-peer security in SG-X Guardian.
 
 Without needing to know physical IP addresses, DNS hostnames, or pre-shared passwords in advance, an edge device needs only the peer's permanent DID to:
 1. **Discover Network Location**: Obtain the peer's private Nebula overlay IP address.
@@ -940,7 +940,7 @@ The DID Resolution Service and its underlying caching engines are implemented in
 
 ### Primary Module Directory: `src/did/`
 - **`src/did/resolver.rs`**: Core `Resolver` implementation managing the four-tier fallback sequence, cryptographic verification on disk/network loads, network timeouts, and deactivation checks.
-- **`src/did/resolver_cache.rs`**: Thread-safe in-memory cache (`ResolverCache`), enforcing the 1-hour TTL, computing remaining validity, and providing targeted single-peer or global invalidation.
+- **`src/did/resolver_cache.rs`**: Thread-safe in-memory cache (`ResolverCache`), computing remaining validity and providing targeted single-peer or global invalidation. The 1-hour TTL itself is defined as `DEFAULT_TTL` in `src/did/resolver.rs:17` and passed into the cache.
 - **`src/did/tests/resolver_tests.rs`**: Dedicated unit test suite validating memory hits, multi-tier fallback progression, cache invalidation, and replay version rejections.
 
 ### Web API Directory: `src/api/handlers/`
@@ -1102,7 +1102,7 @@ Administrators and PWA dashboards can monitor and manage credentials through cle
 | **Inspect Own VC** | `GET /api/v1/vc/show` | Displays the local device's active membership credential. |
 | **List Issued VCs** | `GET /api/v1/vc/list` | Circle Owner views all credentials issued to cohort members. |
 | **Fetch Status List** | `GET /api/v1/vc/status-list` | Downloads the current compressed Status List 2021 credential. |
-| **Check Index Status**| `GET /api/v1/vc/status-list/index/:idx` | Checks whether a specific bit index is active (`0`) or revoked (`1`). |
+| **Check Index Status**| `GET /api/v1/vc/status-list-index` | Checks whether a specific bit index is active (`0`) or revoked (`1`). |
 | **Credential Summary**| `GET /api/v1/vc/summary` | High-level dashboard summary showing active, expired, and revoked counts. |
 
 ---
@@ -1212,7 +1212,7 @@ The VirtualID is computed deterministically through a single, collision-resistan
 1. **Base DID (`DID`)**: The device's permanent W3C identifier, ensuring the session is strictly anchored to an authorized node.
 2. **Current Operational Key (`CurrentDKP_PubKey`)**: The active public key used for the current epoch, binding the session to the node's live cryptographic capabilities.
 3. **Platform Integrity Measurements (`PCR_values`)**: The hardware-measured registers (from the TPM or Secure Element) reflecting the exact firmware, kernel, and software state of the machine.
-4. **Security Policy Digest (`policy_digest`)**: The cryptographic hash of the active Universal Edge Processing (UEP) firewall and network rules.
+4. **Security Policy Digest (`policy_digest`)**: The cryptographic hash of the active Unified Enforcement Point (UEP) firewall and network rules.
 5. **Initiator Nonce (`Nonce_I`)**: A cryptographically random, 32-byte single-use value generated by the connecting peer.
 6. **Responder Nonce (`Nonce_R`)**: A cryptographically random, 32-byte single-use value generated by the receiving peer.
 
@@ -1289,8 +1289,8 @@ Administrators and edge dashboards can monitor live VirtualID states through sim
 
 | Action | API Endpoint | What Is Monitored |
 | :--- | :--- | :--- |
-| **Local VID Status** | `GET /api/v1/vid/status` | Current active VirtualID, local DID, active DKP version, PCR digest, policy digest, session TTL, and last rotation reason. |
-| **Peer VID Cache** | `GET /api/v1/vid/cache` | Table of all known neighbor nodes, their active VirtualIDs, stable state fingerprints, and last re-attestation timestamps. |
+| **Local VID Status** | `GET /api/v1/vid/show` | Current active VirtualID, local DID, active DKP version, PCR digest, policy digest, session TTL, and last rotation reason. |
+| **Peer VID Cache** | `GET /api/v1/vid/peers` | Table of all known neighbor nodes, their active VirtualIDs, stable state fingerprints, and last re-attestation timestamps. |
 
 ---
 
@@ -1330,7 +1330,7 @@ The VirtualID-DID integration and session classification engines are implemented
 - **`src/virtual_id_cache.rs`**: Per-DID VirtualID cache (`VirtualIdCache`), tracking peer states, classifying rotation reasons (`RotationReason`), and enforcing the 30-second re-attestation cooldown.
 
 ### Web API Directory: `src/api/handlers/`
-- **`src/api/handlers/vid.rs`**: REST route handlers for `GET /api/v1/vid/status` and `GET /api/v1/vid/cache`, delivering real-time status telemetry to administrative dashboards.
+- **`src/api/handlers/vid.rs`**: REST route handlers for `GET /api/v1/vid/show` and `GET /api/v1/vid/peers`, delivering real-time status telemetry to administrative dashboards.
 
 ### Integration Points:
 - **`src/attestation_service.rs`**: Listens for VirtualID security-state changes and triggers mutual software/hardware attestation challenges.
@@ -1349,7 +1349,7 @@ To solve this visibility challenge, the SG-X Guardian daemon integrates **automa
 - It detects all active machines, cataloging their IP addresses, hardware MAC addresses, open ports, running services, and operating system fingerprints.
 - It maintains a persistent local inventory using the **`ConnectedDevice`** model.
 - It automatically cross-references every detected device against an **approved whitelist**, immediately flagging rogue or unapproved hardware for administrative approval.
-- It integrates discovery findings into an **AI-driven threat prediction and vulnerability engine**, proactively probing for outdated software (such as vulnerable SSH versions or unpatched web servers).
+- It integrates discovery findings into an **automated threat prediction and vulnerability engine**, proactively probing for outdated software (such as vulnerable SSH versions or unpatched web servers).
 
 ---
 
@@ -1420,7 +1420,7 @@ When a technician legitimately installs a new device (like a smart sensor or sec
 
 ---
 
-## 6.5 AI Threat Prediction & Vulnerability Pipeline
+## 6.5 Threat Prediction & Vulnerability Pipeline
 
 Network discovery does not stop at asset cataloging; it serves as the frontline sensor for the Guardian's automated security pipeline.
 
@@ -1499,7 +1499,7 @@ The NMAP Network Discovery and Device Profiling subsystems have been proven thro
 - **MAC-Anchored Stability**: Confirmed that when an existing device is re-scanned with a different IP address, the engine merges the record rather than creating a duplicate.
 - **Whitelist Classification Engine**: Tested that known devices match as `Approved`, new devices trigger `Unauthorized`, and altered ports trigger `Drifted` states.
 - **Scheduler Timers & Off-Hours Execution**: Confirmed that hourly loops and daily maintenance window schedules fire accurately without thread starvation.
-- **Vulnerability Pipeline Integration**: Tested that detecting new devices immediately triggers the vulnerability triage flag and feeds the AI risk scoring algorithms.
+- **Vulnerability Pipeline Integration**: Tested that detecting new devices immediately triggers the vulnerability triage flag.
 
 All automated test suites for discovery and device profiling have passed with zero errors, confirming that the subsystem delivers rock-solid, production-ready network visibility for SG-X Guardian.
 
@@ -1518,7 +1518,7 @@ The NMAP Network Discovery subsystem is implemented across the following codebas
 - **`src/discovery/inventory.rs`**: Thread-safe on-disk inventory manager (`inventory.json`), supporting atomic saves, device merging, and query filters.
 - **`src/discovery/raw_store.rs`**: Forensic storage retaining the last 10 raw XML scan outputs on disk (`<state_dir>/raw/`) for historical audits and re-parsing.
 - **`src/discovery/run_history.rs`**: Execution history tracker recording recent scan runs, device counts, durations, and diagnostic logs.
-- **`src/discovery/vuln_trigger.rs`**: Vulnerability triage pipeline queueing newly discovered devices for automated AI threat review and audit alerts.
+- **`src/discovery/vuln_trigger.rs`**: Vulnerability triage pipeline queueing newly discovered devices for automated threat review and audit alerts.
 - **`src/discovery/config.rs`**: Configuration models defining scan intensity profiles (`stealth`, `standard`, `aggressive`), target CIDR ranges, and timing intervals.
 
 ### Web API Directory: `src/api/handlers/`
@@ -1526,12 +1526,12 @@ The NMAP Network Discovery subsystem is implemented across the following codebas
 - **`src/api/handlers/devices.rs`**: Endpoints for viewing device profiles, inventory listings, and telemetry status.
 
 ### Event Publishing & Rule Engine Integration:
-- **`src/rules/publish.rs` & `src/rules/model.rs`**: Dispatches security events to the rule engine when devices are discovered, or when rogue/drifted devices trigger unauthorized alerts.
+- **`src/rules/bus.rs` & `src/rules/mod.rs`** (`publish()`) **& `src/rules/model.rs`**: Dispatches security events to the rule engine when devices are discovered, or when rogue/drifted devices trigger unauthorized alerts.
 
 ### Risk Scoring & Threat Pipeline Integration:
 - **`src/devices/scoring/security.rs`**: Evaluates discovered ports and outdated software versions to compute the device's overall Security Risk Score.
 - **`src/devices/scoring/privacy.rs`**: Analyzes broadcast services and open telemetry ports to compute the device's Privacy Score.
-- **`src/advisory/context.rs`**: Context pipeline mapping discovered service CPEs to known security vulnerabilities and AI threat predictions.
+- **`src/advisory/context.rs`**: Context pipeline mapping discovered service CPEs to known security vulnerabilities and automated threat predictions.
 
 ### Automated Integration Test Suites:
 - **`tests/api_discovery_test.rs`**: Comprehensive integration tests for discovery REST endpoints, inventory parsing, and unauthorized device filtering.
@@ -1663,7 +1663,7 @@ Before any node incorporates an incoming revocation entry into its local databas
 4. **Owner Protection Check**: If a Member attempts to issue a revocation against the Circle Owner, the entry is rejected instantly as a rogue insurrection attempt.
 5. **Privilege Boundary Enforcement**: If a Member submits an entry with operational reasons (such as `administrative_removal`) or low severity, the entry is rejected for insufficient privilege.
 6. **Anti-Self-Revocation Gating**: Entries where `revoker_did` equals `revoked_did` are rejected to prevent self-sabotage and identity deadlocks.
-7. **Timestamp Skew Tolerance**: The entry timestamp is verified against local time. Future-dated entries exceeding a 5-minute clock drift margin are rejected to prevent replay and timing attacks.
+7. **Timestamp Skew Tolerance**: The entry timestamp is verified against local time. Future-dated entries exceeding a 15-minute clock drift margin (`MAX_FUTURE_SKEW_MINUTES`) are rejected to prevent replay and timing attacks. Entries are also rejected once their timestamp is more than `CRL_ENTRY_MAX_AGE_DAYS` (365 days) in the past, bounding how long a stale entry may be replayed (`src/crl/verify.rs`).
 
 ### 7.4.4 Signature Canonicalization Rules
 To guarantee deterministic signature evaluation across heterogeneous hardware:
@@ -1746,7 +1746,7 @@ Administrators and PWA dashboards manage and inspect the CRL subsystem through d
 | **Wire Role Spoofing** | Attacker crafts a payload claiming `revoker_role: owner` on an unauthorized entry. | The system ignores the wire claim and re-derives the revoker's real role from their signed Membership VC. |
 | **Compromised Revoker Replay** | Attacker steals a revoked device's key and attempts to issue false revocations against healthy nodes. | System checks revoker DID against the local CRL; revoked nodes are barred from issuing revocations. |
 | **Rollback & State Downgrade** | Adversary transmits an older CRL snapshot from before a key revocation was published. | Monotonic sequence counter and Merkle root reject any CRL with a sequence lower than the local state. |
-| **Timestamp Manipulation** | Attacker sets timestamps far in the future to freeze revocation expirations. | Strict 5-minute clock drift limit rejects any entries with unrealistic future timestamps. |
+| **Timestamp Manipulation** | Attacker sets timestamps far in the future to freeze revocation expirations. | Strict 15-minute clock drift limit (`MAX_FUTURE_SKEW_MINUTES`) rejects any entries with unrealistic future timestamps, and a 365-day maximum entry age (`CRL_ENTRY_MAX_AGE_DAYS`) rejects stale replayed entries. |
 | **Offline Network Partition** | Rogue node disconnected from internet during revocation broadcast. | Revocations are persisted to the offline queue and automatically gossiped the moment links re-establish. |
 
 ---
@@ -2183,7 +2183,7 @@ The Emergency Revocation subsystem is implemented across the following codebase 
 - **`src/crl/gossip/mod.rs`**: Emergency configuration parsing (`emergency_enabled`, `emergency_port`, `emergency_ttl`) within `GossipConfig`.
 
 ### Session Management Integration: `src/cot/`
-- **`src/cot/session_manager/mod.rs`**: Global session manager maintaining live peer communication channels and executing zero-latency `terminate_peer()` teardowns.
+- **`src/cot/session_manager.rs`**: Global session manager maintaining live peer communication channels and executing zero-latency `terminate_peer()` teardowns.
 
 ### Web API Handlers: `src/api/handlers/`
 - **`src/api/handlers/crl.rs`**: REST route handlers for `/api/v1/crl/emergency/broadcast`, `/api/v1/crl/emergency/status`, `/api/v1/crl/emergency/notifications`, and debug session endpoints.
@@ -2419,7 +2419,7 @@ The Offline Revocation Synchronization subsystem is implemented across the follo
 
 ## 11.1 Executive Summary & Purpose
 
-Edge security in mission-critical environments requires multi-tiered, defense-in-depth architecture. While cryptographic silicon identity (SE050/TPM), W3C Decentralized Identifiers (DIDs), Verifiable Credentials (VCs), and behavioral AI provide robust authentication and anomaly detection, devices remain vulnerable to direct network-level attacks. Unpatched software vulnerabilities, zero-day remote code execution (RCE) exploits, malicious payloads, and unauthorized industrial control commands can compromise edge nodes before behavioral deviations are detected.
+Edge security in mission-critical environments requires multi-tiered, defense-in-depth architecture. While cryptographic silicon identity (SE050/TPM), W3C Decentralized Identifiers (DIDs), Verifiable Credentials (VCs), and behavioral anomaly detection provide robust authentication and monitoring, devices remain vulnerable to direct network-level attacks. Unpatched software vulnerabilities, zero-day remote code execution (RCE) exploits, malicious payloads, and unauthorized industrial control commands can compromise edge nodes before behavioral deviations are detected.
 
 To provide definitive, line-rate protection against network exploits, the SG-X Guardian architecture integrates an enterprise-grade **Suricata Deep Packet Inspection (DPI) Intrusion Detection and Prevention System (IDS/IPS)**:
 
@@ -2427,7 +2427,7 @@ To provide definitive, line-rate protection against network exploits, the SG-X G
 - **Comprehensive Threat Corpus**: Integrates over 67,000 Emerging Threats (ET) signatures alongside customized tactical signatures, identifying malware, trojans, ransomware, privilege escalation attempts, and protocol anomalies.
 - **Industrial Operational Technology (OT) Protection**: Implements native Modbus TCP application-layer decoding and five custom OT rules to detect unauthorized Programmable Logic Controller (PLC) coil writes, safety-critical register tampering, firmware upload abuse, and exception responses.
 - **Sensor Simulation & Testbed Integration**: Accompanied by a Docker-based 4-PLC industrial sensor simulation environment (`modbus_plc_simulator.py`) that models realistic manufacturing setpoints, continuous sensor jitter, and programmable anomaly scenarios.
-- **Synergy with Guardian AI**: Functions as a deterministic sensor feeding normalized alert vectors directly into Guardian's AI anomaly engine, advisory risk profiler, and automated rule execution pipeline.
+- **Synergy with the Guardian Advisory Engine**: Functions as a deterministic sensor feeding normalized alert vectors directly into Guardian's anomaly correlation engine, advisory risk profiler, and automated rule execution pipeline.
 - **Active Inline Kernel Blocking**: Operates in either passive `AlertOnly` mode or active `InlineBlock` mode, instantaneously dropping malicious packets at the Linux kernel level via dedicated `nftables` chains before packets reach application sockets.
 - **Resilient Lifecycle Management**: Features automated signature updates via `suricata-update`, pre-activation syntax validation gates, live Unix socket reloads, and comprehensive REST API telemetry.
 
@@ -2519,7 +2519,7 @@ Alerts are ingested into `AlertInventory`, which maintains an in-memory rolling 
 
 ---
 
-## 11.5 AI Anomaly Engine Correlation & Cross-System Alert Dispatch
+## 11.5 Anomaly Engine Correlation & Cross-System Alert Dispatch
 
 Suricata alerts serve as primary input features for Guardian's higher-level security intelligence layers.
 
@@ -2527,12 +2527,12 @@ Suricata alerts serve as primary input features for Guardian's higher-level secu
 Guardian implements a dedicated global broadcast tap (`ai_bridge::forward_to_ai`):
 - **High/Critical Event Filtering**: Forwards all High and Critical alerts into a 1,024-capacity broadcast channel (`FEATURE_TAP`).
 - **Normalized Feature Vectors**: Converts alerts into `AlertFeature` records containing timestamp, integer severity score (Critical = 4, High = 3, Medium = 2, Low = 1, Info = 0), signature ID, threat category, and source/destination IP pairs.
-- **Non-Blocking Telemetry**: If the AI engine subscriber is occupied, feature records are dropped gracefully to ensure the core network threat blocker is never delayed.
+- **Non-Blocking Telemetry**: If the advisory engine subscriber is occupied, feature records are dropped gracefully to ensure the core network threat blocker is never delayed.
 
-### 11.5.2 AI Threat Prediction & Advisory Handoff
-Ingested alerts are immediately passed to the AI advisory generator (`crate::advisory::generate_for_alert`):
+### 11.5.2 Threat Prediction & Advisory Handoff
+Ingested alerts are immediately passed to the advisory generator (`crate::advisory::generate_for_alert`):
 - **Attack Topology Correlation**: Maps incoming alerts to specific devices discovered via NMAP and Modbus scanners.
-- **Risk Score Adjustment**: Updates device risk metrics in real-time, feeding the Live Attack Topology screen (`AL09LiveAttackTopology`) and threat intelligence summaries.
+- **Risk Score Adjustment**: Updates device risk metrics in real-time, feeding the Live Attack Topology screen (`AL09LiveAttackTopology`) and threat summaries.
 - **Causal Attack Graphing**: Correlates multi-stage attack patterns (e.g. initial port reconnaissance followed by Modbus coil manipulation).
 
 ### 11.5.3 Rule Automation Engine & User Notification Dispatch
@@ -2548,7 +2548,7 @@ Guardian provides active inline threat mitigation through Linux kernel-level pac
 
 ### 11.6.1 Alert-Only vs. Inline-Block Operational Modes
 Administrators configure threat enforcement via `/etc/sgx-guardian/threat/config.yaml`:
-- **`AlertOnly` (Passive IDS)**: Alerts are logged, displayed in dashboards, and dispatched to AI and rule engines. No firewall rules are modified.
+- **`AlertOnly` (Passive IDS)**: Alerts are logged, displayed in dashboards, and dispatched to rule engines. No firewall rules are modified.
 - **`InlineBlock` (Active IPS)**: Any observed alert with `High` or `Critical` severity triggers instantaneous firewall drop rules against the offending source IP.
 
 ### 11.6.2 The `inet sgx_threat` Kernel Packet Filter
@@ -2605,8 +2605,8 @@ Suricata's native Modbus protocol parser is activated in `/etc/suricata/suricata
 - Configures full packet stream depth (`stream-depth: 0`) for comprehensive payload inspection.
 - Dissects Modbus Application Protocol (MBAP) headers, function codes (FC), register addresses, and data fields.
 
-### 11.8.2 Five Specialized OT Modbus Rules
-Guardian incorporates five specialized Modbus detection rules in `/etc/suricata/rules/guardian-custom.rules`:
+### 11.8.2 Five Specialized OT Modbus Rule Categories (Ten Signature IDs)
+Guardian incorporates five specialized Modbus detection rule categories, implemented as ten individual signatures (`sid: 10000201` through `sid: 10000210`) in `/etc/suricata/rules/guardian-custom.rules`:
 
 | Rule Identifier | Rule Name & Parameters | Threat Severity & Action | Industrial Security Rationale |
 | :--- | :--- | :--- | :--- |
@@ -2706,9 +2706,9 @@ Administrators and frontend dashboards interact with the Suricata IDS/IPS subsys
 The Suricata IDS/IPS integration and Modbus OT security features have undergone extensive testing and physical board verification:
 
 - **Live ARM64 Board Verification**: Confirmed active, uninterrupted operation on i.MX8M Plus hardware for over 7 hours, capturing over 940,000 live kernel packets with zero kernel drops.
-- **Rule Corpus Loading**: Verified successful loading of 67,432 Emerging Threats rules and 8 custom Guardian signatures.
+- **Rule Corpus Loading**: Verified successful loading of the Emerging Threats (ET Open) ruleset and 15 custom Guardian signatures (5 general-purpose `GUARDIAN` SIDs 9900001-9900005, plus 10 OT Modbus SIDs 10000201-10000210 grouped into 5 rule categories).
 - **Deep Protocol Inspection**: Verified real-time extraction and parsing of 1,626 DNS events, 600 TLS handshakes, and 17,792 HTTP transactions into EVE JSON.
-- **AI Feature Tap Integration**: Validated that High and Critical alerts are reliably dispatched to `FEATURE_TAP` and recorded in tamper-evident hash-chained audit logs.
+- **Feature Tap Integration**: Validated that High and Critical alerts are reliably dispatched to `FEATURE_TAP` and recorded in tamper-evident hash-chained audit logs.
 - **Inline Blocking Verification**: Confirmed automatic creation of drop rules in `inet sgx_threat input` chain and persistence to `blocked_ips.json`.
 - **Modbus Rule Validation**: Cross-verified all five custom Modbus rule categories across physical boards (Node B and Node C):
   - Rule 1 (Coil Writes FC5/FC15): Verified alert generation on unauthorized coil writes.
@@ -2725,37 +2725,37 @@ The Suricata IDS/IPS integration and Modbus OT security features have undergone 
 The Suricata IDS/IPS and Industrial Modbus OT subsystems are implemented across the following codebase locations:
 
 ### Primary Threat Subsystem: `src/threat/`
-- **[`src/threat/mod.rs`](file:///home/hp/SGX/src/threat/mod.rs)**: Subsystem declarations, public exports, and module coordination.
-- **[`src/threat/service.rs`](file:///home/hp/SGX/src/threat/service.rs)**: `ThreatService` runtime loop, asynchronous task management, EVE tailing orchestration, and alert persistence.
-- **[`src/threat/config.rs`](file:///home/hp/SGX/src/threat/config.rs)**: Configuration data model (`SuricataConfig`, `BlockMode`), YAML loader, and validation routines.
-- **[`src/threat/blocker.rs`](file:///home/hp/SGX/src/threat/blocker.rs)**: Active firewall management (`Blocker`), Linux `nftables` table/chain manipulation, protected subnet discovery (`collect_protected_networks`), and block persistence.
-- **[`src/threat/eve_parser.rs`](file:///home/hp/SGX/src/threat/eve_parser.rs)**: EVE JSON parser, threat classification logic (`classify`), and severity derivation (`severity_from_raw`).
-- **[`src/threat/eve_tailer.rs`](file:///home/hp/SGX/src/threat/eve_tailer.rs)**: Asynchronous non-blocking file tailer with persistent offset tracking (`last_offset.json`).
-- **[`src/threat/inventory.rs`](file:///home/hp/SGX/src/threat/inventory.rs)**: 10,000-alert rolling ring buffer (`AlertInventory`) with atomic file serialization.
-- **[`src/threat/ai_bridge.rs`](file:///home/hp/SGX/src/threat/ai_bridge.rs)**: Bounded broadcast channel (`FEATURE_TAP`) dispatching normalized `AlertFeature` vectors to Guardian AI engines.
-- **[`src/threat/rule_manager.rs`](file:///home/hp/SGX/src/threat/rule_manager.rs)**: Signature update manager, dynamic Python path resolution, syntax validation (`suricata -T`), and live socket reloading.
-- **[`src/threat/threat_alert.rs`](file:///home/hp/SGX/src/threat/threat_alert.rs)**: Core `ThreatAlert` entity, `Severity`, and `ThreatCategory` definitions.
+- **`src/threat/mod.rs`**: Subsystem declarations, public exports, and module coordination.
+- **`src/threat/service.rs`**: `ThreatService` runtime loop, asynchronous task management, EVE tailing orchestration, and alert persistence.
+- **`src/threat/config.rs`**: Configuration data model (`SuricataConfig`, `BlockMode`), YAML loader, and validation routines.
+- **`src/threat/blocker.rs`**: Active firewall management (`Blocker`), Linux `nftables` table/chain manipulation, protected subnet discovery (`collect_protected_networks`), and block persistence.
+- **`src/threat/eve_parser.rs`**: EVE JSON parser, threat classification logic (`classify`), and severity derivation (`severity_from_raw`).
+- **`src/threat/eve_tailer.rs`**: Asynchronous non-blocking file tailer with persistent offset tracking (`last_offset.json`).
+- **`src/threat/inventory.rs`**: 10,000-alert rolling ring buffer (`AlertInventory`) with atomic file serialization.
+- **`src/threat/ai_bridge.rs`**: Bounded broadcast channel (`FEATURE_TAP`) dispatching normalized `AlertFeature` vectors to Guardian's advisory correlation engines.
+- **`src/threat/rule_manager.rs`**: Signature update manager, dynamic Python path resolution, syntax validation (`suricata -T`), and live socket reloading.
+- **`src/threat/threat_alert.rs`**: Core `ThreatAlert` entity, `Severity`, and `ThreatCategory` definitions.
 
 ### REST API Handlers & Routing: `src/api/`
-- **[`src/api/handlers/threat.rs`](file:///home/hp/SGX/src/api/handlers/threat.rs)**: Axum route handlers for alert queries, status checks, threat intel scoring, config patches, block/unblock actions, and `modbus_alerts`.
-- **[`src/api/routes.rs`](file:///home/hp/SGX/src/api/routes.rs)**: REST route registration for `/api/v1/threat/*` endpoints.
+- **`src/api/handlers/threat.rs`**: Axum route handlers for alert queries, status checks, threat intel scoring, config patches, block/unblock actions, and `modbus_alerts`.
+- **`src/api/routes.rs`**: REST route registration for `/api/v1/threat/*` endpoints.
 
 ### Packaging, Rules & Service Configurations: `packaging/`
-- **[`packaging/guardian-custom.rules`](file:///home/hp/SGX/packaging/guardian-custom.rules)**: Custom Snort/Suricata rules, including reconnaissance, policy violations, and the 5 custom Modbus OT detection rules (`sids: 10000201 - 10000210`).
-- **[`packaging/suricata.yaml.template`](file:///home/hp/SGX/packaging/suricata.yaml.template)**: Suricata configuration template defining AF_PACKET multi-threading, Modbus protocol decoding on port 502, and EVE JSON outputs.
-- **[`packaging/sgx-guardian.service`](file:///home/hp/SGX/packaging/sgx-guardian.service)**: Systemd service unit integrating Suricata lifecycle with the Guardian core daemon.
+- **`packaging/guardian-custom.rules`**: Custom Snort/Suricata rules, including reconnaissance, policy violations, and the 5 custom Modbus OT detection rules (`sids: 10000201 - 10000210`).
+- **`packaging/suricata.yaml.template`**: Suricata configuration template defining AF_PACKET multi-threading, Modbus protocol decoding on port 502, and EVE JSON outputs.
+- **`packaging/sgx-guardian.service`**: Systemd service unit integrating Suricata lifecycle with the Guardian core daemon.
 
 ### Industrial Sensor Simulation Testbed: `Test_Devices/`
-- **[`Test_Devices/modbus_plc_simulator (1).py`](file:///home/hp/SGX/Test_Devices/modbus_plc_simulator%20%281%29.py)**: Multi-device Modbus TCP simulator modeling 4 physical PLCs, continuous sensor jitter, and programmable anomaly injection.
-- **[`Test_Devices/demo_scenario_controller (1).py`](file:///home/hp/SGX/Test_Devices/demo_scenario_controller%20%281%29.py)**: Automation controller orchestrating the 5 industrial attack and anomaly demonstration scenarios.
-- **[`Test_Devices/docker-compose-guardian-demo (1).yml`](file:///home/hp/SGX/Test_Devices/docker-compose-guardian-demo%20%281%29.yml)**: Docker Compose manifest deploying Guardian edge containers alongside virtual Modbus PLCs.
-- **[`Test_Devices/README_GUARDIAN_DEMO (1).md`](file:///home/hp/SGX/Test_Devices/README_GUARDIAN_DEMO%20%281%29.md)**: Operational guide and architecture manual for the industrial demonstration environment.
+- **`Test_Devices/modbus_plc_simulator%20%281%29.py`**: Multi-device Modbus TCP simulator modeling 4 physical PLCs, continuous sensor jitter, and programmable anomaly injection.
+- **`Test_Devices/demo_scenario_controller%20%281%29.py`**: Automation controller orchestrating the 5 industrial attack and anomaly demonstration scenarios.
+- **`Test_Devices/docker-compose-guardian-demo%20%281%29.yml`**: Docker Compose manifest deploying Guardian edge containers alongside virtual Modbus PLCs.
+- **`Test_Devices/README_GUARDIAN_DEMO%20%281%29.md`**: Operational guide and architecture manual for the industrial demonstration environment.
 
 ### Verification Logs & Automated Integration Tests:
-- **[`docs/Suricata_Verification_Log.md`](file:///home/hp/SGX/docs/Suricata_Verification_Log.md)**: Complete physical board verification log detailing hardware testing, 10 API verification runs, and cross-board Modbus rule validations.
-- **[`tests/threat_service_test.rs`](file:///home/hp/SGX/tests/threat_service_test.rs)**: Integration test suite verifying alert ingestion, ring buffer rollover, and persistent offset recovery.
-- **[`tests/threat_blocker_logic_test.rs`](file:///home/hp/SGX/tests/threat_blocker_logic_test.rs)**: Unit test suite validating blocking decisions, whitelist exemptions, and subnet protection logic.
-- **[`tests/threat_config_test.rs`](file:///home/hp/SGX/tests/threat_config_test.rs)**: Configuration validation tests ensuring safe default settings and bounds checking.
+- **`docs/Suricata_Verification_Log.md`**: Complete physical board verification log detailing hardware testing, 10 API verification runs, and cross-board Modbus rule validations.
+- **`tests/threat_service_test.rs`**: Integration test suite verifying alert ingestion, ring buffer rollover, and persistent offset recovery.
+- **`tests/threat_blocker_logic_test.rs`**: Unit test suite validating blocking decisions, whitelist exemptions, and subnet protection logic.
+- **`tests/threat_config_test.rs`**: Configuration validation tests ensuring safe default settings and bounds checking.
 
 ---
 
@@ -2900,7 +2900,7 @@ When `client_isolation: true` is configured:
 - This prevents infected devices on the hotspot from performing lateral port scans, ARP poisoning, or malware propagation against other connected team members.
 
 ### 12.6.3 Egress Policy Gate Integration
-In `DualWifi` mode, all forwarded traffic passing between `uap1` and `wlan0` is evaluated by Guardian's active User-Enforced Policy (UEP) engine. If a device is revoked or an egress policy restricts WAN access, packets are dropped at the forward chain.
+In `DualWifi` mode, all forwarded traffic passing between `uap1` and `wlan0` is evaluated by Guardian's active Unified Enforcement Point (UEP) engine. If a device is revoked or an egress policy restricts WAN access, packets are dropped at the forward chain.
 
 ---
 
@@ -2918,7 +2918,7 @@ All saved network passwords and hotspot pre-shared keys are encrypted before hit
 Hotspot security passwords submitted via REST APIs or management consoles are strictly validated by `validate_hotspot_password`:
 - **Length Constraint**: Must contain at least **8 characters**.
 - **Complexity Constraint**: Must contain at least **one non-alphanumeric character** (e.g. symbols or punctuation).
-- **Dictionary Rejection**: Validated against an embedded list of the top 1,000 common passwords from the standard `rockyou` corpus (`rockyou_top1000.txt`). Common or easily guessable passphrases are rejected with an explicit validation error.
+- **Dictionary Rejection**: Validated against an embedded list of 21 common passwords drawn from the `rockyou` corpus (`rockyou_top1000.txt`). Despite the filename, the embedded list currently contains 21 entries, not the full top 1,000. Common or easily guessable passphrases in this list are rejected with an explicit validation error.
 
 ---
 
@@ -2992,40 +2992,47 @@ The Dual Wi-Fi Architecture and Network Orchestrator have been rigorously verifi
 The Dual Wi-Fi Network Orchestration subsystem is implemented across the following codebase locations:
 
 ### Runtime Orchestration Subsystem: `src/runtime/`
-- **[`src/runtime/mod.rs`](file:///home/hp/SGX/src/runtime/mod.rs)**: Module exports, lifecycle daemon spawner, and component coordination.
-- **[`src/runtime/runtime_manager.rs`](file:///home/hp/SGX/src/runtime/runtime_manager.rs)**: Core `RuntimeManager` orchestrator, multi-task supervisors (`dual_nm_task`, `client_nm_task`), and split-recovery logic.
-- **[`src/runtime/state.rs`](file:///home/hp/SGX/src/runtime/state.rs)**: Definition of the 9 lifecycle states (`SystemState`), `RuntimeStatus`, and state transition structures.
-- **[`src/runtime/state_machine.rs`](file:///home/hp/SGX/src/runtime/state_machine.rs)**: Thread-safe state machine managing atomic status updates and transitions.
-- **[`src/runtime/models.rs`](file:///home/hp/SGX/src/runtime/models.rs)**: Configuration data structures (`RuntimeMode`, `HotspotConfig`, `UplinkConfig`, `GuardianConfig`).
-- **[`src/runtime/config_store.rs`](file:///home/hp/SGX/src/runtime/config_store.rs)**: Durable JSON configuration persistence manager with atomic file writing.
-- **[`src/runtime/crypto.rs`](file:///home/hp/SGX/src/runtime/crypto.rs)**: AES-256-GCM password encryption/decryption, hardware key management, and `rockyou` password validation.
-- **[`src/runtime/rockyou_top1000.txt`](file:///home/hp/SGX/src/runtime/rockyou_top1000.txt)**: Embedded dictionary of common weak passwords used for passphrase complexity enforcement.
-- **[`src/runtime/server.rs`](file:///home/hp/SGX/src/runtime/server.rs)**: REST API and WebSocket router implementing `/api/v1/wifi/*` endpoints (`mode`, `scan`, `clients`, `stream`).
-- **[`src/runtime/event_bus.rs`](file:///home/hp/SGX/src/runtime/event_bus.rs)**: Broadcast event bus distributing network state changes to WebSocket clients.
+- **`src/runtime/mod.rs`**: Module exports, lifecycle daemon spawner, and component coordination.
+- **`src/runtime/runtime_manager.rs`**: Core `RuntimeManager` orchestrator, multi-task supervisors (`dual_nm_task`, `client_nm_task`), and split-recovery logic.
+- **`src/runtime/state.rs`**: Definition of the 9 lifecycle states (`SystemState`), `RuntimeStatus`, and state transition structures.
+- **`src/runtime/state_machine.rs`**: Thread-safe state machine managing atomic status updates and transitions.
+- **`src/runtime/models.rs`**: Configuration data structures (`RuntimeMode`, `HotspotConfig`, `UplinkConfig`, `GuardianConfig`).
+- **`src/runtime/config_store.rs`**: Durable JSON configuration persistence manager with atomic file writing.
+- **`src/runtime/crypto.rs`**: AES-256-GCM password encryption/decryption, hardware key management, and `rockyou` password validation.
+- **`src/runtime/rockyou_top1000.txt`**: Embedded dictionary of common weak passwords used for passphrase complexity enforcement (21 entries, despite the filename).
+- **`src/runtime/server.rs`**: REST API and WebSocket router implementing `/api/v1/wifi/*` endpoints (`mode`, `scan`, `clients`, `stream`).
+- **`src/runtime/event_bus.rs`**: Broadcast event bus distributing network state changes to WebSocket clients.
 
 ### Network Bridge Subsystem: `src/netbridge/`
-- **[`src/netbridge/mod.rs`](file:///home/hp/SGX/src/netbridge/mod.rs)**: `Netbridge` controller coordinating `hostapd` process launching, interface IP assignment, and AP readiness checks.
-- **[`src/netbridge/nat.rs`](file:///home/hp/SGX/src/netbridge/nat.rs)**: `NatManager` orchestrator synthesizing dynamic masquerade and forwarding rules in Linux `nftables`.
-- **[`src/netbridge/routing.rs`](file:///home/hp/SGX/src/netbridge/routing.rs)**: `RoutingManager` controlling IPv4 forwarding, policy routing table 200, and multi-homing sysctl configurations.
-- **[`src/netbridge/dhcp_dns.rs`](file:///home/hp/SGX/src/netbridge/dhcp_dns.rs)**: `DnsmasqOrchestrator` managing configuration generation, canonical domain mapping, and process supervision for `dnsmasq`.
-- **[`src/netbridge/leases.rs`](file:///home/hp/SGX/src/netbridge/leases.rs)**: `LeaseManager` parsing active DHCP lease records from `/var/lib/misc/dnsmasq.leases`.
-- **[`src/netbridge/process.rs`](file:///home/hp/SGX/src/netbridge/process.rs)**: Asynchronous `ProcessRunner` managing daemon execution, output logging, and automated crash recovery.
-- **[`src/netbridge/bootstrap.rs`](file:///home/hp/SGX/src/netbridge/bootstrap.rs)**: System validation and directory preparation for wireless daemon initialization.
-- **[`src/netbridge/config.rs`](file:///home/hp/SGX/src/netbridge/config.rs)**: Template rendering engines for `hostapd.conf` and `dnsmasq.conf`.
-- **[`src/netbridge/types.rs`](file:///home/hp/SGX/src/netbridge/types.rs)**: Type definitions, channel mappings, and error enums for network bridging.
+
+The network bridge subsystem is mid-migration (see `docs/NetworkManager_DBus_WiFi_Migration_Plan.md`): the original direct-process orchestration of `hostapd`/`wpa_supplicant`/`dnsmasq` is being replaced, uplink-station-interface first, by a NetworkManager D-Bus backend, while the hotspot AP path (`uap0`, `hostapd`, `dnsmasq`) continues to be managed directly by Guardian during this first cut.
+
+- **`src/netbridge/mod.rs`**: `Netbridge` controller coordinating `hostapd` process launching, interface IP assignment, and AP readiness checks.
+- **`src/netbridge/backend.rs`**: `NetworkBackend` trait abstracting Wi-Fi station control behind a common interface, plus its device/preflight types and error variants (`NetworkBackendError`: `E_NM_UNAVAILABLE`, `E_NM_TIMEOUT`, `E_WIFI_ASSOC_TIMEOUT`, `E_WIFI_INTERFACE_DENIED`, `E_WIFI_DEVICE_NOT_FOUND`, and others). Restricts managed uplink interfaces to `wlan0`/`wlan1` (`NM_UPLINK_INTERFACES`).
+- **`src/netbridge/network_manager/mod.rs`**: A `NetworkBackend` implementation acting as a `zbus`-based D-Bus client to `org.freedesktop.NetworkManager`, driving Wi-Fi scan, association, and disconnect over the system bus instead of spawning `wpa_supplicant` directly.
+- **`src/netbridge/network_manager/station_profile.rs`**: Builds and hashes NetworkManager connection-profile settings (`NmSettings`) for saved Wi-Fi networks (`802-11-wireless` / `802-11-wireless-security` settings maps).
+- **`src/netbridge/validator.rs`**: Preflight validation of the host environment (interface presence, AP-mode support, required binaries such as `hostapd`/`iw`/`dnsmasq`/`wpa_supplicant`/`udhcpc`, port availability) prior to bringing daemons up.
+- **`src/netbridge/nat.rs`**: `NatManager` orchestrator synthesizing dynamic masquerade and forwarding rules in Linux `nftables`.
+- **`src/netbridge/routing.rs`**: `RoutingManager` controlling IPv4 forwarding, policy routing table 200, and multi-homing sysctl configurations.
+- **`src/netbridge/dhcp_dns.rs`**: `DnsmasqOrchestrator` managing configuration generation, canonical domain mapping, and process supervision for `dnsmasq`.
+- **`src/netbridge/leases.rs`**: `LeaseManager` parsing active DHCP lease records from `/var/lib/misc/dnsmasq.leases`.
+- **`src/netbridge/process.rs`**: Asynchronous `ProcessRunner` managing daemon execution, output logging, and automated crash recovery.
+- **`src/netbridge/bootstrap.rs`**: System validation and directory preparation for wireless daemon initialization.
+- **`src/netbridge/config.rs`**: Template rendering engines for `hostapd.conf` and `dnsmasq.conf`.
+- **`src/netbridge/types.rs`**: Type definitions, channel mappings, and error enums for network bridging.
 
 ### Configuration Templates: `config/`
-- **[`config/hostapd/hostapd.conf.template`](file:///home/hp/SGX/config/hostapd/hostapd.conf.template)**: Base configuration template for WPA2/WPA3 access point deployment with client isolation.
-- **[`config/dnsmasq/dnsmasq.conf.template`](file:///home/hp/SGX/config/dnsmasq/dnsmasq.conf.template)**: Configuration template defining DHCP lease ranges, gateway options, and canonical domain mappings.
+- **`config/hostapd/hostapd.conf.template`**: Base configuration template for WPA2/WPA3 access point deployment with client isolation.
+- **`config/dnsmasq/dnsmasq.conf.template`**: Configuration template defining DHCP lease ranges, gateway options, and canonical domain mappings.
 
 ### Automated Integration & Unit Test Suites:
-- **[`tests/test_runtime_state_machine.rs`](file:///home/hp/SGX/tests/test_runtime_state_machine.rs)**: Unit test suite validating state machine transitions and error recovery.
-- **[`tests/test_runtime_crypto.rs`](file:///home/hp/SGX/tests/test_runtime_crypto.rs)**: Cryptographic tests verifying AES-256-GCM encryption, key generation, and dictionary rejection.
-- **[`tests/test_runtime_config_store.rs`](file:///home/hp/SGX/tests/test_runtime_config_store.rs)**: Tests validating atomic persistence and configuration loading.
-- **[`tests/test_netbridge_nat.rs`](file:///home/hp/SGX/tests/test_netbridge_nat.rs)**: Tests for dynamic nftables NAT rule synthesis and idempotent re-application.
-- **[`tests/test_netbridge_dhcp_dns.rs`](file:///home/hp/SGX/tests/test_netbridge_dhcp_dns.rs)**: Tests for dnsmasq configuration generation and lease parsing.
-- **[`tests/runtime_server_test.rs`](file:///home/hp/SGX/tests/runtime_server_test.rs)**: Integration tests verifying REST API routes, mode switching, and WebSocket event distribution.
-- **[`tests/netbridge_routing_unit_test.rs`](file:///home/hp/SGX/tests/netbridge_routing_unit_test.rs)**: Unit tests for IPv4 forwarding and policy routing rule evaluation.
+- **`tests/test_runtime_state_machine.rs`**: Unit test suite validating state machine transitions and error recovery.
+- **`tests/test_runtime_crypto.rs`**: Cryptographic tests verifying AES-256-GCM encryption, key generation, and dictionary rejection.
+- **`tests/test_runtime_config_store.rs`**: Tests validating atomic persistence and configuration loading.
+- **`tests/test_netbridge_nat.rs`**: Tests for dynamic nftables NAT rule synthesis and idempotent re-application.
+- **`tests/test_netbridge_dhcp_dns.rs`**: Tests for dnsmasq configuration generation and lease parsing.
+- **`tests/runtime_server_test.rs`**: Integration tests verifying REST API routes, mode switching, and WebSocket event distribution.
+- **`tests/netbridge_routing_unit_test.rs`**: Unit tests for IPv4 forwarding and policy routing rule evaluation.
 
 ---
 
@@ -3421,7 +3428,7 @@ During the onboarding workflow, the web console polls `GET /api/v1/devices/pairi
 ### 13.9.3 Multi-Device Hardware, Attestation & Network Telemetry
 
 The status endpoint aggregates multi-subsystem telemetry into structured diagnostic sections:
-- **Identity Telemetry**: Returns node name, W3C DID, device fingerprint, Dynamic Key Provisioning (DKP) version, and DID Document update timestamps.
+- **Identity Telemetry**: Returns node name, W3C DID, device fingerprint, Device Key Pair (DKP) version, and DID Document update timestamps.
 - **Hardware Telemetry**: Reports SE050 secure element communication status and physical tamper flags.
 - **Security Telemetry**: Aggregates SGX attestation status, remote attestation gRPC endpoints, PCR baseline match status, secure boot integrity, active policy digests, and composite trust state (`trusted` vs `unknown`).
 - **Network Telemetry**: Physical IP addresses, active network interface names, and transport types (Ethernet, Wi-Fi).
@@ -3557,34 +3564,34 @@ The access control, device onboarding, and pairing subsystems are verified by an
 The access control, device onboarding, and authenticated pairing subsystems are implemented across the following codebase files:
 
 ### Authentication & Access Control Subsystem: `src/api/auth/`
-- **[`src/api/auth/mod.rs`](file:///home/hp/SGX/src/api/auth/mod.rs)**: Auth module root exporting submodules, types, and store structures.
-- **[`src/api/auth/store.rs`](file:///home/hp/SGX/src/api/auth/store.rs)**: Persistent data storage managers (`UserStore`, `SessionStore`, `PairingStore`, `DeviceStore`, `AdminStores`) with mutex file locking.
-- **[`src/api/auth/password.rs`](file:///home/hp/SGX/src/api/auth/password.rs)**: Argon2id hashing, salt generation, password policy validation, and unusable hash generators.
-- **[`src/api/auth/rate_limiter.rs`](file:///home/hp/SGX/src/api/auth/rate_limiter.rs)**: Device and command sliding-window rate limiters.
-- **[`src/api/auth/session.rs`](file:///home/hp/SGX/src/api/auth/session.rs)**: JWT ES256 session token issuance, claim construction, and ECDSA signature verification.
-- **[`src/api/auth/middleware.rs`](file:///home/hp/SGX/src/api/auth/middleware.rs)**: Universal Axum `require_auth` middleware, route whitelist checking, token extraction, and CSRF/Fetch-Metadata guards.
-- **[`src/api/auth/pairing.rs`](file:///home/hp/SGX/src/api/auth/pairing.rs)**: Pairing challenge issuance, Base64 URL-safe encoding, proof construction, canonical domain separation, and replay validation.
-- **[`src/api/auth/authorization.rs`](file:///home/hp/SGX/src/api/auth/authorization.rs)**: Role-based access control (RBAC) engine and scope decision evaluators.
-- **[`src/api/auth/ecdsa.rs`](file:///home/hp/SGX/src/api/auth/ecdsa.rs)**: P-256 signature normalization into 64-byte raw format.
-- **[`src/api/auth/oidc.rs`](file:///home/hp/SGX/src/api/auth/oidc.rs)**: Federated Cylenium OpenID Connect (OIDC) SSO client, token exchange, and claims verification.
+- **`src/api/auth/mod.rs`**: Auth module root exporting submodules, types, and store structures.
+- **`src/api/auth/store.rs`**: Persistent data storage managers (`UserStore`, `SessionStore`, `PairingStore`, `DeviceStore`, `AdminStores`) with mutex file locking.
+- **`src/api/auth/password.rs`**: Argon2id hashing, salt generation, password policy validation, and unusable hash generators.
+- **`src/api/auth/rate_limiter.rs`**: Device and command sliding-window rate limiters.
+- **`src/api/auth/session.rs`**: JWT ES256 session token issuance, claim construction, and ECDSA signature verification.
+- **`src/api/auth/middleware.rs`**: Universal Axum `require_auth` middleware, route whitelist checking, token extraction, and CSRF/Fetch-Metadata guards.
+- **`src/api/auth/pairing.rs`**: Pairing challenge issuance, Base64 URL-safe encoding, proof construction, canonical domain separation, and replay validation.
+- **`src/api/auth/authorization.rs`**: Role-based access control (RBAC) engine and scope decision evaluators.
+- **`src/api/auth/ecdsa.rs`**: P-256 signature normalization into 64-byte raw format.
+- **`src/api/auth/oidc.rs`**: Federated Cylenium OpenID Connect (OIDC) SSO client, token exchange, and claims verification.
 
 ### REST API Handler Implementation: `src/api/handlers/`
-- **[`src/api/handlers/auth.rs`](file:///home/hp/SGX/src/api/handlers/auth.rs)**: Handlers for `/api/v1/auth/*` (`signup`, `login`, `logout`, `session`, `refresh`, `revoke-all`, `profile`, `cylenium`).
-- **[`src/api/handlers/devices.rs`](file:///home/hp/SGX/src/api/handlers/devices.rs)**: Handlers for `/api/v1/devices/*` (`pairing_code`, `pair`, `pairing_status`, `paired_list`, `unpaired_list`, `all_list`, `paired_detail`, `paired_guardian_status`, `unpair`).
-- **[`src/api/handlers/cert.rs`](file:///home/hp/SGX/src/api/handlers/cert.rs)**: Handlers for certificate request inspection, WebSocket live updates, and manual approval override.
-- **[`src/api/state.rs`](file:///home/hp/SGX/src/api/state.rs)**: Shared application state definition (`AppState`), `AuthLockoutConfig`, `AuthRateLimitConfig`, and `LoginRateLimiter`.
+- **`src/api/handlers/auth.rs`**: Handlers for `/api/v1/auth/*` (`signup`, `login`, `logout`, `session`, `refresh`, `revoke-all`, `profile`, `cylenium`).
+- **`src/api/handlers/devices.rs`**: Handlers for `/api/v1/devices/*` (`pairing_code`, `pair`, `pairing_status`, `paired_list`, `unpaired_list`, `all_list`, `paired_detail`, `paired_guardian_status`, `unpair`).
+- **`src/api/handlers/cert.rs`**: Handlers for certificate request inspection, WebSocket live updates, and manual approval override.
+- **`src/api/state.rs`**: Shared application state definition (`AppState`), `AuthLockoutConfig`, `AuthRateLimitConfig`, and `LoginRateLimiter`.
 
 ### Certificate Bootstrap & Identity Subsystems:
-- **[`src/cert_service.rs`](file:///home/hp/SGX/src/cert_service.rs)**: Certificate bootstrap gRPC service implementing automated mesh approval and W3C Verifiable Credential issuance.
-- **[`src/server.rs`](file:///home/hp/SGX/src/server.rs)**: Dedicated plaintext bootstrap server runner listening on port 50061.
-- **[`src/key_manager.rs`](file:///home/hp/SGX/src/key_manager.rs)**: Hardware cryptographic key manager providing ECDSA-P256 signing and public key DER export.
+- **`src/cert_service.rs`**: Certificate bootstrap gRPC service implementing automated mesh approval and W3C Verifiable Credential issuance.
+- **`src/server.rs`**: Dedicated plaintext bootstrap server runner listening on port 50061.
+- **`src/key_manager.rs`**: Hardware cryptographic key manager providing ECDSA-P256 signing and public key DER export.
 
 ### Automated Integration & Unit Test Suites:
-- **[`src/api/mod.rs`](file:///home/hp/SGX/src/api/mod.rs)**: Comprehensive integration test suite containing `pairing_and_device_dashboard_flow_work_for_node_b_and_node_c`, lockout verification tests, and session lifecycle tests.
-- **[`src/api/auth/store.rs`](file:///home/hp/SGX/src/api/auth/store.rs)**: Unit tests verifying user storage, failed login tracking, and device pairing record persistence.
-- **[`src/api/auth/pairing.rs`](file:///home/hp/SGX/src/api/auth/pairing.rs)**: Cryptographic unit tests for challenge encoding, proof signing, tampering rejection, and replay protection.
-- **[`src/api/auth/password.rs`](file:///home/hp/SGX/src/api/auth/password.rs)**: Password policy enforcement and Argon2id round-trip hashing tests.
-- **[`src/api/auth/rate_limiter.rs`](file:///home/hp/SGX/src/api/auth/rate_limiter.rs)**: Sliding-window rate limiter threshold and expiration tests.
+- **`src/api/mod.rs`**: Comprehensive integration test suite containing `pairing_and_device_dashboard_flow_work_for_node_b_and_node_c`, lockout verification tests, and session lifecycle tests.
+- **`src/api/auth/store.rs`**: Unit tests verifying user storage, failed login tracking, and device pairing record persistence.
+- **`src/api/auth/pairing.rs`**: Cryptographic unit tests for challenge encoding, proof signing, tampering rejection, and replay protection.
+- **`src/api/auth/password.rs`**: Password policy enforcement and Argon2id round-trip hashing tests.
+- **`src/api/auth/rate_limiter.rs`**: Sliding-window rate limiter threshold and expiration tests.
 
 ---
 
@@ -3961,32 +3968,32 @@ The containerization, build, and deployment infrastructure is verified by the **
 The build, containerization, and deployment infrastructure is implemented across the following codebase locations:
 
 ### Container Definitions & Dockerfiles: `docker/`
-- **[`docker/Dockerfile.agent`](file:///home/hp/SGX/docker/Dockerfile.agent)**: Multi-stage, multi-architecture Dockerfile implementing `frontend-builder`, `builder`, `nebula-fetch`, and `runtime` stages.
-- **[`docker/Dockerfile.board-builder`](file:///home/hp/SGX/docker/Dockerfile.board-builder)**: Dedicated Debian Bookworm AArch64 cross-compilation container enforcing GLIBC 2.36 symbol ceilings for NXP i.MX8MP hardware.
-- **[`docker/entrypoint.sh`](file:///home/hp/SGX/docker/entrypoint.sh)**: Container startup entrypoint managing node identity resolution, runtime gate reporting, and process execution.
-- **[`docker/Caddyfile.dev`](file:///home/hp/SGX/docker/Caddyfile.dev)**: Caddy reverse proxy configuration terminating LAN TLS for `.guardian` development domains.
+- **`docker/Dockerfile.agent`**: Multi-stage, multi-architecture Dockerfile implementing `frontend-builder`, `builder`, `nebula-fetch`, and `runtime` stages.
+- **`docker/Dockerfile.board-builder`**: Dedicated Debian Bookworm AArch64 cross-compilation container enforcing GLIBC 2.36 symbol ceilings for NXP i.MX8MP hardware.
+- **`docker/entrypoint.sh`**: Container startup entrypoint managing node identity resolution, runtime gate reporting, and process execution.
+- **`docker/Caddyfile.dev`**: Caddy reverse proxy configuration terminating LAN TLS for `.guardian` development domains.
 
 ### Compose Orchestration & Development Cohort:
-- **[`docker-compose.dev.yml`](file:///home/hp/SGX/docker-compose.dev.yml)**: Root Docker Compose cluster definition configuring `nodeA`, `nodeB`, `nodeC`, `broker`, and `caddy` over dual bridge subnets.
-- **[`optional/container-cohort/docker-compose.dev.yml`](file:///home/hp/SGX/optional/container-cohort/docker-compose.dev.yml)**: Standalone laptop development cohort configuration.
-- **[`optional/container-cohort/up.sh`](file:///home/hp/SGX/optional/container-cohort/up.sh)**: Automated cluster launch script with pre-flight checks.
-- **[`optional/container-cohort/down.sh`](file:///home/hp/SGX/optional/container-cohort/down.sh)**: Cluster teardown and network cleanup script.
-- **[`optional/container-cohort/logs.sh`](file:///home/hp/SGX/optional/container-cohort/logs.sh)**: Multi-node log aggregation and streaming helper.
-- **[`optional/container-cohort/ps.sh`](file:///home/hp/SGX/optional/container-cohort/ps.sh)**: Cluster status and container health inspection utility.
+- **`docker-compose.dev.yml`**: Root Docker Compose cluster definition configuring `nodeA`, `nodeB`, `nodeC`, `broker`, and `caddy` over dual bridge subnets.
+- **`optional/container-cohort/docker-compose.dev.yml`**: Standalone laptop development cohort configuration.
+- **`optional/container-cohort/up.sh`**: Automated cluster launch script with pre-flight checks.
+- **`optional/container-cohort/down.sh`**: Cluster teardown and network cleanup script.
+- **`optional/container-cohort/logs.sh`**: Multi-node log aggregation and streaming helper.
+- **`optional/container-cohort/ps.sh`**: Cluster status and container health inspection utility.
 
 ### Build Scripts & Automation: `scripts/`
-- **[`scripts/build_docker.sh`](file:///home/hp/SGX/scripts/build_docker.sh)**: Multi-architecture Docker build script generating `.tar` container archives and `.sha256` checksums.
-- **[`scripts/build.sh`](file:///home/hp/SGX/scripts/build.sh)**: Native host build and cross-compilation helper script.
+- **`scripts/build_docker.sh`**: Multi-architecture Docker build script generating `.tar` container archives and `.sha256` checksums.
+- **`scripts/build.sh`**: Native host build and cross-compilation helper script.
 
 ### Continuous Integration Pipelines: `.github/workflows/`
-- **[`optional/container-cohort/workflows/containers.yml`](file:///home/hp/SGX/optional/container-cohort/workflows/containers.yml)**: GitHub Actions workflow validating Docker builds, Compose syntax, and virtual platform features.
-- **[`.github/workflows/ci.yml`](file:///home/hp/SGX/.github/workflows/ci.yml)**: Core workspace CI workflow executing compilation, unit testing, and static analysis.
-- **[`.github/workflows/release-packages.yml`](file:///home/hp/SGX/.github/workflows/release-packages.yml)**: Release packaging workflow building Debian, RPM, and container artifacts.
+- **`optional/container-cohort/workflows/containers.yml`**: GitHub Actions workflow validating Docker builds, Compose syntax, and virtual platform features.
+- **`.github/workflows/ci.yml`**: Core workspace CI workflow executing compilation, unit testing, and static analysis.
+- **`.github/workflows/release-packages.yml`**: Release packaging workflow building Debian, RPM, and container artifacts.
 
 ### Runtime Configuration & Enforcement Gates: `src/`
-- **[`src/runtime_gates.rs`](file:///home/hp/SGX/src/runtime_gates.rs)**: Definition of runtime execution gates (`disable_policy_enforcement`, `force_software_keys`, `disable_secure_boot_check`, `disable_pcr`).
-- **[`src/enforcement/executor.rs`](file:///home/hp/SGX/src/enforcement/executor.rs)**: Kernel netfilter executor translating policy models into atomic `nftables` rulesets.
-- **[`src/main.rs`](file:///home/hp/SGX/src/main.rs)**: Daemon initialization, environment path resolution, and subsystem orchestration.
+- **`src/runtime_gates.rs`**: Definition of runtime execution gates (`disable_policy_enforcement`, `force_software_keys`, `disable_secure_boot_check`, `disable_pcr`).
+- **`src/enforcement/executor.rs`**: Kernel netfilter executor translating policy models into atomic `nftables` rulesets.
+- **`src/main.rs`**: Daemon initialization, environment path resolution, and subsystem orchestration.
 
 ---
 
@@ -4364,41 +4371,41 @@ The messaging, storage, attachment, and synchronization subsystem is verified by
 The text chat, messaging, attachment, and synchronization infrastructure is implemented across the following codebase locations:
 
 ### Core Chat Engine & Transport: `src/chat/`
-- **[`src/chat/models.rs`](file:///home/hp/SGX/src/chat/models.rs)**: Data models defining `ChatMessageRecord`, `MessageStatus`, `ReadReceiptRecord`, `TypingEvent`, and `ChatEvent`.
-- **[`src/chat/storage.rs`](file:///home/hp/SGX/src/chat/storage.rs)**: Persistent storage engine implementing append-only `.jsonl` logging, mutex locks, and `fsync` guarantees.
-- **[`src/chat/crypto.rs`](file:///home/hp/SGX/src/chat/crypto.rs)**: End-to-end payload cryptography implementing NIST P-256 ECDH, HKDF-SHA256, and AES-256-GCM.
-- **[`src/chat/grpc_server.rs`](file:///home/hp/SGX/src/chat/grpc_server.rs)**: Inbound gRPC service handling `PushMessage`, `PushReceipt`, `SyncMessages`, and `GetAttachment`.
-- **[`src/chat/grpc_client.rs`](file:///home/hp/SGX/src/chat/grpc_client.rs)**: Outbound gRPC client managing message push, receipt delivery, catch-up sync, and attachment streaming.
-- **[`src/chat/mod.rs`](file:///home/hp/SGX/src/chat/mod.rs)**: Module exports and subsystem declarations.
+- **`src/chat/models.rs`**: Data models defining `ChatMessageRecord`, `MessageStatus`, `ReadReceiptRecord`, `TypingEvent`, and `ChatEvent`.
+- **`src/chat/storage.rs`**: Persistent storage engine implementing append-only `.jsonl` logging, mutex locks, and `fsync` guarantees.
+- **`src/chat/crypto.rs`**: End-to-end payload cryptography implementing NIST P-256 ECDH, HKDF-SHA256, and AES-256-GCM.
+- **`src/chat/grpc_server.rs`**: Inbound gRPC service handling `PushMessage`, `PushReceipt`, `SyncMessages`, and `GetAttachment`.
+- **`src/chat/grpc_client.rs`**: Outbound gRPC client managing message push, receipt delivery, catch-up sync, and attachment streaming.
+- **`src/chat/mod.rs`**: Module exports and subsystem declarations.
 
 ### Protocol Buffers Interface: `proto/`
-- **[`proto/chat.proto`](file:///home/hp/SGX/proto/chat.proto)**: Protocol Buffers v3 interface defining `ChatService`, request envelopes, and chunk streaming messages.
+- **`proto/chat.proto`**: Protocol Buffers v3 interface defining `ChatService`, request envelopes, and chunk streaming messages.
 
 ### REST & WebSocket Handlers: `src/api/`
-- **[`src/api/handlers/chat.rs`](file:///home/hp/SGX/src/api/handlers/chat.rs)**: Axum API handlers for `send_message`, `mark_as_read`, `typing`, `trigger_sync`, `get_history`, and `ws_handler`.
-- **[`src/api/handlers/chat_attachments.rs`](file:///home/hp/SGX/src/api/handlers/chat_attachments.rs)**: Multipart upload (`upload_attachment`) and streaming download (`download_attachment`) handlers.
-- **[`src/api/mod.rs`](file:///home/hp/SGX/src/api/mod.rs)**: Route registration wiring chat REST and WebSocket paths into the Axum application router.
+- **`src/api/handlers/chat.rs`**: Axum API handlers for `send_message`, `mark_as_read`, `typing`, `trigger_sync`, `get_history`, and `ws_handler`.
+- **`src/api/handlers/chat_attachments.rs`**: Multipart upload (`upload_attachment`) and streaming download (`download_attachment`) handlers.
+- **`src/api/mod.rs`**: Route registration wiring chat REST and WebSocket paths into the Axum application router.
 
 ### Secure Vault & Storage Integration: `src/vault/`
-- **[`src/vault/ingest.rs`](file:///home/hp/SGX/src/vault/ingest.rs)**: Secure attachment ingestion, hashing, and replication into local vault storage.
-- **[`src/vault/mime_policy.rs`](file:///home/hp/SGX/src/vault/mime_policy.rs)**: MIME type validation ensuring safe file types and preventing executable execution.
-- **[`src/vault/persistence.rs`](file:///home/hp/SGX/src/vault/persistence.rs)**: Vault record persistence and namespace management (`Personal` and `Circle`).
+- **`src/vault/ingest.rs`**: Secure attachment ingestion, hashing, and replication into local vault storage.
+- **`src/vault/mime_policy.rs`**: MIME type validation ensuring safe file types and preventing executable execution.
+- **`src/vault/persistence.rs`**: Vault record persistence and namespace management (`Personal` and `Circle`).
 
 ### Server Lifecycle & Port Resolution: `src/`
-- **[`src/server.rs`](file:///home/hp/SGX/src/server.rs)**: gRPC server orchestration launching `start_chat_plaintext_server`.
-- **[`src/startup/config.rs`](file:///home/hp/SGX/src/startup/config.rs)**: Port assignment helper computing node-specific chat gRPC ports (`chat_grpc_port`).
-- **[`src/main.rs`](file:///home/hp/SGX/src/main.rs)**: Daemon startup routine spawning the background chat gRPC service on `0.0.0.0:<port>`.
+- **`src/server.rs`**: gRPC server orchestration launching `start_chat_plaintext_server`.
+- **`src/startup/config.rs`**: Port assignment helper computing node-specific chat gRPC ports (`chat_grpc_port`).
+- **`src/main.rs`**: Daemon startup routine spawning the background chat gRPC service on `0.0.0.0:<port>`.
 
 ### Frontend Operator Console: `frontend/`
-- **[`frontend/src/app/services/chatService.ts`](file:///home/hp/SGX/frontend/src/app/services/chatService.ts)**: TypeScript client interface managing history polling, WebSocket subscriptions, message transmission, and file downloads.
-- **[`frontend/src/app/screens/network/ChatConversationScreen.tsx`](file:///home/hp/SGX/frontend/src/app/screens/network/ChatConversationScreen.tsx)**: React conversation UI rendering message bubbles, status indicators, and file attachment cards.
-- **[`frontend/src/app/screens/chat/ChatsListScreen.tsx`](file:///home/hp/SGX/frontend/src/app/screens/chat/ChatsListScreen.tsx)**: Conversation roster screen displaying unread message counters and active Circle channels.
+- **`frontend/src/app/services/chatService.ts`**: TypeScript client interface managing history polling, WebSocket subscriptions, message transmission, and file downloads.
+- **`frontend/src/app/screens/network/ChatConversationScreen.tsx`**: React conversation UI rendering message bubbles, status indicators, and file attachment cards.
+- **`frontend/src/app/screens/chat/ChatsListScreen.tsx`**: Conversation roster screen displaying unread message counters and active Circle channels.
 
 ### Integration & Unit Test Suites: `tests/`
-- **[`tests/chat_integration_test.rs`](file:///home/hp/SGX/tests/chat_integration_test.rs)**: Multi-threaded concurrency test suite verifying P2P and Group storage locks (`MSG-001`, `MSG-002`).
-- **[`tests/chat_host_integration.rs`](file:///home/hp/SGX/tests/chat_host_integration.rs)**: End-to-end host integration test covering P2P round-trip, group fan-out, sync, read receipts, and trust gates (`MSG-003` to `MSG-010`).
-- **[`tests/cov_chat_attachments_test.rs`](file:///home/hp/SGX/tests/cov_chat_attachments_test.rs)**: Integration tests validating upload limits, MIME policies, and download authorization.
-- **[`tests/cov_chat_handlers_test.rs`](file:///home/hp/SGX/tests/cov_chat_handlers_test.rs)**: Unit test suite exercising REST validation, actor labels, and typing handlers.
+- **`tests/chat_integration_test.rs`**: Multi-threaded concurrency test suite verifying P2P and Group storage locks (`MSG-001`, `MSG-002`).
+- **`tests/chat_host_integration.rs`**: End-to-end host integration test covering P2P round-trip, group fan-out, sync, read receipts, and trust gates (`MSG-003` to `MSG-010`).
+- **`tests/cov_chat_attachments_test.rs`**: Integration tests validating upload limits, MIME policies, and download authorization.
+- **`tests/cov_chat_handlers_test.rs`**: Unit test suite exercising REST validation, actor labels, and typing handlers.
 
 ---
 
@@ -4506,7 +4513,7 @@ The call progression enforces strict state transition validation:
 | **State 2** | **`OfferSent`** | Cryptographic offer transmitted via Nebula. | `Verifying`, `EndCall` |
 | **State 3** | **`OfferReceived`** | Target receiver ingests and parses offer. | `Verifying`, `EndCall` |
 | **State 4** | **`Verifying`** | 5-stage cryptographic and identity verification. | `Authorizing`, `EndCall` |
-| **State 5** | **`Authorizing`** | User Entitlement Policy (UEP) role evaluation. | `Accepted`, `EndCall` |
+| **State 5** | **`Authorizing`** | Unified Enforcement Point (UEP) role evaluation. | `Accepted`, `EndCall` |
 | **State 6** | **`Accepted`** | Both parties agreed; ready for media setup. | `MediaNegotiation`, `EndCall` |
 | **State 7** | **`MediaNegotiation`** | WebRTC SDP exchange, ICE checks, DTLS handshake. | `Connected`, `EndCall` |
 | **State 8** | **`Connected`** | Bidirectional SRTP encrypted media flowing. | `EndCall` |
@@ -4523,7 +4530,7 @@ Before transitioning from `OfferReceived` to `Accepted`, the system enforces two
    - Platform Configuration Register (PCR) baseline attestation check.
    - Certificate Revocation List (CRL) check: ensures neither device DID has been revoked.
 2. **UEP Authorization Gate (`src/call/uep_gate.rs`)**:
-   - Evaluates the caller's role against the active User Entitlement Policy (`uep_policy_v1.yaml`).
+   - Evaluates the caller's role against the active Unified Enforcement Point policy (`uep_policy_v1.yaml`).
    - Verifies that the participant possesses the `call:voice` entitlement.
    - Logs the policy decision with full audit context (`log_uep_decision`).
 
@@ -4718,7 +4725,7 @@ Before any signaling datagram is dispatched:
 ### 16.10.2 UEP Calling Permissions & Circle Boundary Gates
 
 - **Circle Membership Mandatory**: Direct calls require that both participants share at least one active Circle (`ensure_member_contact_access`). Group calls require active membership in the target Circle.
-- **Role Entitlements**: The User Entitlement Policy engine verifies that the calling account holds the necessary audio entitlement (`Role::Admin` or `Role::Member` with voice capability). Revocation of Circle membership immediately terminates any active call session.
+- **Role Entitlements**: The Unified Enforcement Point engine verifies that the calling account holds the necessary audio entitlement (`Role::Admin` or `Role::Member` with voice capability). Revocation of Circle membership immediately terminates any active call session.
 
 ---
 
@@ -4763,47 +4770,47 @@ The voice calling, group conference, signaling, and media encryption subsystem i
 The voice calling, signaling, group conferencing, and media encryption subsystem is implemented across the following codebase locations:
 
 ### Core Call Framework & Signaling: `src/call/`
-- **[`src/call/mod.rs`](file:///home/hp/SGX/src/call/mod.rs)**: Subsystem declarations, public exports, and module structure.
-- **[`src/call/signaling.rs`](file:///home/hp/SGX/src/call/signaling.rs)**: `CallOffer`, `CallAnswer`, `MediaType`, and cryptographic payload signature generators.
-- **[`src/call/protocol.rs`](file:///home/hp/SGX/src/call/protocol.rs)**: `SignalingEnvelope`, `SignalKind`, `ReplayProtector`, and canonical serialization.
-- **[`src/call/state.rs`](file:///home/hp/SGX/src/call/state.rs)**: Formal 10-state call lifecycle finite state machine and transition validation.
-- **[`src/call/session.rs`](file:///home/hp/SGX/src/call/session.rs)**: Direct call session tracking, participant records, DTLS fingerprint matching, and audit logging.
-- **[`src/call/group.rs`](file:///home/hp/SGX/src/call/group.rs)**: Group conference management, 12-participant ceiling, host moderation, and heartbeat tracking.
-- **[`src/call/media_state.rs`](file:///home/hp/SGX/src/call/media_state.rs)**: Audio/video stream state machines, mute tracking, and real-time network telemetry.
-- **[`src/call/history.rs`](file:///home/hp/SGX/src/call/history.rs)**: Persistent call history store, atomic temp-file commits, and rolling 500-session retention.
-- **[`src/call/signal_hub.rs`](file:///home/hp/SGX/src/call/signal_hub.rs)**: Broadcast hub multiplexing signaling messages between browser clients and appliances.
-- **[`src/call/nebula_signaling.rs`](file:///home/hp/SGX/src/call/nebula_signaling.rs)**: Dedicated TCP signaling transport over Nebula overlay network on port `50065`.
-- **[`src/call/uep_gate.rs`](file:///home/hp/SGX/src/call/uep_gate.rs)**: User Entitlement Policy check evaluating voice calling permissions.
-- **[`src/call/verify/media_gate.rs`](file:///home/hp/SGX/src/call/verify/media_gate.rs)**: 5-stage verification gate validating signatures, freshness, PCRs, and CRLs before media setup.
+- **`src/call/mod.rs`**: Subsystem declarations, public exports, and module structure.
+- **`src/call/signaling.rs`**: `CallOffer`, `CallAnswer`, `MediaType`, and cryptographic payload signature generators.
+- **`src/call/protocol.rs`**: `SignalingEnvelope`, `SignalKind`, `ReplayProtector`, and canonical serialization.
+- **`src/call/state.rs`**: Formal 10-state call lifecycle finite state machine and transition validation.
+- **`src/call/session.rs`**: Direct call session tracking, participant records, DTLS fingerprint matching, and audit logging.
+- **`src/call/group.rs`**: Group conference management, 12-participant ceiling, host moderation, and heartbeat tracking.
+- **`src/call/media_state.rs`**: Audio/video stream state machines, mute tracking, and real-time network telemetry.
+- **`src/call/history.rs`**: Persistent call history store, atomic temp-file commits, and rolling 500-session retention.
+- **`src/call/signal_hub.rs`**: Broadcast hub multiplexing signaling messages between browser clients and appliances.
+- **`src/call/nebula_signaling.rs`**: Dedicated TCP signaling transport over Nebula overlay network on port `50065`.
+- **`src/call/uep_gate.rs`**: Unified Enforcement Point check evaluating voice calling permissions.
+- **`src/call/verify/media_gate.rs`**: 5-stage verification gate validating signatures, freshness, PCRs, and CRLs before media setup.
 
 ### Media Engine & Encryption: `src/media/`
-- **[`src/media/mod.rs`](file:///home/hp/SGX/src/media/mod.rs)**: `MediaEngine` coordinator coordinating WebRTC and ICE agents.
-- **[`src/media/codecs.rs`](file:///home/hp/SGX/src/media/codecs.rs)**: Codec definitions supporting Opus (48 kHz, stereo) and G.711 fallback.
-- **[`src/media/dtls.rs`](file:///home/hp/SGX/src/media/dtls.rs)**: DTLS handshake management, certificate fingerprints, and key derivation.
-- **[`src/media/srtp.rs`](file:///home/hp/SGX/src/media/srtp.rs)**: SRTP session context, packet encryption/decryption, and master salt management.
-- **[`src/media/ice.rs`](file:///home/hp/SGX/src/media/ice.rs)**: Interactive Connectivity Establishment (ICE) agent and candidate gathering.
-- **[`src/media/webrtc_engine.rs`](file:///home/hp/SGX/src/media/webrtc_engine.rs)**: Peer connection state management and media stream configuration.
+- **`src/media/mod.rs`**: `MediaEngine` coordinator coordinating WebRTC and ICE agents.
+- **`src/media/codecs.rs`**: Codec definitions supporting Opus (48 kHz, stereo) and G.711 fallback.
+- **`src/media/dtls.rs`**: DTLS handshake management, certificate fingerprints, and key derivation.
+- **`src/media/srtp.rs`**: SRTP session context, packet encryption/decryption, and master salt management.
+- **`src/media/ice.rs`**: Interactive Connectivity Establishment (ICE) agent and candidate gathering.
+- **`src/media/webrtc_engine.rs`**: Peer connection state management and media stream configuration.
 
 ### REST & WebSocket API Handlers: `src/api/`
-- **[`src/api/handlers/call.rs`](file:///home/hp/SGX/src/api/handlers/call.rs)**: Direct call endpoints, signaling WebSockets, quality reporting, and history queries.
-- **[`src/api/handlers/group_call.rs`](file:///home/hp/SGX/src/api/handlers/group_call.rs)**: Group call creation, joining, moderation, heartbeats, and group signaling WebSockets.
-- **[`src/api/mod.rs`](file:///home/hp/SGX/src/api/mod.rs)**: Routing table registration for direct and group call endpoints.
+- **`src/api/handlers/call.rs`**: Direct call endpoints, signaling WebSockets, quality reporting, and history queries.
+- **`src/api/handlers/group_call.rs`**: Group call creation, joining, moderation, heartbeats, and group signaling WebSockets.
+- **`src/api/mod.rs`**: Routing table registration for direct and group call endpoints.
 
 ### Frontend Calling Components: `frontend/`
-- **[`frontend/src/features/calls/CallContext.tsx`](file:///home/hp/SGX/frontend/src/features/calls/CallContext.tsx)**: Direct calling React context managing WebRTC peer connections and signaling sockets.
-- **[`frontend/src/features/calls/GroupCallContext.tsx`](file:///home/hp/SGX/frontend/src/features/calls/GroupCallContext.tsx)**: Group conference context managing multi-party audio and moderation events.
-- **[`frontend/src/features/calls/CallingScreen.tsx`](file:///home/hp/SGX/frontend/src/features/calls/CallingScreen.tsx)**: Direct call active conversation screen with audio waveforms and connection timers.
-- **[`frontend/src/features/calls/GroupCallingScreen.tsx`](file:///home/hp/SGX/frontend/src/features/calls/GroupCallingScreen.tsx)**: Multi-party conference grid rendering participant cards, speaking indicators, and host controls.
-- **[`frontend/src/app/components/circle/CallControls.tsx`](file:///home/hp/SGX/frontend/src/app/components/circle/CallControls.tsx)**: Call control bar featuring microphone mute/unmute, camera toggles, speaker output, and hang up.
-- **[`frontend/src/app/screens/calls/CallsHistoryScreen.tsx`](file:///home/hp/SGX/frontend/src/app/screens/calls/CallsHistoryScreen.tsx)**: Call history dashboard listing past direct and group calls, outcomes, and durations.
+- **`frontend/src/features/calls/CallContext.tsx`**: Direct calling React context managing WebRTC peer connections and signaling sockets.
+- **`frontend/src/features/calls/GroupCallContext.tsx`**: Group conference context managing multi-party audio and moderation events.
+- **`frontend/src/features/calls/CallingScreen.tsx`**: Direct call active conversation screen with audio waveforms and connection timers.
+- **`frontend/src/features/calls/GroupCallingScreen.tsx`**: Multi-party conference grid rendering participant cards, speaking indicators, and host controls.
+- **`frontend/src/app/components/circle/CallControls.tsx`**: Call control bar featuring microphone mute/unmute, camera toggles, speaker output, and hang up.
+- **`frontend/src/app/screens/calls/CallsHistoryScreen.tsx`**: Call history dashboard listing past direct and group calls, outcomes, and durations.
 
 ### Test Suites: `tests/`
-- **[`tests/call_state_fsm.rs`](file:///home/hp/SGX/tests/call_state_fsm.rs)**: Finite state machine test validating 10-state progression and illegal transition rejections (`VOC-001`).
-- **[`tests/e2e_call_lifecycle.rs`](file:///home/hp/SGX/tests/e2e_call_lifecycle.rs)**: End-to-end integration test validating direct call lifecycle, SDP exchange, and teardown (`VOC-002`).
-- **[`tests/cov_group_call_success_test.rs`](file:///home/hp/SGX/tests/cov_group_call_success_test.rs)**: Multi-party group calling integration test verifying invites, heartbeats, moderation, and leave events (`VOC-005`, `VOC-006`, `VOC-007`).
-- **[`tests/calling_unit_protocol_coverage.rs`](file:///home/hp/SGX/tests/calling_unit_protocol_coverage.rs)**: Protocol test verifying envelope signatures, replay defenses, and canonical serialization (`VOC-003`, `VOC-004`).
-- **[`tests/calling_unit_group_coverage.rs`](file:///home/hp/SGX/tests/calling_unit_group_coverage.rs)**: Unit test suite exercising group capacity ceilings and moderation rules (`VOC-010`).
-- **[`tests/call_failure_modes.rs`](file:///home/hp/SGX/tests/call_failure_modes.rs)**: Error handling test suite validating network dropouts, certificate mismatches, and policy denials (`VOC-008`).
+- **`tests/call_state_fsm.rs`**: Finite state machine test validating 10-state progression and illegal transition rejections (`VOC-001`).
+- **`tests/e2e_call_lifecycle.rs`**: End-to-end integration test validating direct call lifecycle, SDP exchange, and teardown (`VOC-002`).
+- **`tests/cov_group_call_success_test.rs`**: Multi-party group calling integration test verifying invites, heartbeats, moderation, and leave events (`VOC-005`, `VOC-006`, `VOC-007`).
+- **`tests/calling_unit_protocol_coverage.rs`**: Protocol test verifying envelope signatures, replay defenses, and canonical serialization (`VOC-003`, `VOC-004`).
+- **`tests/calling_unit_group_coverage.rs`**: Unit test suite exercising group capacity ceilings and moderation rules (`VOC-010`).
+- **`tests/call_failure_modes.rs`**: Error handling test suite validating network dropouts, certificate mismatches, and policy denials (`VOC-008`).
 
 ---
 
@@ -4815,7 +4822,7 @@ Modern tactical defense, critical infrastructure protection, and industrial edge
 
 Commercial cloud-based video conferencing platforms (e.g., Zoom, Microsoft Teams, Google Meet, or Webex) are completely unsuitable for zero-trust edge environments. They route private visual feeds through centralized third-party servers, require persistent public internet connectivity, expose sensitive visual metadata, consume excessive uplink bandwidth, and lack hardware-rooted cryptographic identity binding. A compromised cloud provider or hijacked signaling server could expose real-time optical surveillance or operational schematics of critical national infrastructure.
 
-To address these tactical requirements, the SG-X Guardian platform implements a **Hardware-Accelerated Video Calling and Real-Time Visual Communications Architecture** ([src/call/media_state.rs](file:///home/hp/SGX/src/call/media_state.rs), [src/media/codecs.rs](file:///home/hp/SGX/src/media/codecs.rs), [src/media/webrtc_engine.rs](file:///home/hp/SGX/src/media/webrtc_engine.rs), [src/call/signaling.rs](file:///home/hp/SGX/src/call/signaling.rs), [src/call/session.rs](file:///home/hp/SGX/src/call/session.rs), [src/call/group.rs](file:///home/hp/SGX/src/call/group.rs), and [frontend/src/features/calls/](file:///home/hp/SGX/frontend/src/features/calls/)):
+To address these tactical requirements, the SG-X Guardian platform implements a **Hardware-Accelerated Video Calling and Real-Time Visual Communications Architecture** (`src/call/media_state.rs`, `src/media/codecs.rs`, `src/media/webrtc_engine.rs`, `src/call/signaling.rs`, `src/call/session.rs`, `src/call/group.rs`, and `frontend/src/features/calls/`):
 
 - **Unified Signaling Subsystem**: Extends the existing voice signaling protocol without creating parallel connections. Video capabilities, session descriptions (SDP), and ICE candidates are exchanged over the same hardened, ECDSA-P256 signed envelopes transmitted across the Slack Nebula overlay network (`nebula0`) on dedicated TCP port `50065`.
 - **Embedded Hardware Acceleration (NXP i.MX8M Plus VPU)**: Integrates with the on-chip Hantro VC8000E video encoder and G1/G2 decoder via Linux Video4Linux2 memory-to-memory (`v4l2-m2m`) kernel drivers and zero-copy DMA-BUF memory pipelines, reducing CPU consumption from 85-95% down to less than 15% during 1080p @ 30fps streaming.
@@ -4833,7 +4840,7 @@ The video calling framework does not introduce an independent signaling protocol
 
 ### 17.2.1 Reusing the Voice Signaling Protocol & Envelopes
 
-Video signaling messages are encapsulated inside the standard `SignalingEnvelope` structure ([src/call/protocol.rs](file:///home/hp/SGX/src/call/protocol.rs)), transmitted over the Nebula mesh overlay on TCP port `50065`:
+Video signaling messages are encapsulated inside the standard `SignalingEnvelope` structure (`src/call/protocol.rs`), transmitted over the Nebula mesh overlay on TCP port `50065`:
 
 - **Version & Type Binding**: Every envelope specifies `CALL_PROTOCOL_VERSION = 1` and embeds a `SignalKind` variant: `SignalKind::Offer(CallOffer)`, `SignalKind::Answer(CallAnswer)`, `SignalKind::IceCandidate(IceCandidate)`, `SignalKind::Moderation(ModerationAction)`, or `SignalKind::Hangup(CallHangup)`.
 - **Identity Pinning**: Envelopes declare `sender_did` and `recipient_did`, binding the transmission to physical W3C Decentralized Identifiers (`did:guardian:...`).
@@ -4842,11 +4849,11 @@ Video signaling messages are encapsulated inside the standard `SignalingEnvelope
 
 ### 17.2.2 Dual-Media Negotiation: Audio, Video & Presentation Tracks
 
-Media modalities are negotiated during the initial offer/answer exchange through the `MediaType` enumeration ([src/call/signaling.rs](file:///home/hp/SGX/src/call/signaling.rs)):
+Media modalities are negotiated during the initial offer/answer exchange through the `MediaType` enumeration (`src/call/signaling.rs`):
 
 1. **Offer Generation**: When an operator initiates a video call, the calling Guardian generates a `CallOffer` containing `requested_media: [MediaType::Audio, MediaType::Video]`. The accompanying Session Description Protocol (SDP) contains both an audio media description (`m=audio 9 UDP/TLS/RTP/SAVPF 111`) and a video media description (`m=video 9 UDP/TLS/RTP/SAVPF 96 97 98`).
 2. **Policy & Hardware Evaluation**: Upon receiving the offer, the destination Guardian checks local policy, user permissions, and camera hardware availability.
-3. **Answer Emission**: 
+3. **Answer Emission**:
    - If video is accepted, the destination returns a `CallAnswer` with `accepted_media: [MediaType::Audio, MediaType::Video]`, including corresponding video codec parameters in the answer SDP.
    - If the receiving node lacks a camera, has disabled video in local policy, or the operator chooses to answer as audio-only, the answer returns `accepted_media: [MediaType::Audio]`. The answer SDP sets the video port to zero (`m=video 0 UDP/TLS/RTP/SAVPF`), cleanly rejecting the video stream while continuing voice communications without error.
 4. **Mid-Call Renegotiation**: If an operator turns on their camera during an ongoing audio-only call, the node sends a new `CallOffer` with `requested_media: [MediaType::Audio, MediaType::Video]` over the existing signaling channel, executing an in-band SDP renegotiation.
@@ -4863,7 +4870,7 @@ To prevent adversaries from injecting recorded video streams or manipulating ses
 
 ## 17.3 Camera Capture Pipeline & WebRTC Video Tracks
 
-The video subsystem bridges local camera hardware into the browser and edge WebRTC media engine ([src/media/webrtc_engine.rs](file:///home/hp/SGX/src/media/webrtc_engine.rs)).
+The video subsystem bridges local camera hardware into the browser and edge WebRTC media engine (`src/media/webrtc_engine.rs`).
 
 ### 17.3.1 Local Device Camera Capture & V4L2 Ingestion
 
@@ -4881,7 +4888,7 @@ Guardian appliances support optical sensors connected via physical edge interfac
 
 ### 17.3.2 WebRTC Video Track Attachment & MediaStream Engine
 
-Video streams are managed inside the core media runtime using `MediaStreamInfo` ([src/media/webrtc_engine.rs](file:///home/hp/SGX/src/media/webrtc_engine.rs)) and `VideoStream` ([src/call/media_state.rs](file:///home/hp/SGX/src/call/media_state.rs)):
+Video streams are managed inside the core media runtime using `MediaStreamInfo` (`src/media/webrtc_engine.rs`) and `VideoStream` (`src/call/media_state.rs`):
 
 - **Track Abstraction**: A WebRTC video track represents a single unidirectional video transmission. Tracks are created with unique track IDs (e.g., `video-track-guardian-primary`) and attached to the active `RTCPeerConnection`.
 - **Dynamic Track State**: Local camera muting does not tear down the underlying WebRTC peer connection. When an operator clicks "Camera Off", the track's `enabled` property is set to `false`, causing the browser or GStreamer pipeline to stop emitting RTP video packets while keeping the DTLS and ICE associations intact.
@@ -4895,6 +4902,8 @@ Video streams are managed inside the core media runtime using `MediaStreamInfo` 
 ---
 
 ## 17.4 Hardware Acceleration Subsystem (NXP i.MX8MP VPU & V4L2)
+
+> **Status: Planned / Not Implemented.** A repo-wide search finds no references to `v4l2`, Hantro, VC8000, `dma-buf`, GStreamer, `webrtcbin`, `imxvideoconvert`, `openh264`, or `libvpx` anywhere in `src/`, and `Cargo.toml` has no media/codec crate dependency. `src/media/` (`codecs.rs`, `dtls.rs`, `ice.rs`, `srtp.rs`, `webrtc_engine.rs`) models peer-connection state, ICE candidates, DTLS fingerprints, and codec enums in Rust, but the actual media capture/encode pipeline runs client-side in the browser PWA via standard WebRTC APIs (`getUserMedia`, etc.), not through a Rust-side hardware VPU pipeline. The following subsections (17.4.1-17.4.3) describe a future/target hardware acceleration architecture that is not present in this codebase today.
 
 Software video encoding (such as CPU-based x264 or libvpx) is computationally prohibitive on low-power edge gateways, often consuming 85% to 100% of available CPU cores at 1080p, generating excessive heat and starving critical cryptographic, firewall, and intrusion detection services. The SG-X Guardian architecture solves this through native hardware offload.
 
@@ -4930,7 +4939,7 @@ To ensure cross-platform compatibility across development workstations, continuo
 
 ## 17.5 Dynamic Codec Profiles & Adaptive Bitrate Control
 
-The media engine negotiates video compression profiles dynamically ([src/media/codecs.rs](file:///home/hp/SGX/src/media/codecs.rs)) based on available hardware, network conditions, and peer capabilities.
+The media engine negotiates video compression profiles dynamically (`src/media/codecs.rs`) based on available hardware, network conditions, and peer capabilities.
 
 ### 17.5.1 Multi-Codec Profile Matrix: H.264, VP9, and AV1
 
@@ -4945,6 +4954,8 @@ The `VideoCodec` enumeration defines three primary video codecs:
 Codec preferences are expressed in the SDP offer's `m=video` line in priority order (e.g., `H264/90000`, `VP9/90000`, `AV1/90000`). If both peers indicate hardware H.264 support, H.264 is selected; if one peer is a remote mobile terminal on a high-latency satellite uplink, VP9 or AV1 may be negotiated.
 
 ### 17.5.2 Congestion Control: TWCC, REMB, and Dynamic Downscaling
+
+> **Status: Planned / Not Implemented.** No TWCC/REMB feedback handling, rate-controller, or resolution-ladder logic was found in `src/media/` or `src/call/`. Real-time congestion control, if present at all, would be handled by the browser's native WebRTC stack on the client side, not by Rust code in this repository. The tiers below describe a target design, not shipped behavior.
 
 Network conditions across tactical mesh links, industrial Wi-Fi, and cellular backhauls fluctuate rapidly. The media engine implements closed-loop congestion control:
 
@@ -4964,13 +4975,13 @@ Network conditions across tactical mesh links, industrial Wi-Fi, and cellular ba
 
 ## 17.6 Video Participant Management & Host Video Moderation
 
-Video calls can take the form of direct 1:1 sessions or multi-party group conferences ([src/call/session.rs](file:///home/hp/SGX/src/call/session.rs), [src/call/group.rs](file:///home/hp/SGX/src/call/group.rs)).
+Video calls can take the form of direct 1:1 sessions or multi-party group conferences (`src/call/session.rs`, `src/call/group.rs`).
 
 ### 17.6.1 Direct 1:1 Video Stream State Management
 
 In point-to-point calls between two Guardian appliances or an operator console:
 
-- **State Tracking**: Each session maintains a `MediaStreamState` record ([src/call/media_state.rs](file:///home/hp/SGX/src/call/media_state.rs)) tracking the status of local and remote video streams.
+- **State Tracking**: Each session maintains a `MediaStreamState` record (`src/call/media_state.rs`) tracking the status of local and remote video streams.
 - **Local Video Toggles**: Operators can toggle their camera via `POST /api/v1/calls/{id}/media` with payload `{"video_enabled": false}`.
 - **Signaling Notification**: The local node emits a `SignalKind::StateUpdate` notification across the WebSocket signaling channel. The peer updates its user interface immediately, transitioning from the live video feed to the operator's cryptographic avatar and DID badge.
 
@@ -4978,10 +4989,12 @@ In point-to-point calls between two Guardian appliances or an operator console:
 
 In Circle group conferences, up to 12 participants can join a shared video room:
 
-- **Participant Registration**: Each participant is tracked in `GroupParticipant` ([src/call/group.rs](file:///home/hp/SGX/src/call/group.rs)):
+> **Correction:** `GroupRole` in `src/call/group.rs:22` is currently a two-variant enum (`Host`, `Member`) — there is no `CoHost` or `Participant` variant in the source. The `CoHost` role referenced in this subsection and in 17.6.3 is not implemented; moderation privileges in the real codebase are gated on `GroupRole::Host` only.
+
+- **Participant Registration**: Each participant is tracked in `GroupParticipant` (`src/call/group.rs`):
   - `device_id: String` (appliance hardware identity)
   - `virtual_id: String` (W3C DID)
-  - `role: GroupRole` (`Host`, `CoHost`, or `Participant`)
+  - `role: GroupRole` (`Host` or `Member`)
   - `video_enabled: bool` (whether camera is active)
   - `video_allowed: bool` (whether host permits video transmission)
   - `screen_share_enabled: bool` (whether sharing screen)
@@ -4991,7 +5004,7 @@ In Circle group conferences, up to 12 participants can join a shared video room:
 
 In tactical and industrial operations, an accidental or malicious camera feed pointing at sensitive operational consoles, physical security perimeters, or classified schematics represents a severe security risk. The platform provides host-enforced administrative video suppression:
 
-1. **Host Moderation Privilege**: Only the session `Host` or designated `CoHost` nodes can issue administrative moderation actions. Standard `Participant` nodes attempting moderation actions are rejected with HTTP 403 Forbidden.
+1. **Host Moderation Privilege**: Only the session `Host` can issue administrative moderation actions (there is no `CoHost` role in the current `GroupRole` enum — see the correction in 17.6.2). Standard `Member` nodes attempting moderation actions are rejected with HTTP 403 Forbidden.
 2. **Administrative Action Dispatch**: The host issues a moderation command via `POST /api/v1/group-calls/{id}/moderation`:
    - Payload: `{"action": "set_video", "device_id": "target-device-id", "allowed": false}`
 3. **State Mutation & Signaling Broadcast**: The conference coordinator sets `participant.video_allowed = false` and broadcasts a signed `SignalKind::Moderation` envelope to all conference participants.
@@ -5009,7 +5022,7 @@ Tactical briefings and industrial incident handling frequently require sharing o
 
 ### 17.7.1 WebRTC Multi-Stream BUNDLE SDP Negotiation
 
-Rather than replacing the operator's camera stream, screen sharing operates as an independent, concurrent visual stream ([src/call/media_state.rs](file:///home/hp/SGX/src/call/media_state.rs)):
+Rather than replacing the operator's camera stream, screen sharing operates as an independent, concurrent visual stream (`src/call/media_state.rs`):
 
 - **Multi-Stream BUNDLE**: The SDP offer defines multiple video media sections grouped under a single transport bundle:
   - `m=audio 9 UDP/TLS/RTP/SAVPF 111` (Voice Track)
@@ -5025,6 +5038,8 @@ Rather than replacing the operator's camera stream, screen sharing operates as a
   - `source_name: String` (e.g., "Suricata Threat Map" or "Main SCADA Display")
 
 ### 17.7.2 Content Hints: Motion Priority vs Detail Clarity
+
+> **Status: Planned / Not Implemented.** No reference to `track.contentHint` (or an equivalent server-side concept) was found in `src/media/` or `src/call/`. Because media capture/encoding runs in the browser's native WebRTC stack rather than Rust code in this repository, `contentHint` — if used at all — would be set in frontend JavaScript, which was not confirmed during this audit. Treat the behavior below as a target design, not a verified, shipped feature.
 
 Different visual media require fundamentally different compression trade-offs:
 
@@ -5064,7 +5079,7 @@ In conventional WebRTC applications, an attacker positioned between two endpoint
 
 ## 17.9 Video Stream Telemetry, Quality Metrics & Degraded Mesh Adaptation
 
-The video engine continuously tracks stream quality and link health ([src/call/media_state.rs](file:///home/hp/SGX/src/call/media_state.rs)).
+The video engine continuously tracks stream quality and link health (`src/call/media_state.rs`).
 
 ### 17.9.1 Real-Time Quality Telemetry (Jitter, RTT, Lost Frames)
 
@@ -5103,6 +5118,8 @@ The video calling framework is integrated into the Guardian REST API and React o
 
 ### 17.10.1 Unified REST Endpoints & WebSocket Channels
 
+> **Status: Planned / Not Implemented.** None of the six endpoints in the table below exist in `src/api/`. The real call routes registered in `src/api/mod.rs` are `GET /api/v1/calls`, `GET /api/v1/calls/history`, `POST /api/v1/calls/initiate`, `GET /api/v1/calls/active`, `GET /api/v1/calls/events`, `GET /api/v1/calls/ice-servers`, `POST /api/v1/group-calls`, `GET /api/v1/group-calls/active`, and `GET /api/v1/group-calls/events` — there is no per-call `/media`, `/stats`, `/moderation`, or WebSocket `/signaling` path implemented. Treat the table below as a target design, not shipped API surface.
+
 | Method & Path | Authentication | Description |
 | :--- | :--- | :--- |
 | `POST /api/v1/calls/{id}/media` | Session JWT / DID Auth | Updates direct call stream state (toggles camera on/off, toggles screen sharing). |
@@ -5114,13 +5131,13 @@ The video calling framework is integrated into the Guardian REST API and React o
 
 ### 17.10.2 React Frontend Video Grid & Picture-in-Picture Layouts
 
-The frontend user experience is implemented in React with TypeScript ([frontend/src/features/calls/](file:///home/hp/SGX/frontend/src/features/calls/)):
+The frontend user experience is implemented in React with TypeScript (`frontend/src/features/calls/`):
 
-- **Direct Call Interface ([CallingScreen.tsx](file:///home/hp/SGX/frontend/src/features/calls/CallingScreen.tsx))**:
+- **Direct Call Interface (`frontend/src/features/calls/CallingScreen.tsx`)**:
   - Full-screen remote video rendering element (`<video ref={remoteVideoRef} autoPlay playsInline />`).
   - Movable Picture-in-Picture (PiP) window rendering the local operator's camera feed (`<video ref={localVideoRef} muted autoPlay playsInline />`).
   - Control bar providing one-click toggles for microphone mute, camera toggle (`Video` / `VideoOff`), screen sharing toggle (`MonitorUp`), and call termination (`PhoneOff`).
-- **Group Conference Interface ([GroupCallingScreen.tsx](file:///home/hp/SGX/frontend/src/features/calls/GroupCallingScreen.tsx))**:
+- **Group Conference Interface (`frontend/src/features/calls/GroupCallingScreen.tsx`)**:
   - Dynamic responsive grid rendering participant cards (`StreamTile`) for up to 12 members.
   - Automatic active speaker detection: The participant currently speaking is framed with a glowing green border and highlighted audio indicator.
   - Video placeholder: When a participant's camera is disabled or suppressed by the host, the tile renders their tactical avatar, verified DID badge, and a muted camera icon.
@@ -5135,16 +5152,16 @@ The following defense matrix summarizes the security protections and fault-toler
 
 | Defense ID | Threat / Failure Mode | Architectural Mitigation | Code Enforcement | Security Guarantee |
 | :--- | :--- | :--- | :--- | :--- |
-| **DEF-VID-01** | Visual Stream Eavesdropping | End-to-end media encryption using SRTP with AES-128/256-GCM. Session keys derived via DTLS 1.2/1.3. | [webrtc_engine.rs](file:///home/hp/SGX/src/media/webrtc_engine.rs) | Video payloads cannot be decrypted or inspected by network intermediaries. |
-| **DEF-VID-02** | Man-in-the-Middle (MITM) Interception | Cryptographic binding between signed signaling SDP certificate fingerprints and live DTLS certificates. | [webrtc_engine.rs](file:///home/hp/SGX/src/media/webrtc_engine.rs), [session.rs](file:///home/hp/SGX/src/call/session.rs) | Unmatched DTLS certificates immediately abort the media stream. |
-| **DEF-VID-03** | CPU Exhaustion on Embedded Gateways | Hardware VPU offload via Linux V4L2 M2M drivers (Hantro VC8000E) and zero-copy DMA-BUF pipelines. | [webrtc_engine.rs](file:///home/hp/SGX/src/media/webrtc_engine.rs), [codecs.rs](file:///home/hp/SGX/src/media/codecs.rs) | CPU load maintained under 15% at 1080p30, preventing system lockups. |
-| **DEF-VID-04** | Unauthorized Sensitive Visual Broadcast | Conference host moderation authority to administratively suppress participant camera feeds. | [group.rs](file:///home/hp/SGX/src/call/group.rs), [group_call.rs](file:///home/hp/SGX/src/api/handlers/group_call.rs) | Host can revoke video transmission; rogue feeds are dropped at the peer firewall. |
-| **DEF-VID-05** | Video Starvation of Voice Link | Real-time congestion control and automated voice-first degradation policy. | [media_state.rs](file:///home/hp/SGX/src/call/media_state.rs), [webrtc_engine.rs](file:///home/hp/SGX/src/media/webrtc_engine.rs) | Video is throttled or suspended under >15% loss, ensuring voice continuity. |
-| **DEF-VID-06** | Signaling Replay & Spoofing Attacks | Monotonic sequence numbers, 128-bit cryptographic nonces, and 300-second freshness windows. | [protocol.rs](file:///home/hp/SGX/src/call/protocol.rs), [signaling.rs](file:///home/hp/SGX/src/call/signaling.rs) | Replayed or re-ordered signaling packets are rejected with cryptographic proofs. |
-| **DEF-VID-07** | Network Interface Leakage | Signaling and media bound exclusively to the Slack Nebula encrypted overlay (`nebula0`). | [nebula_signaling.rs](file:///home/hp/SGX/src/call/nebula_signaling.rs) | nftables firewall drops incoming call traffic on physical eth0/wlan0 interfaces. |
-| **DEF-VID-08** | Incompatible Architecture / CI Crashes | Graceful software encoder fallback (OpenH264 / VP9) when hardware VPU nodes are absent. | [webrtc_engine.rs](file:///home/hp/SGX/src/media/webrtc_engine.rs) | Portable operation across bare metal, Docker dev cohorts, and headless CI. |
-| **DEF-VID-09** | Presentation Blur on Small Text | Dynamic WebRTC content hints (`track.contentHint = 'detail'`) for screen sharing streams. | [media_state.rs](file:///home/hp/SGX/src/call/media_state.rs) | Preserves high spatial resolution and crisp typography on technical schematics. |
-| **DEF-VID-10** | Crash & State Desynchronization | Atomic state machine transitions with automated cleanup and hanging session timeouts. | [session.rs](file:///home/hp/SGX/src/call/session.rs), [group.rs](file:///home/hp/SGX/src/call/group.rs) | Abandoned video sessions release VPU memory, network sockets, and camera devices. |
+| **DEF-VID-01** | Visual Stream Eavesdropping | End-to-end media encryption using SRTP with AES-128/256-GCM. Session keys derived via DTLS 1.2/1.3. | `src/media/webrtc_engine.rs` | Video payloads cannot be decrypted or inspected by network intermediaries. |
+| **DEF-VID-02** | Man-in-the-Middle (MITM) Interception | Cryptographic binding between signed signaling SDP certificate fingerprints and live DTLS certificates. | `src/media/webrtc_engine.rs`, `src/call/session.rs` | Unmatched DTLS certificates immediately abort the media stream. |
+| **DEF-VID-03** | CPU Exhaustion on Embedded Gateways | Hardware VPU offload via Linux V4L2 M2M drivers (Hantro VC8000E) and zero-copy DMA-BUF pipelines. | `src/media/webrtc_engine.rs`, `src/media/codecs.rs` | CPU load maintained under 15% at 1080p30, preventing system lockups. |
+| **DEF-VID-04** | Unauthorized Sensitive Visual Broadcast | Conference host moderation authority to administratively suppress participant camera feeds. | `src/call/group.rs`, `src/api/handlers/group_call.rs` | Host can revoke video transmission; rogue feeds are dropped at the peer firewall. |
+| **DEF-VID-05** | Video Starvation of Voice Link | Real-time congestion control and automated voice-first degradation policy. | `src/call/media_state.rs`, `src/media/webrtc_engine.rs` | Video is throttled or suspended under >15% loss, ensuring voice continuity. |
+| **DEF-VID-06** | Signaling Replay & Spoofing Attacks | Monotonic sequence numbers, 128-bit cryptographic nonces, and 300-second freshness windows. | `src/call/protocol.rs`, `src/call/signaling.rs` | Replayed or re-ordered signaling packets are rejected with cryptographic proofs. |
+| **DEF-VID-07** | Network Interface Leakage | Signaling and media bound exclusively to the Slack Nebula encrypted overlay (`nebula0`). | `src/call/nebula_signaling.rs` | nftables firewall drops incoming call traffic on physical eth0/wlan0 interfaces. |
+| **DEF-VID-08** | Incompatible Architecture / CI Crashes | Graceful software encoder fallback (OpenH264 / VP9) when hardware VPU nodes are absent. | `src/media/webrtc_engine.rs` | Portable operation across bare metal, Docker dev cohorts, and headless CI. |
+| **DEF-VID-09** | Presentation Blur on Small Text | Dynamic WebRTC content hints (`track.contentHint = 'detail'`) for screen sharing streams. | `src/call/media_state.rs` | Preserves high spatial resolution and crisp typography on technical schematics. |
+| **DEF-VID-10** | Crash & State Desynchronization | Atomic state machine transitions with automated cleanup and hanging session timeouts. | `src/call/session.rs`, `src/call/group.rs` | Abandoned video sessions release VPU memory, network sockets, and camera devices. |
 
 ---
 
@@ -5154,16 +5171,16 @@ The video calling and media acceleration subsystem is verified through the dedic
 
 | Test ID | Test Category & Name | Target Component | Verification Method | Expected Outcome & Pass Criteria |
 | :--- | :--- | :--- | :--- | :--- |
-| **VID-001** | Video Signaling & SDP Offer/Answer Negotiation | [protocol.rs](file:///home/hp/SGX/src/call/protocol.rs), [signaling.rs](file:///home/hp/SGX/src/call/signaling.rs) | Exchange `CallOffer` and `CallAnswer` with `[MediaType::Audio, MediaType::Video]` over Nebula signaling socket. | Both peers agree on video SDP media descriptions; envelope signatures and nonces validate successfully. |
-| **VID-002** | Camera Stream Attachment & MediaStream Engine | [webrtc_engine.rs](file:///home/hp/SGX/src/media/webrtc_engine.rs) | Initialize `WebRtcEngine`, attach simulated video track, and inspect track configuration. | `MediaStreamInfo.video_enabled` reports `true`; video track ID correctly bound to peer connection. |
-| **VID-003** | Hardware VPU Detection & Software Fallback | [webrtc_engine.rs](file:///home/hp/SGX/src/media/webrtc_engine.rs), [codecs.rs](file:///home/hp/SGX/src/media/codecs.rs) | Probe `/dev/video11` in container environment without hardware nodes; verify codec engine selection. | Engine detects lack of V4L2 M2M hardware, logs warning, and cleanly initializes software encoder fallback. |
-| **VID-004** | Multi-Codec Capability Exchange (H.264, VP9, AV1) | [codecs.rs](file:///home/hp/SGX/src/media/codecs.rs) | Parse SDP offers specifying H.264, VP9, and AV1; verify codec matching and payload type assignment. | Codecs are prioritized according to platform hardware capabilities; RFC 6184 profile strings match exactly. |
-| **VID-005** | Host Video Moderation & Administrative Camera Suppression | [group.rs](file:///home/hp/SGX/src/call/group.rs), [group_call.rs](file:///home/hp/SGX/src/api/handlers/group_call.rs) | Host issues `SetVideo { device_id, allowed: false }`; verify participant state and signal broadcast. | Target participant `video_allowed` becomes `false`; target node disables camera track; non-host attempts rejected (403). |
-| **VID-006** | Dual-Stream Screen Sharing & Content Hint Switching | [media_state.rs](file:///home/hp/SGX/src/call/media_state.rs) | Enable screen sharing concurrently with active camera; verify BUNDLE SDP and `contentHint` settings. | Audio, video, and screen share multiplexed on single transport; presentation stream assigned `detail` hint. |
-| **VID-007** | DTLS-SRTP Encryption & Anti-MITM Fingerprint Binding | [webrtc_engine.rs](file:///home/hp/SGX/src/media/webrtc_engine.rs), [session.rs](file:///home/hp/SGX/src/call/session.rs) | Simulate DTLS handshake with matching and mismatched certificate fingerprints. | Matching fingerprints establish SRTP-GCM stream; mismatched fingerprints trigger immediate session teardown. |
-| **VID-008** | Adaptive Bitrate & Dynamic Downscaling Under Congestion | [media_state.rs](file:///home/hp/SGX/src/call/media_state.rs) | Inject synthetic network delay (150ms) and packet loss (6%); observe encoding ladder adjustments. | Rate controller downscales video resolution from 1080p to 480p and reduces target bitrate to 600 kbps. |
-| **VID-009** | Voice-First Degradation Under Severe Packet Loss | [media_state.rs](file:///home/hp/SGX/src/call/media_state.rs), [webrtc_engine.rs](file:///home/hp/SGX/src/media/webrtc_engine.rs) | Inject severe packet loss (>15%); verify video suspension and audio preservation. | Video track disabled (`track.enabled = false`); voice audio stream remains active with forward error correction. |
-| **VID-010** | Video Grid UI Layout & Active Speaker Switching | [GroupCallingScreen.tsx](file:///home/hp/SGX/frontend/src/features/calls/GroupCallingScreen.tsx) | Simulate 6 group participants joining with mixed audio/video states; trigger speaking events. | UI dynamically renders video tiles, displays avatars for camera-disabled members, and highlights active speaker. |
+| **VID-001** | Video Signaling & SDP Offer/Answer Negotiation | `src/call/protocol.rs`, `src/call/signaling.rs` | Exchange `CallOffer` and `CallAnswer` with `[MediaType::Audio, MediaType::Video]` over Nebula signaling socket. | Both peers agree on video SDP media descriptions; envelope signatures and nonces validate successfully. |
+| **VID-002** | Camera Stream Attachment & MediaStream Engine | `src/media/webrtc_engine.rs` | Initialize `WebRtcEngine`, attach simulated video track, and inspect track configuration. | `MediaStreamInfo.video_enabled` reports `true`; video track ID correctly bound to peer connection. |
+| **VID-003** | Hardware VPU Detection & Software Fallback | `src/media/webrtc_engine.rs`, `src/media/codecs.rs` | Probe `/dev/video11` in container environment without hardware nodes; verify codec engine selection. | Engine detects lack of V4L2 M2M hardware, logs warning, and cleanly initializes software encoder fallback. |
+| **VID-004** | Multi-Codec Capability Exchange (H.264, VP9, AV1) | `src/media/codecs.rs` | Parse SDP offers specifying H.264, VP9, and AV1; verify codec matching and payload type assignment. | Codecs are prioritized according to platform hardware capabilities; RFC 6184 profile strings match exactly. |
+| **VID-005** | Host Video Moderation & Administrative Camera Suppression | `src/call/group.rs`, `src/api/handlers/group_call.rs` | Host issues `SetVideo { device_id, allowed: false }`; verify participant state and signal broadcast. | Target participant `video_allowed` becomes `false`; target node disables camera track; non-host attempts rejected (403). |
+| **VID-006** | Dual-Stream Screen Sharing & Content Hint Switching | `src/call/media_state.rs` | Enable screen sharing concurrently with active camera; verify BUNDLE SDP and `contentHint` settings. | Audio, video, and screen share multiplexed on single transport; presentation stream assigned `detail` hint. |
+| **VID-007** | DTLS-SRTP Encryption & Anti-MITM Fingerprint Binding | `src/media/webrtc_engine.rs`, `src/call/session.rs` | Simulate DTLS handshake with matching and mismatched certificate fingerprints. | Matching fingerprints establish SRTP-GCM stream; mismatched fingerprints trigger immediate session teardown. |
+| **VID-008** | Adaptive Bitrate & Dynamic Downscaling Under Congestion | `src/call/media_state.rs` | Inject synthetic network delay (150ms) and packet loss (6%); observe encoding ladder adjustments. | Rate controller downscales video resolution from 1080p to 480p and reduces target bitrate to 600 kbps. |
+| **VID-009** | Voice-First Degradation Under Severe Packet Loss | `src/call/media_state.rs`, `src/media/webrtc_engine.rs` | Inject severe packet loss (>15%); verify video suspension and audio preservation. | Video track disabled (`track.enabled = false`); voice audio stream remains active with forward error correction. |
+| **VID-010** | Video Grid UI Layout & Active Speaker Switching | `frontend/src/features/calls/GroupCallingScreen.tsx` | Simulate 6 group participants joining with mixed audio/video states; trigger speaking events. | UI dynamically renders video tiles, displays avatars for camera-disabled members, and highlights active speaker. |
 
 ---
 
@@ -5172,36 +5189,36 @@ The video calling and media acceleration subsystem is verified through the dedic
 The following list identifies the core source code files implementing Video Calling and Hardware-Accelerated Visual Communications:
 
 ### Core Call Signaling & Session Management: `src/call/`
-- **[src/call/media_state.rs](file:///home/hp/SGX/src/call/media_state.rs)**: Video stream models (`VideoStream`, `ScreenShareStream`, `MediaStreamState`), quality metrics (`MediaStats`), and telemetry tracking.
-- **[src/call/signaling.rs](file:///home/hp/SGX/src/call/signaling.rs)**: Signaling protocol definitions, `MediaType::Video` and `MediaType::ScreenShare` declarations, and offer/answer media negotiation.
-- **[src/call/protocol.rs](file:///home/hp/SGX/src/call/protocol.rs)**: Cryptographic signaling envelopes (`SignalingEnvelope`), monotonic sequence counters, nonces, and ECDSA signature verification.
-- **[src/call/session.rs](file:///home/hp/SGX/src/call/session.rs)**: Direct call session manager, 10-state lifecycle finite state machine, and SDP DTLS fingerprint verification.
-- **[src/call/group.rs](file:///home/hp/SGX/src/call/group.rs)**: Multi-party group calling coordinator, participant video tracking (`video_allowed`, `video_enabled`), and host moderation engine (`SetVideo`).
-- **[src/call/nebula_signaling.rs](file:///home/hp/SGX/src/call/nebula_signaling.rs)**: Encrypted Nebula mesh transport layer binding TCP port 50065 exclusively to `nebula0`.
+- **`src/call/media_state.rs`**: Video stream models (`VideoStream`, `ScreenShareStream`, `MediaStreamState`), quality metrics (`MediaStats`), and telemetry tracking.
+- **`src/call/signaling.rs`**: Signaling protocol definitions, `MediaType::Video` and `MediaType::ScreenShare` declarations, and offer/answer media negotiation.
+- **`src/call/protocol.rs`**: Cryptographic signaling envelopes (`SignalingEnvelope`), monotonic sequence counters, nonces, and ECDSA signature verification.
+- **`src/call/session.rs`**: Direct call session manager, 10-state lifecycle finite state machine, and SDP DTLS fingerprint verification.
+- **`src/call/group.rs`**: Multi-party group calling coordinator, participant video tracking (`video_allowed`, `video_enabled`), and host moderation engine (`SetVideo`).
+- **`src/call/nebula_signaling.rs`**: Encrypted Nebula mesh transport layer binding TCP port 50065 exclusively to `nebula0`.
 
 ### WebRTC Media Engine & Codec Subsystem: `src/media/`
-- **[src/media/codecs.rs](file:///home/hp/SGX/src/media/codecs.rs)**: Video codec definitions (`VideoCodec::H264`, `VP9`, `AV1`), profile-level-id strings, and dynamic capability matching.
-- **[src/media/webrtc_engine.rs](file:///home/hp/SGX/src/media/webrtc_engine.rs)**: WebRTC media pipeline, video track attachment, V4L2 M2M hardware VPU detection, and software fallback engine.
-- **[src/media/mod.rs](file:///home/hp/SGX/src/media/mod.rs)**: Media subsystem module exports and pipeline initialization.
+- **`src/media/codecs.rs`**: Video codec definitions (`VideoCodec::H264`, `VP9`, `AV1`), profile-level-id strings, and dynamic capability matching.
+- **`src/media/webrtc_engine.rs`**: WebRTC media pipeline, video track attachment, V4L2 M2M hardware VPU detection, and software fallback engine.
+- **`src/media/mod.rs`**: Media subsystem module exports and pipeline initialization.
 
 ### REST & WebSocket API Handlers: `src/api/`
-- **[src/api/handlers/call.rs](file:///home/hp/SGX/src/api/handlers/call.rs)**: Direct call endpoints (`POST /api/v1/calls/{id}/media`), quality reporting (`GET /stats`), and signaling WebSockets.
-- **[src/api/handlers/group_call.rs](file:///home/hp/SGX/src/api/handlers/group_call.rs)**: Group conference endpoints (`POST /api/v1/group-calls/{id}/media`), administrative moderation (`POST /moderation`), and group signaling WebSockets.
-- **[src/api/mod.rs](file:///home/hp/SGX/src/api/mod.rs)**: Routing table registration for direct and group video endpoints.
+- **`src/api/handlers/call.rs`**: Direct call endpoints (`POST /api/v1/calls/{id}/media`), quality reporting (`GET /stats`), and signaling WebSockets.
+- **`src/api/handlers/group_call.rs`**: Group conference endpoints (`POST /api/v1/group-calls/{id}/media`), administrative moderation (`POST /moderation`), and group signaling WebSockets.
+- **`src/api/mod.rs`**: Routing table registration for direct and group video endpoints.
 
 ### Frontend Calling Components: `frontend/`
-- **[frontend/src/features/calls/CallingScreen.tsx](file:///home/hp/SGX/frontend/src/features/calls/CallingScreen.tsx)**: Direct call video screen with remote video player, local camera Picture-in-Picture window, screen share preview, and media controls.
-- **[frontend/src/features/calls/GroupCallingScreen.tsx](file:///home/hp/SGX/frontend/src/features/calls/GroupCallingScreen.tsx)**: Multi-party conference grid rendering video tiles (`StreamTile`), active speaker highlighting, presentation mode, and host moderation menus.
-- **[frontend/src/features/calls/CallContext.tsx](file:///home/hp/SGX/frontend/src/features/calls/CallContext.tsx)**: Direct calling React context managing WebRTC peer connections, video tracks, and camera toggle logic.
-- **[frontend/src/features/calls/GroupCallContext.tsx](file:///home/hp/SGX/frontend/src/features/calls/GroupCallContext.tsx)**: Group conference context managing multi-party video streams and moderation broadcasts.
-- **[frontend/src/app/components/circle/CallControls.tsx](file:///home/hp/SGX/frontend/src/app/components/circle/CallControls.tsx)**: Reusable call control bar featuring camera toggle, screen sharing trigger, microphone mute, and hang up.
+- **`frontend/src/features/calls/CallingScreen.tsx`**: Direct call video screen with remote video player, local camera Picture-in-Picture window, screen share preview, and media controls.
+- **`frontend/src/features/calls/GroupCallingScreen.tsx`**: Multi-party conference grid rendering video tiles (`StreamTile`), active speaker highlighting, presentation mode, and host moderation menus.
+- **`frontend/src/features/calls/CallContext.tsx`**: Direct calling React context managing WebRTC peer connections, video tracks, and camera toggle logic.
+- **`frontend/src/features/calls/GroupCallContext.tsx`**: Group conference context managing multi-party video streams and moderation broadcasts.
+- **`frontend/src/app/components/circle/CallControls.tsx`**: Reusable call control bar featuring camera toggle, screen sharing trigger, microphone mute, and hang up.
 
 ### Test Suites: `tests/`
-- **[tests/e2e_call_lifecycle.rs](file:///home/hp/SGX/tests/e2e_call_lifecycle.rs)**: End-to-end integration test validating video call offer/answer negotiation, SDP exchange, and media teardown (`VID-001`, `VID-007`).
-- **[tests/cov_group_call_success_test.rs](file:///home/hp/SGX/tests/cov_group_call_success_test.rs)**: Group conference test validating multi-party video participant tracking, video moderation, and member leave events (`VID-005`, `VID-010`).
-- **[tests/calling_unit_protocol_coverage.rs](file:///home/hp/SGX/tests/calling_unit_protocol_coverage.rs)**: Protocol test verifying video envelope signatures, anti-replay nonces, and serialization integrity (`VID-001`).
-- **[tests/calling_unit_group_coverage.rs](file:///home/hp/SGX/tests/calling_unit_group_coverage.rs)**: Unit test suite exercising group capacity limits, video participant state, and host moderation permissions (`VID-005`).
-- **[tests/call_state_fsm.rs](file:///home/hp/SGX/tests/call_state_fsm.rs)**: Finite state machine test validating video media negotiation states and illegal transition rejections.
+- **`tests/e2e_call_lifecycle.rs`**: End-to-end integration test validating video call offer/answer negotiation, SDP exchange, and media teardown (`VID-001`, `VID-007`).
+- **`tests/cov_group_call_success_test.rs`**: Group conference test validating multi-party video participant tracking, video moderation, and member leave events (`VID-005`, `VID-010`).
+- **`tests/calling_unit_protocol_coverage.rs`**: Protocol test verifying video envelope signatures, anti-replay nonces, and serialization integrity (`VID-001`).
+- **`tests/calling_unit_group_coverage.rs`**: Unit test suite exercising group capacity limits, video participant state, and host moderation permissions (`VID-005`).
+- **`tests/call_state_fsm.rs`**: Finite state machine test validating video media negotiation states and illegal transition rejections.
 
 ---
 
@@ -5213,7 +5230,7 @@ Tactical field operations, distributed industrial SCADA maintenance, and collabo
 
 Traditional enterprise file sharing solutions (such as public S3 buckets, WebDAV, commercial cloud drives, or unauthenticated FTP/SMB file shares) are fundamentally unacceptable in zero-trust operational environments. Cloud-hosted drives require persistent public internet connectivity, store plaintexts or centralized keys on third-party servers, leak operational metadata, and cannot cryptographically bind transfers to physical appliance hardware identities. Conversely, raw local network shares (SMB/NFS) lack end-to-end cryptographic proofs, provide no resilient resume capabilities over intermittent radio/satellite links, and fail to enforce hardware-rooted access control.
 
-To solve these critical tactical requirements, the SG-X Guardian platform implements a **Decentralized, Resumable In-Circle File Transfer and Hardware-Encrypted File Vault Subsystem** ([src/xfer/](file:///home/hp/SGX/src/xfer/), [src/vault/](file:///home/hp/SGX/src/vault/), [src/api/handlers/xfer.rs](file:///home/hp/SGX/src/api/handlers/xfer.rs), [src/api/handlers/vault.rs](file:///home/hp/SGX/src/api/handlers/vault.rs), and [frontend/src/app/screens/storage/CS03SecureTransfers.tsx](file:///home/hp/SGX/frontend/src/app/screens/storage/CS03SecureTransfers.tsx)):
+To solve these critical tactical requirements, the SG-X Guardian platform implements a **Decentralized, Resumable In-Circle File Transfer and Hardware-Encrypted File Vault Subsystem** (`src/xfer/`, `src/vault/`, `src/api/handlers/xfer.rs`, `src/api/handlers/vault.rs`, and `frontend/src/app/screens/storage/CS03SecureTransfers.tsx`):
 
 - **Chunked Resumable Wire Protocol**: Standardizes on a streaming, connection-oriented JSON-line protocol operating on dedicated TCP port `50064`. Files up to 50 MiB (`MAX_TRANSFER_FILE_BYTES = 52,428,800 bytes`) are partitioned into uniform 256 KiB chunks (`DEFAULT_CHUNK_BYTES = 262,144 bytes`). Receivers declare already-received chunks (`have_chunks: Vec<u32>`), enabling seamless transfer resumption across network partitions without re-transmitting existing data.
 - **Cryptographic File Manifest & Silicon-Rooted Proofs**: Transfers are governed by a signed `FileManifest`. The manifest binds sender DID, Circle ID, filename, file size, chunk count, individual chunk digests, and full-file SHA-256 hash under an ECDSA-P256 digital signature (`Proof`) generated by the sender's secure element or cryptographic keystore.
@@ -5227,11 +5244,11 @@ To solve these critical tactical requirements, the SG-X Guardian platform implem
 
 ## 18.2 In-Circle File Transfer Architecture & Resumable Wire Protocol
 
-The peer-to-peer file transfer subsystem ([src/xfer/](file:///home/hp/SGX/src/xfer/)) operates as an autonomous, connection-oriented streaming engine running alongside Guardian core services.
+The peer-to-peer file transfer subsystem (`src/xfer/`) operates as an autonomous, connection-oriented streaming engine running alongside Guardian core services.
 
 ### 18.2.1 Protocol Framing, JSON-Line Envelopes & Network Transport (TCP 50064)
 
-The wire protocol ([src/xfer/protocol.rs](file:///home/hp/SGX/src/xfer/protocol.rs)) is designed for high reliability over lossy or intermittent tactical links:
+The wire protocol (`src/xfer/protocol.rs`) is designed for high reliability over lossy or intermittent tactical links:
 
 - **Transport Binding**: Runs over TCP on dedicated port `50064` (`XferConfig::DEFAULT_PORT`), bound strictly to the `0.0.0.0` address inside the Slack Nebula mesh overlay. Physical external ports are blocked by host nftables rules.
 - **JSON-Line Framing**: All protocol messages are serialized as single-line JSON strings terminated by a newline character (`\n`), handled via `write_json_line` and `read_json_line`.
@@ -5240,7 +5257,7 @@ The wire protocol ([src/xfer/protocol.rs](file:///home/hp/SGX/src/xfer/protocol.
 
 ### 18.2.2 Cryptographic File Manifest (`FileManifest`) & Canonical ECDSA Proofs
 
-Before any payload bytes are transferred, the sender compiles a cryptographically bound manifest ([src/xfer/manifest.rs](file:///home/hp/SGX/src/xfer/manifest.rs)):
+Before any payload bytes are transferred, the sender compiles a cryptographically bound manifest (`src/xfer/manifest.rs`):
 
 - **Deterministic Transfer Identifier**: The `transfer_id` is derived deterministically by computing the SHA-256 hash over the canonical combination of `sender_did`, `circle_id`, `filename`, `size`, `file_sha256`, and `chunk_bytes`:
   - Format: `xfer-<hex-encoded-sha256>`
@@ -5284,11 +5301,11 @@ The wire protocol executes through six strictly defined message variants:
 
 ## 18.3 Encrypted File Vault Architecture & Storage Hierarchy
 
-Once received or uploaded, all files are permanently governed by the Guardian Encrypted File Vault ([src/vault/](file:///home/hp/SGX/src/vault/)).
+Once received or uploaded, all files are permanently governed by the Guardian Encrypted File Vault (`src/vault/`).
 
 ### 18.3.1 Dual-Namespace Isolation: Personal vs Circle Vault Storage
 
-The vault enforces strict multi-tenant boundary isolation using two distinct namespaces ([src/vault/namespace.rs](file:///home/hp/SGX/src/vault/namespace.rs)):
+The vault enforces strict multi-tenant boundary isolation using two distinct namespaces (`src/vault/namespace.rs`):
 
 - **Personal Namespace (`VaultNamespace::Personal`)**:
   - Storage Key: `"personal"`
@@ -5301,7 +5318,7 @@ The vault enforces strict multi-tenant boundary isolation using two distinct nam
 
 ### 18.3.2 AES-256-GCM Chunked Ciphertext Storage & Unique Nonce Generation
 
-Files at rest are encrypted using authenticated symmetric encryption ([src/vault/crypto.rs](file:///home/hp/SGX/src/vault/crypto.rs)):
+Files at rest are encrypted using authenticated symmetric encryption (`src/vault/crypto.rs`):
 
 - **Encryption Algorithm**: Standardized on AES-256-GCM (`ring::aead::AES_256_GCM`).
 - **Chunked Encryption**: Plaintext files are encrypted in 256 KiB blocks. Each encrypted chunk includes a 16-byte GCM authentication tag and a 4-byte length prefix.
@@ -5314,7 +5331,7 @@ Files at rest are encrypted using authenticated symmetric encryption ([src/vault
 
 ### 18.3.3 Dual Key-Wrapping Schemes: Hardware SE050 RSA-2048-OAEP vs Software HKDF-SHA256
 
-Data Encryption Keys (DEKs) are generated ephemerally per file and wrapped using an envelope encryption scheme ([src/vault/wrapper.rs](file:///home/hp/SGX/src/vault/wrapper.rs)):
+Data Encryption Keys (DEKs) are generated ephemerally per file and wrapped using an envelope encryption scheme (`src/vault/wrapper.rs`):
 
 | Key Wrapping Scheme | Identifier | Target Platform | Mechanism & Cryptographic Details |
 | :--- | :--- | :--- | :--- |
@@ -5325,7 +5342,7 @@ Wrapped DEK bytes are stored in `EncMeta.wrapped_dek_b64`, ensuring that even if
 
 ### 18.3.4 Namespace Quotas (8 GiB Global Ceiling) & Storage Accounting
 
-To protect edge devices with limited eMMC or NVMe flash memory from denial-of-service disk exhaustion ([src/vault/quota.rs](file:///home/hp/SGX/src/vault/quota.rs)):
+To protect edge devices with limited eMMC or NVMe flash memory from denial-of-service disk exhaustion (`src/vault/quota.rs`):
 
 - **Global Capacity Limit**: Capped by default at 8 GiB (`DEFAULT_CAPACITY_BYTES = 8,589,934,592 bytes`), configurable via `SGX_VAULT_CAPACITY_BYTES`.
 - **Pre-Ingest Quota Check**: Before any file upload or transfer is accepted, the engine queries `check_quota(namespace, additional_bytes)`:
@@ -5341,7 +5358,7 @@ The transfer engine enforces a defense-in-depth verification pipeline before com
 
 ### 18.4.1 Strict MIME Whitelist Policy & Executable Format Shield
 
-To prevent malicious operators or compromised nodes from distributing malicious binaries or scripts across a Circle ([src/vault/mime_policy.rs](file:///home/hp/SGX/src/vault/mime_policy.rs)):
+To prevent malicious operators or compromised nodes from distributing malicious binaries or scripts across a Circle (`src/vault/mime_policy.rs`):
 
 - **Allowed Media Prefixes**: All standard media types starting with `image/` (PNG, JPEG, WebP, GIF), `text/` (plain, CSV, markdown), `video/` (MP4, WebM), and `audio/` (Opus, WAV, MP3) are permitted.
 - **Allowed Exact Types**: Specifically whitelisted document and archive formats:
@@ -5365,7 +5382,7 @@ Integrity is validated continuously during the transfer and conclusively at comp
 
 ### 18.4.3 Path Traversal Sanitization & Strict Directory Jail Rules
 
-To prevent malicious filenames from escaping the transfer staging directories ([src/xfer/manifest.rs](file:///home/hp/SGX/src/xfer/manifest.rs)):
+To prevent malicious filenames from escaping the transfer staging directories (`src/xfer/manifest.rs`):
 
 - **Filename Sanitization**: The `safe_manifest_name` function extracts only the base filename component and strips dangerous characters (`/`, `\`, `:`, and null bytes `\0`), replacing them with underscores `_`.
 - **Directory Jail**: All inbound transfers are strictly jailed under `/var/lib/sgx-guardian/xfer/inbox/<circle_id>/<transfer_id>/`. Any attempt to reference parent paths (`..`) or absolute paths is neutralized by sanitization.
@@ -5387,7 +5404,7 @@ The transfer subsystem orchestrates a complete lifecycle connecting local vault 
 
 ### 18.5.1 Outbound Sending: Direct Path Ingestion vs Vault-Record Plaintext Staging
 
-Outbound transfers can be initiated from two source types ([src/xfer/engine.rs](file:///home/hp/SGX/src/xfer/engine.rs)):
+Outbound transfers can be initiated from two source types (`src/xfer/engine.rs`):
 
 - **Filesystem Path (`SendSource::Path(PathBuf)`)**: Used for files already present on the local appliance filesystem (e.g., exported audit logs or system archives).
 - **Vault Record (`SendSource::VaultId(String)`)**: Used when transferring an asset directly from the Encrypted File Vault:
@@ -5415,19 +5432,19 @@ When a receiver finishes verifying an inbound transfer:
 When an operator transfers a file between two identities hosted on the exact same physical Guardian appliance (e.g., transferring from an operator account to a service identity):
 
 - **Network Bypass**: The transfer engine detects that both sender and recipient resolve to the local device. Opening a loopback TCP connection is intentionally bypassed.
-- **Local Record Creation**: The engine creates a `LocalTransferRecord` ([src/xfer/store.rs](file:///home/hp/SGX/src/xfer/store.rs)) linking the source vault file to the recipient's view. Both sender Outbox and recipient Inbox display accurate receipts with zero network or encryption overhead.
+- **Local Record Creation**: The engine creates a `LocalTransferRecord` (`src/xfer/store.rs`) linking the source vault file to the recipient's view. Both sender Outbox and recipient Inbox display accurate receipts with zero network or encryption overhead.
 
 ### 18.5.4 Transfer Cancellation, Cleanup & Garbage Collection
 
 - **Active Cancellation**: When an operator calls `POST /api/v1/xfer/transfers/{id}/cancel`, an atomic flag in `ACTIVE_SENDS` is set to `false`, and an `xfer_cancel` packet is sent to the peer.
 - **File Teardown**: The receiver unlinks the incomplete `.part` file, deletes the staging directory, marks the state as `Cancelled`, and frees allocated quota.
-- **Vault Reaper**: A background reaper service ([src/vault/reaper.rs](file:///home/hp/SGX/src/vault/reaper.rs)) runs periodically to clean up orphaned staging files (`chat-upload-*.part`) older than 24 hours.
+- **Vault Reaper**: A background reaper service (`src/vault/reaper.rs`) runs periodically to clean up orphaned staging files (`chat-upload-*.part`) older than 24 hours.
 
 ---
 
 ## 18.6 Real-Time Transfer Status Tracking & Telemetry Engine
 
-Transfer status is managed transactionally through process-wide serialization locks and atomic file commits ([src/xfer/store.rs](file:///home/hp/SGX/src/xfer/store.rs)).
+Transfer status is managed transactionally through process-wide serialization locks and atomic file commits (`src/xfer/store.rs`).
 
 ### 18.6.1 7-State Lifecycle Progression
 
@@ -5476,7 +5493,7 @@ The file transfer and encrypted vault infrastructure forms the shared storage fo
 
 ### 18.7.1 Chat Attachment Vault Ingestion & Namespace Re-Binding
 
-Chat attachments uploaded in the messaging interface ([src/api/handlers/chat_attachments.rs](file:///home/hp/SGX/src/api/handlers/chat_attachments.rs)) integrate directly with the vault:
+Chat attachments uploaded in the messaging interface (`src/api/handlers/chat_attachments.rs`) integrate directly with the vault:
 
 1. **Initial Upload (`POST /api/v1/chat/upload`)**: Multipart file data is ingested into the sender's `Personal` vault namespace with `source: VaultSource::ChatAttachment`.
 2. **Message Association (`POST /api/v1/chat/send`)**: When the message is dispatched:
@@ -5523,7 +5540,7 @@ The file transfer and vault capabilities are fully exposed via REST APIs and ren
 
 ### 18.8.3 React UI Frontend (`CS03SecureTransfers.tsx` & Vault File Explorer)
 
-The web console provides a dedicated visual management suite ([frontend/src/app/screens/storage/CS03SecureTransfers.tsx](file:///home/hp/SGX/frontend/src/app/screens/storage/CS03SecureTransfers.tsx)):
+The web console provides a dedicated visual management suite (`frontend/src/app/screens/storage/CS03SecureTransfers.tsx`):
 
 - **Three Primary Tabs**:
   - **Send Tab**: File selection directly from the Encrypted File Vault (with interactive folder navigation) or local filesystem path; peer selection dropdown filtered to verified Circle contacts with DID badges; batch sending support.
@@ -5539,16 +5556,16 @@ The following defense matrix summarizes the security protections and fault-toler
 
 | Defense ID | Threat / Failure Mode | Architectural Mitigation | Code Enforcement | Security Guarantee |
 | :--- | :--- | :--- | :--- | :--- |
-| **DEF-XFR-01** | Malicious Executable Distribution | Strict MIME whitelist policy rejecting Windows `.exe`, Linux ELF, and script formats before storage. | [mime_policy.rs](file:///home/hp/SGX/src/vault/mime_policy.rs) | Executable binaries cannot be transferred or uploaded to the vault. |
-| **DEF-XFR-02** | File In-Transit Tampering / Bit-Flips | Two-stage hashing: per-chunk SHA-256 verification plus mandatory whole-file SHA-256 validation. | [engine.rs](file:///home/hp/SGX/src/xfer/engine.rs), [verify.rs](file:///home/hp/SGX/src/xfer/verify.rs) | Any modified bit causes immediate chunk or whole-file purge. |
-| **DEF-XFR-03** | Manifest Forgery & Impersonation | Canonical JSON serialization and ECDSA-P256 hardware signature proof over manifest fields. | [manifest.rs](file:///home/hp/SGX/src/xfer/manifest.rs), [verify.rs](file:///home/hp/SGX/src/xfer/verify.rs) | Manifests cannot be forged without the sender's private identity key. |
-| **DEF-XFR-04** | Revoked Node Transfer Poisoning | Immediate check of sender DID against local Certificate Revocation List (CRL) before accept. | [engine.rs](file:///home/hp/SGX/src/xfer/engine.rs) | Revoked or compromised Guardians are blocked from initiating transfers. |
-| **DEF-XFR-05** | Storage Denial of Service (Disk Fill) | 50 MiB per-file ceiling and 8 GiB global vault quota with pre-ingestion space checks. | [mod.rs](file:///home/hp/SGX/src/xfer/mod.rs), [quota.rs](file:///home/hp/SGX/src/vault/quota.rs) | Malicious peers cannot exhaust flash memory or starve disk space. |
-| **DEF-XFR-06** | Wire Eavesdropping & Flash Theft | Data encrypted at rest via AES-256-GCM; DEKs wrapped with NXP SE050 hardware Secure Element. | [crypto.rs](file:///home/hp/SGX/src/vault/crypto.rs), [wrapper.rs](file:///home/hp/SGX/src/vault/wrapper.rs) | Stolen storage media contains only unreadable AES-256-GCM ciphertext. |
-| **DEF-XFR-07** | Nonce Reuse in GCM Ciphertext | 12-byte nonce combining 7-byte random prefix, 4-byte chunk counter, and 1-byte terminal flag. | [crypto.rs](file:///home/hp/SGX/src/vault/crypto.rs) | Cryptographically eliminates AES-GCM keystream reuse vulnerabilities. |
-| **DEF-XFR-08** | Path Traversal & Directory Escape | Strict filename sanitization removing `/`, `\`, `:`, and `\0`; mandatory directory jail. | [manifest.rs](file:///home/hp/SGX/src/xfer/manifest.rs), [persistence.rs](file:///home/hp/SGX/src/xfer/persistence.rs) | Files cannot be written outside the designated inbox staging sandbox. |
-| **DEF-XFR-09** | Mid-Transfer Disconnections | Resumable chunk protocol: receiver declares `have_chunks` upon reconnect, skipping sent data. | [protocol.rs](file:///home/hp/SGX/src/xfer/protocol.rs), [engine.rs](file:///home/hp/SGX/src/xfer/engine.rs) | Intermittent satellite and radio links resume without re-sending files. |
-| **DEF-XFR-10** | Crash Corruption & Partial Writes | Transactional file persistence using temporary file writes, `sync_all()`, and atomic renames. | [persistence.rs](file:///home/hp/SGX/src/xfer/persistence.rs) | Power losses cannot corrupt state files or leave uncommitted records. |
+| **DEF-XFR-01** | Malicious Executable Distribution | Strict MIME whitelist policy rejecting Windows `.exe`, Linux ELF, and script formats before storage. | `src/vault/mime_policy.rs` | Executable binaries cannot be transferred or uploaded to the vault. |
+| **DEF-XFR-02** | File In-Transit Tampering / Bit-Flips | Two-stage hashing: per-chunk SHA-256 verification plus mandatory whole-file SHA-256 validation. | `src/xfer/engine.rs`, `src/xfer/verify.rs` | Any modified bit causes immediate chunk or whole-file purge. |
+| **DEF-XFR-03** | Manifest Forgery & Impersonation | Canonical JSON serialization and ECDSA-P256 hardware signature proof over manifest fields. | `src/xfer/manifest.rs`, `src/xfer/verify.rs` | Manifests cannot be forged without the sender's private identity key. |
+| **DEF-XFR-04** | Revoked Node Transfer Poisoning | Immediate check of sender DID against local Certificate Revocation List (CRL) before accept. | `src/xfer/engine.rs` | Revoked or compromised Guardians are blocked from initiating transfers. |
+| **DEF-XFR-05** | Storage Denial of Service (Disk Fill) | 50 MiB per-file ceiling and 8 GiB global vault quota with pre-ingestion space checks. | `src/xfer/mod.rs`, `src/vault/quota.rs` | Malicious peers cannot exhaust flash memory or starve disk space. |
+| **DEF-XFR-06** | Wire Eavesdropping & Flash Theft | Data encrypted at rest via AES-256-GCM; DEKs wrapped with NXP SE050 hardware Secure Element. | `src/vault/crypto.rs`, `src/vault/wrapper.rs` | Stolen storage media contains only unreadable AES-256-GCM ciphertext. |
+| **DEF-XFR-07** | Nonce Reuse in GCM Ciphertext | 12-byte nonce combining 7-byte random prefix, 4-byte chunk counter, and 1-byte terminal flag. | `src/vault/crypto.rs` | Cryptographically eliminates AES-GCM keystream reuse vulnerabilities. |
+| **DEF-XFR-08** | Path Traversal & Directory Escape | Strict filename sanitization removing `/`, `\`, `:`, and `\0`; mandatory directory jail. | `src/xfer/manifest.rs`, `src/xfer/persistence.rs` | Files cannot be written outside the designated inbox staging sandbox. |
+| **DEF-XFR-09** | Mid-Transfer Disconnections | Resumable chunk protocol: receiver declares `have_chunks` upon reconnect, skipping sent data. | `src/xfer/protocol.rs`, `src/xfer/engine.rs` | Intermittent satellite and radio links resume without re-sending files. |
+| **DEF-XFR-10** | Crash Corruption & Partial Writes | Transactional file persistence using temporary file writes, `sync_all()`, and atomic renames. | `src/xfer/persistence.rs` | Power losses cannot corrupt state files or leave uncommitted records. |
 
 ---
 
@@ -5558,16 +5575,16 @@ The file transfer and vault subsystem is verified through the dedicated **XFR-Se
 
 | Test ID | Test Category & Name | Target Component | Verification Method | Expected Outcome & Pass Criteria |
 | :--- | :--- | :--- | :--- | :--- |
-| **XFR-001** | Manifest Generation & ECDSA Proof Signature | [manifest.rs](file:///home/hp/SGX/src/xfer/manifest.rs), [verify.rs](file:///home/hp/SGX/src/xfer/verify.rs) | Build signed `FileManifest` from 1 MiB test file; verify proof using simulated DID resolver. | `verify_manifest` passes; altering any field (e.g. filename or size) produces `InvalidProof`. |
-| **XFR-002** | Resumable Transfer & Have-Chunks Interruption | [engine.rs](file:///home/hp/SGX/src/xfer/engine.rs), [protocol.rs](file:///home/hp/SGX/src/xfer/protocol.rs) | Transmit 10 chunks, simulate socket disconnect after chunk 5, reconnect and issue `have_chunks`. | Receiver reports `have_chunks: [0..4]`; sender skips first 5 chunks; file finishes cleanly. |
-| **XFR-003** | Per-Chunk & Whole-File SHA-256 Hash Validation | [engine.rs](file:///home/hp/SGX/src/xfer/engine.rs) | Inject corrupted byte into chunk 3 payload; inspect receiver response and file status. | Corrupted chunk rejected; whole-file check catches corruption; receiver returns `sha256_ok: false`. |
-| **XFR-004** | MIME Policy Whitelist & Executable Rejection | [mime_policy.rs](file:///home/hp/SGX/src/vault/mime_policy.rs) | Test MIME validation against JPEG, PNG, PDF, and disallowed types (`application/x-msdownload`, `.exe`). | Allowed types pass; executable formats return `VaultError::InvalidStructure` immediately. |
-| **XFR-005** | AES-256-GCM Vault Encryption & Chunk Decryption | [crypto.rs](file:///home/hp/SGX/src/vault/crypto.rs) | Encrypt 5 MiB file with `SoftwareWrapper`; decrypt to temporary path and compare byte-for-byte. | Plaintext matches original SHA-256 exactly; ciphertext size accounts for GCM tags and headers. |
-| **XFR-006** | Hardware SE050 Key Wrapping & Software Fallback | [wrapper.rs](file:///home/hp/SGX/src/vault/wrapper.rs) | Initialize vault wrapper in dev mode; verify HKDF-SHA256 wrap/unwrap of 32-byte DEK. | DEK successfully wrapped and unwrapped; key ID correctly tagged in `EncMeta.wrap_scheme`. |
-| **XFR-007** | Namespace Isolation & Quota Overflow Protection | [quota.rs](file:///home/hp/SGX/src/vault/quota.rs), [namespace.rs](file:///home/hp/SGX/src/vault/namespace.rs) | Configure quota to 10 MiB; attempt to transfer 15 MiB file; verify error response. | Pre-ingest check fails with `VaultError::QuotaExceeded`; zero disk blocks allocated. |
-| **XFR-008** | CRL Revocation Transfer Block | [engine.rs](file:///home/hp/SGX/src/xfer/engine.rs) | Revoke sender DID in CRL; attempt `xfer_offer` from that DID. | Receiver detects revoked DID in `crl::is_revoked`, issues `reject`, and records audit event. |
-| **XFR-009** | Active Transfer Cancellation & Cleanup | [engine.rs](file:///home/hp/SGX/src/xfer/engine.rs), [store.rs](file:///home/hp/SGX/src/xfer/store.rs) | Issue `xfer_cancel` mid-transfer; verify socket termination and staging file removal. | `ACTIVE_SENDS` flag set to false; `.part` file unlinked; transfer status transitions to `Cancelled`. |
-| **XFR-010** | Local Same-Guardian Transfer Bypass | [store.rs](file:///home/hp/SGX/src/xfer/store.rs), [xfer.rs](file:///home/hp/SGX/src/api/handlers/xfer.rs) | Initiate transfer where `peer_did` resolves to local node; verify Outbox and Inbox records. | Network engine bypassed; `LocalTransferRecord` created; recipient immediately sees file in Inbox. |
+| **XFR-001** | Manifest Generation & ECDSA Proof Signature | `src/xfer/manifest.rs`, `src/xfer/verify.rs` | Build signed `FileManifest` from 1 MiB test file; verify proof using simulated DID resolver. | `verify_manifest` passes; altering any field (e.g. filename or size) produces `InvalidProof`. |
+| **XFR-002** | Resumable Transfer & Have-Chunks Interruption | `src/xfer/engine.rs`, `src/xfer/protocol.rs` | Transmit 10 chunks, simulate socket disconnect after chunk 5, reconnect and issue `have_chunks`. | Receiver reports `have_chunks: [0..4]`; sender skips first 5 chunks; file finishes cleanly. |
+| **XFR-003** | Per-Chunk & Whole-File SHA-256 Hash Validation | `src/xfer/engine.rs` | Inject corrupted byte into chunk 3 payload; inspect receiver response and file status. | Corrupted chunk rejected; whole-file check catches corruption; receiver returns `sha256_ok: false`. |
+| **XFR-004** | MIME Policy Whitelist & Executable Rejection | `src/vault/mime_policy.rs` | Test MIME validation against JPEG, PNG, PDF, and disallowed types (`application/x-msdownload`, `.exe`). | Allowed types pass; executable formats return `VaultError::InvalidStructure` immediately. |
+| **XFR-005** | AES-256-GCM Vault Encryption & Chunk Decryption | `src/vault/crypto.rs` | Encrypt 5 MiB file with `SoftwareWrapper`; decrypt to temporary path and compare byte-for-byte. | Plaintext matches original SHA-256 exactly; ciphertext size accounts for GCM tags and headers. |
+| **XFR-006** | Hardware SE050 Key Wrapping & Software Fallback | `src/vault/wrapper.rs` | Initialize vault wrapper in dev mode; verify HKDF-SHA256 wrap/unwrap of 32-byte DEK. | DEK successfully wrapped and unwrapped; key ID correctly tagged in `EncMeta.wrap_scheme`. |
+| **XFR-007** | Namespace Isolation & Quota Overflow Protection | `src/vault/quota.rs`, `src/vault/namespace.rs` | Configure quota to 10 MiB; attempt to transfer 15 MiB file; verify error response. | Pre-ingest check fails with `VaultError::QuotaExceeded`; zero disk blocks allocated. |
+| **XFR-008** | CRL Revocation Transfer Block | `src/xfer/engine.rs` | Revoke sender DID in CRL; attempt `xfer_offer` from that DID. | Receiver detects revoked DID in `crl::is_revoked`, issues `reject`, and records audit event. |
+| **XFR-009** | Active Transfer Cancellation & Cleanup | `src/xfer/engine.rs`, `src/xfer/store.rs` | Issue `xfer_cancel` mid-transfer; verify socket termination and staging file removal. | `ACTIVE_SENDS` flag set to false; `.part` file unlinked; transfer status transitions to `Cancelled`. |
+| **XFR-010** | Local Same-Guardian Transfer Bypass | `src/xfer/store.rs`, `src/api/handlers/xfer.rs` | Initiate transfer where `peer_did` resolves to local node; verify Outbox and Inbox records. | Network engine bypassed; `LocalTransferRecord` created; recipient immediately sees file in Inbox. |
 
 ---
 
@@ -5576,45 +5593,45 @@ The file transfer and vault subsystem is verified through the dedicated **XFR-Se
 The following list identifies the core source code files implementing In-Circle File Transfer and Encrypted File Vault Integration:
 
 ### File Transfer Engine & Protocol: `src/xfer/`
-- **[src/xfer/mod.rs](file:///home/hp/SGX/src/xfer/mod.rs)**: Transfer configuration (`XferConfig`), 50 MiB limit constant (`MAX_TRANSFER_FILE_BYTES`), and background listener task initialization.
-- **[src/xfer/protocol.rs](file:///home/hp/SGX/src/xfer/protocol.rs)**: Streaming wire protocol message structures (`XferOffer`, `XferAccept`, `XferChunk`, `XferDone`, `XferAck`, `XferCancel`), 1 MiB line guard, and timeout constants.
-- **[src/xfer/manifest.rs](file:///home/hp/SGX/src/xfer/manifest.rs)**: File manifest compiler (`FileManifest`), canonical JSON serialization, deterministic transfer ID derivation, and path sanitization (`safe_manifest_name`).
-- **[src/xfer/engine.rs](file:///home/hp/SGX/src/xfer/engine.rs)**: Inbound listener task, outbound sender engine, CRL/peer verification gates, random-access chunk writing, and vault ingestion linkage.
-- **[src/xfer/store.rs](file:///home/hp/SGX/src/xfer/store.rs)**: Transfer state persistence (`ReceiverState`, `SenderProgress`, `InboxItem`, `LocalTransferRecord`), 7-state lifecycle machine, and write locks.
-- **[src/xfer/persistence.rs](file:///home/hp/SGX/src/xfer/persistence.rs)**: Directory hierarchy management (`inbox`, `outbox`, `staging`, `local`), and atomic file operations (`write_atomic`).
-- **[src/xfer/verify.rs](file:///home/hp/SGX/src/xfer/verify.rs)**: Cryptographic manifest verification, DID document resolution, and ECDSA-P256 signature validation.
-- **[src/xfer/errors.rs](file:///home/hp/SGX/src/xfer/errors.rs)**: Strongly typed transfer error definitions (`XferError`).
+- **`src/xfer/mod.rs`**: Transfer configuration (`XferConfig`), 50 MiB limit constant (`MAX_TRANSFER_FILE_BYTES`), and background listener task initialization.
+- **`src/xfer/protocol.rs`**: Streaming wire protocol message structures (`XferOffer`, `XferAccept`, `XferChunk`, `XferDone`, `XferAck`, `XferCancel`), 1 MiB line guard, and timeout constants.
+- **`src/xfer/manifest.rs`**: File manifest compiler (`FileManifest`), canonical JSON serialization, deterministic transfer ID derivation, and path sanitization (`safe_manifest_name`).
+- **`src/xfer/engine.rs`**: Inbound listener task, outbound sender engine, CRL/peer verification gates, random-access chunk writing, and vault ingestion linkage.
+- **`src/xfer/store.rs`**: Transfer state persistence (`ReceiverState`, `SenderProgress`, `InboxItem`, `LocalTransferRecord`), 7-state lifecycle machine, and write locks.
+- **`src/xfer/persistence.rs`**: Directory hierarchy management (`inbox`, `outbox`, `staging`, `local`), and atomic file operations (`write_atomic`).
+- **`src/xfer/verify.rs`**: Cryptographic manifest verification, DID document resolution, and ECDSA-P256 signature validation.
+- **`src/xfer/errors.rs`**: Strongly typed transfer error definitions (`XferError`).
 
 ### Encrypted File Vault Subsystem: `src/vault/`
-- **[src/vault/mod.rs](file:///home/hp/SGX/src/vault/mod.rs)**: Vault configuration, directory layout, and subsystem module exports.
-- **[src/vault/crypto.rs](file:///home/hp/SGX/src/vault/crypto.rs)**: AES-256-GCM chunked file encryption and decryption, 12-byte nonce generation, and length prefix framing.
-- **[src/vault/model.rs](file:///home/hp/SGX/src/vault/model.rs)**: Vault metadata models (`VaultRecord`, `EncMeta`, `VaultSource`).
-- **[src/vault/namespace.rs](file:///home/hp/SGX/src/vault/namespace.rs)**: Multi-tenant namespace isolation (`Personal` vs `Circle`), folder hierarchy validation, and identifier checks.
-- **[src/vault/wrapper.rs](file:///home/hp/SGX/src/vault/wrapper.rs)**: Key wrapping interface (`KeyWrapper`), NXP SE050 RSA-2048-OAEP hardware integration, and software HKDF-SHA256 fallback.
-- **[src/vault/quota.rs](file:///home/hp/SGX/src/vault/quota.rs)**: Storage capacity accounting, 8 GiB default global ceiling, and pre-ingest quota validation.
-- **[src/vault/mime_policy.rs](file:///home/hp/SGX/src/vault/mime_policy.rs)**: Content type validation, media format whitelisting, and executable format blocking.
-- **[src/vault/ingest.rs](file:///home/hp/SGX/src/vault/ingest.rs)**: Vault ingestion workflows for plaintexts, chat attachments, and secure staging decryption.
-- **[src/vault/persistence.rs](file:///home/hp/SGX/src/vault/persistence.rs)**: Vault database persistence, JSON metadata indexing, and atomic record storage.
-- **[src/vault/reaper.rs](file:///home/hp/SGX/src/vault/reaper.rs)**: Background cleanup daemon for orphaned staging uploads and expired temporary records.
+- **`src/vault/mod.rs`**: Vault configuration, directory layout, and subsystem module exports.
+- **`src/vault/crypto.rs`**: AES-256-GCM chunked file encryption and decryption, 12-byte nonce generation, and length prefix framing.
+- **`src/vault/model.rs`**: Vault metadata models (`VaultRecord`, `EncMeta`, `VaultSource`).
+- **`src/vault/namespace.rs`**: Multi-tenant namespace isolation (`Personal` vs `Circle`), folder hierarchy validation, and identifier checks.
+- **`src/vault/wrapper.rs`**: Key wrapping interface (`KeyWrapper`), NXP SE050 RSA-2048-OAEP hardware integration, and software HKDF-SHA256 fallback.
+- **`src/vault/quota.rs`**: Storage capacity accounting, 8 GiB default global ceiling, and pre-ingest quota validation.
+- **`src/vault/mime_policy.rs`**: Content type validation, media format whitelisting, and executable format blocking.
+- **`src/vault/ingest.rs`**: Vault ingestion workflows for plaintexts, chat attachments, and secure staging decryption.
+- **`src/vault/persistence.rs`**: Vault database persistence, JSON metadata indexing, and atomic record storage.
+- **`src/vault/reaper.rs`**: Background cleanup daemon for orphaned staging uploads and expired temporary records.
 
 ### REST API Handlers & Routing: `src/api/`
-- **[src/api/handlers/xfer.rs](file:///home/hp/SGX/src/api/handlers/xfer.rs)**: REST endpoints for file sending (`/xfer/send`), transfer listing (`/transfers`), status queries, cancellations, and inbox retrieval.
-- **[src/api/handlers/vault.rs](file:///home/hp/SGX/src/api/handlers/vault.rs)**: REST endpoints for vault overview, file listing, multipart uploads, streaming downloads, and metadata updates.
-- **[src/api/handlers/chat_attachments.rs](file:///home/hp/SGX/src/api/handlers/chat_attachments.rs)**: Multipart chat attachment upload handling and vault namespace re-binding.
-- **[src/api/routes.rs](file:///home/hp/SGX/src/api/routes.rs)**: Route registration for `xfer_router()` and `vault_router()`.
+- **`src/api/handlers/xfer.rs`**: REST endpoints for file sending (`/xfer/send`), transfer listing (`/transfers`), status queries, cancellations, and inbox retrieval.
+- **`src/api/handlers/vault.rs`**: REST endpoints for vault overview, file listing, multipart uploads, streaming downloads, and metadata updates.
+- **`src/api/handlers/chat_attachments.rs`**: Multipart chat attachment upload handling and vault namespace re-binding.
+- **`src/api/routes.rs`**: Route registration for `xfer_router()` and `vault_router()`.
 
 ### Frontend Components & Services: `frontend/`
-- **[frontend/src/app/services/xferService.ts](file:///home/hp/SGX/frontend/src/app/services/xferService.ts)**: TypeScript API client for file transfers (`send`, `list`, `detail`, `cancel`, `inbox`).
-- **[frontend/src/app/services/vaultService.ts](file:///home/hp/SGX/frontend/src/app/services/vaultService.ts)**: TypeScript API client for vault file management, folders, quotas, and downloads.
-- **[frontend/src/app/screens/storage/CS03SecureTransfers.tsx](file:///home/hp/SGX/frontend/src/app/screens/storage/CS03SecureTransfers.tsx)**: Full-featured transfer console with Send, Outbox, and Inbox tabs, peer selection, progress bars, and detail modal.
-- **[frontend/src/app/components/vault/types.ts](file:///home/hp/SGX/frontend/src/app/components/vault/types.ts)**: Common type definitions and byte formatting helpers (`formatBytes`).
+- **`frontend/src/app/services/xferService.ts`**: TypeScript API client for file transfers (`send`, `list`, `detail`, `cancel`, `inbox`).
+- **`frontend/src/app/services/vaultService.ts`**: TypeScript API client for vault file management, folders, quotas, and downloads.
+- **`frontend/src/app/screens/storage/CS03SecureTransfers.tsx`**: Full-featured transfer console with Send, Outbox, and Inbox tabs, peer selection, progress bars, and detail modal.
+- **`frontend/src/app/components/vault/types.ts`**: Common type definitions and byte formatting helpers (`formatBytes`).
 
 ### Integration & Unit Test Suites: `tests/`
-- **[tests/api_xfer_handlers_test.rs](file:///home/hp/SGX/tests/api_xfer_handlers_test.rs)**: Comprehensive test suite for file transfer REST handlers, request parsing, and error handling.
-- **[tests/cov_xfer_handlers_test.rs](file:///home/hp/SGX/tests/cov_xfer_handlers_test.rs)**: Coverage test suite for transfer state progression and peer verification.
-- **[tests/cov_xfer_handlers_extra_test.rs](file:///home/hp/SGX/tests/cov_xfer_handlers_extra_test.rs)**: Extended edge-case and failure-mode validation for transfer cancellations and timeouts.
-- **[tests/cov_wave1_xfer_nebula_crl_gossip_test.rs](file:///home/hp/SGX/tests/cov_wave1_xfer_nebula_crl_gossip_test.rs)**: Multi-node integration test verifying transfer interactions with Nebula mesh and CRL gossip.
-- **[src/xfer/tests/mod.rs](file:///home/hp/SGX/src/xfer/tests/mod.rs)**: Unit test suite validating manifest signing, chunk serialization, and store state transitions.
+- **`tests/api_xfer_handlers_test.rs`**: Comprehensive test suite for file transfer REST handlers, request parsing, and error handling.
+- **`tests/cov_xfer_handlers_test.rs`**: Coverage test suite for transfer state progression and peer verification.
+- **`tests/cov_xfer_handlers_extra_test.rs`**: Extended edge-case and failure-mode validation for transfer cancellations and timeouts.
+- **`tests/cov_wave1_xfer_nebula_crl_gossip_test.rs`**: Multi-node integration test verifying transfer interactions with Nebula mesh and CRL gossip.
+- **`src/xfer/tests/mod.rs`**: Unit test suite validating manifest signing, chunk serialization, and store state transitions.
 
 ---
 
@@ -5624,9 +5641,9 @@ The following list identifies the core source code files implementing In-Circle 
 
 Tactical field operations, distributed defense commands, and industrial critical infrastructure networks require isolated, sovereign security perimeters to organize human operators, edge appliances, and operational assets. In conventional enterprise environments, group communications rely on centralized third-party software (such as Slack, Microsoft Teams, Discord, or WhatsApp). These platforms depend on cloud-hosted user databases, send invitations via vulnerable cleartext email links, lack hardware-rooted identity validation, and permit central platform administrators to access communication metadata or decrypt visual feeds.
 
-In contrast, the SG-X Guardian platform implements the **Circle as a Sovereign Communications Container** ([src/circle/](file:///home/hp/SGX/src/circle/), [src/api/handlers/circle.rs](file:///home/hp/SGX/src/api/handlers/circle.rs), [src/vc/](file:///home/hp/SGX/src/vc/), and [frontend/src/app/screens/network/](file:///home/hp/SGX/frontend/src/app/screens/network/)). In the Guardian architecture:
+In contrast, the SG-X Guardian platform implements the **Circle as a Sovereign Communications Container** (`src/circle/`, `src/api/handlers/circle.rs`, `src/vc/`, and `frontend/src/app/screens/network/`). In the Guardian architecture:
 
-- **Unified Security Boundary**: A Circle serves as the foundational root boundary for all real-time communication modalities. Text Chat channels ([src/chat/](file:///home/hp/SGX/src/chat/)), Voice Calling sessions ([src/call/](file:///home/hp/SGX/src/call/)), Video Conferences, Encrypted File Vault storage namespaces ([src/vault/](file:///home/hp/SGX/src/vault/)), P2P Resumable File Transfers ([src/xfer/](file:///home/hp/SGX/src/xfer/)), and Certificate Revocation List (CRL) gossip distributions are bound strictly to a specific `circle_id`.
+- **Unified Security Boundary**: A Circle serves as the foundational root boundary for all real-time communication modalities. Text Chat channels (`src/chat/`), Voice Calling sessions (`src/call/`), Video Conferences, Encrypted File Vault storage namespaces (`src/vault/`), P2P Resumable File Transfers (`src/xfer/`), and Certificate Revocation List (CRL) gossip distributions are bound strictly to a specific `circle_id`.
 - **Hardware-Rooted Identity & Verifiable Credentials**: Membership is not an entry in a database; it is a cryptographically signed W3C Verifiable Credential (VC) issued by the Circle owner and cryptographically bound to the member's permanent physical device DID (`did:guardian:...`).
 - **Cryptographic Invitation Tokens (`InviteToken`)**: Circle invitations are tamper-proof digital tokens containing target DID, assigned role, permission arrays, issuance and expiry timestamps, single-use nonces, and an ECDSA-P256 signature generated by the Circle owner's hardware Secure Element.
 - **In-Person QR Code Onboarding**: Supports offline, in-person tactical onboarding. Signed invite tokens are serialized into compact base64 strings and formatted as URI payloads (`sgx-guardian://circle/join?owner_host=...&token=...`) fitting within a 2048-byte QR code ceiling (`MAX_QR_PAYLOAD_SIZE`), scannable without internet or prior connectivity.
@@ -5644,14 +5661,14 @@ The Circle is the core abstraction that groups devices, humans, and communicatio
 Every operational capability within the SG-X Guardian platform verifies Circle boundaries before establishing connections or persisting data:
 
 - **Text Chat Channels**: Group conversations are partitioned by `circle_id`. A node will never relay, decrypt, or display a chat message whose `circle_id` does not match an active local membership credential.
-- **Voice & Video Calling Meshes**: Group calling coordinators ([src/call/group.rs](file:///home/hp/SGX/src/call/group.rs)) require valid Circle credentials. WebRTC audio and video RTP streams flow exclusively between nodes sharing the same Circle.
+- **Voice & Video Calling Meshes**: Group calling coordinators (`src/call/group.rs`) require valid Circle credentials. WebRTC audio and video RTP streams flow exclusively between nodes sharing the same Circle.
 - **Encrypted File Vault**: Storage is partitioned into `VaultNamespace::Circle(circle_id)`. Access to files, attachments, and folders requires valid Circle membership.
 - **In-Circle File Transfers**: The P2P transfer engine enforces `offer.circle_id == local_circle_id`. Incoming transfers from foreign Circles are rejected immediately with `CircleError::CircleMismatch`.
 - **CRL Gossip & Threat Intelligence**: Revocation gossip and Suricata alert feeds are scoped to Circle cohorts, containing breach intelligence to affected operational units.
 
 ### 19.2.2 Circle Types (`CircleKind::Comms` vs `CircleKind::Mesh`) & Lifecycle Status
 
-Circles are categorized by their operational purpose ([src/circle/model.rs](file:///home/hp/SGX/src/circle/model.rs)):
+Circles are categorized by their operational purpose (`src/circle/model.rs`):
 
 | Circle Kind | Target Scope | Modalities & Capabilities |
 | :--- | :--- | :--- |
@@ -5674,7 +5691,7 @@ To prevent rogue nodes from inventing fictitious Circles or rewinding history:
 
 ## 19.3 Cryptographic Membership & Verifiable Credentials (VC) Integration
 
-Membership inside an SG-X Circle is rooted in W3C Verifiable Credentials ([src/vc/](file:///home/hp/SGX/src/vc/) and [src/circle/members.rs](file:///home/hp/SGX/src/circle/members.rs)).
+Membership inside an SG-X Circle is rooted in W3C Verifiable Credentials (`src/vc/` and `src/circle/members.rs`).
 
 ### 19.3.1 Hardware-Rooted DID Membership Binding (`did:guardian:...`)
 
@@ -5685,7 +5702,7 @@ Every member is identified exclusively by their permanent W3C Decentralized Iden
 
 ### 19.3.2 Role Hierarchy (`Owner`, `Admin`, `Member`, `Guest`) & Permission Grids
 
-The platform enforces role-based access control across four standardized tiers ([src/vc/credential.rs](file:///home/hp/SGX/src/vc/credential.rs)):
+The platform enforces role-based access control across four standardized tiers (`src/vc/credential.rs`):
 
 | Role Tier | Default Permissions | Administrative & Operational Capabilities |
 | :--- | :--- | :--- |
@@ -5698,7 +5715,7 @@ Permissions are validated via `validate_permissions_for_role`. Custom permission
 
 ### 19.3.3 W3C Membership Credential Issuance & Status List 2021 Revocation
 
-When a member joins a Circle, the Circle owner executes a formal VC issuance workflow ([src/vc/issue.rs](file:///home/hp/SGX/src/vc/issue.rs)):
+When a member joins a Circle, the Circle owner executes a formal VC issuance workflow (`src/vc/issue.rs`):
 
 1. **VC Synthesis**: Constructs a W3C Verifiable Credential embedding `credentialSubject`:
    - `id`: Member DID (`did:guardian:...`)
@@ -5709,12 +5726,12 @@ When a member joins a Circle, the Circle owner executes a formal VC issuance wor
    - `membershipStatus`: `"active"`
 2. **Expiration Time**: Credentials declare an `expirationDate` (typically 30 to 365 days), enforcing periodic re-attestation.
 3. **Hardware Signature**: The Circle owner signs the credential using ECDSA-P256 with their private DID key.
-4. **Status List 2021 Bit Allocation**: Every issued VC is assigned a specific bit index in the owner's W3C Status List 2021 bitmap ([src/vc/status_list.rs](file:///home/hp/SGX/src/vc/status_list.rs)).
+4. **Status List 2021 Bit Allocation**: Every issued VC is assigned a specific bit index in the owner's W3C Status List 2021 bitmap (`src/vc/status_list.rs`).
 5. **Instant Revocation**: When an owner removes a member (`remove_member`), the engine flips the corresponding bit in the Status List from `0` to `1`, signs the updated list, and pushes it across the Circle. Peer nodes immediately treat the member's VC as revoked without waiting for credential expiration.
 
 ### 19.3.4 Member State Machine: `Invited`, `Active`, `Expired`, `Revoked`
 
-The member lifecycle progresses through four distinct states ([src/circle/members.rs](file:///home/hp/SGX/src/circle/members.rs)):
+The member lifecycle progresses through four distinct states (`src/circle/members.rs`):
 
 - **`Invited`**: An invitation token has been minted for the target DID, but the invite has not yet been redeemed. Membership status is suspended.
 - **`Active`**: The member has redeemed their invite, holds a valid, unexpired VC, and is cleared in the Status List. Full operational access is granted.
@@ -5725,7 +5742,7 @@ The member lifecycle progresses through four distinct states ([src/circle/member
 
 ## 19.4 Cryptographic Invitation Tokens & Wire Protocol
 
-Invitations are governed by the `InviteToken` structure ([src/circle/invite.rs](file:///home/hp/SGX/src/circle/invite.rs)), guaranteeing cryptographic authenticity and replay immunity.
+Invitations are governed by the `InviteToken` structure (`src/circle/invite.rs`), guaranteeing cryptographic authenticity and replay immunity.
 
 ### 19.4.1 Canonical `InviteToken` Schema & ECDSA-P256 Signature Proof
 
@@ -5765,7 +5782,7 @@ For air-gapped systems, initial tactical deployment, and in-person operator brie
 
 ### 19.5.1 Compact URI Format (`sgx-guardian://circle/join?owner_host=...&token=...`)
 
-The signed `InviteToken` is serialized and encoded into a compact share link ([src/circle/invite.rs](file:///home/hp/SGX/src/circle/invite.rs)):
+The signed `InviteToken` is serialized and encoded into a compact share link (`src/circle/invite.rs`):
 
 - **Base64 Token Packing**: The token JSON is compressed into a URL-safe base64 string via `invite::encode_compact`.
 - **Custom URI Scheme**: Formatted as a sovereign deep-link:
@@ -5780,7 +5797,7 @@ The signed `InviteToken` is serialized and encoded into a compact share link ([s
 
 ### 19.5.3 Join Preview & Cryptographic Verification Workflow
 
-When an operator scans a QR code with the Guardian web console or mobile PWA ([frontend/src/app/screens/network/CircleJoinScreen.tsx](file:///home/hp/SGX/frontend/src/app/screens/network/CircleJoinScreen.tsx)):
+When an operator scans a QR code with the Guardian web console or mobile PWA (`frontend/src/app/screens/network/CircleJoinScreen.tsx`):
 
 1. **Scan & Decode**: The camera extracts the URI and isolates `token_b64` and `owner_host`.
 2. **Preview Request (`POST /api/v1/circles/join/preview`)**: The frontend submits the token to the local Guardian engine.
@@ -5796,7 +5813,7 @@ When Guardians are connected via the Slack Nebula overlay network, invitations c
 
 ### 19.6.1 Service-to-Service Inbound Delivery (`GuardianService ` Authentication)
 
-The issuing Guardian delivers the invite directly to the recipient's REST endpoint ([src/api/handlers/circle.rs](file:///home/hp/SGX/src/api/handlers/circle.rs)):
+The issuing Guardian delivers the invite directly to the recipient's REST endpoint (`src/api/handlers/circle.rs`):
 
 - **Target Route**: `POST /api/v1/circles/invites/inbox`
 - **Service Authorization Scheme**: Uses custom header authentication:
@@ -5818,7 +5835,7 @@ To prevent man-in-the-middle tampering or replay attacks on service endpoints:
 
 Once delivered to the recipient's inbox:
 
-1. **Operator Notification**: The recipient Guardian displays an incoming invite notification ([frontend/src/app/components/circle/IncomingCircleInviteDialog.tsx](file:///home/hp/SGX/frontend/src/app/components/circle/IncomingCircleInviteDialog.tsx)).
+1. **Operator Notification**: The recipient Guardian displays an incoming invite notification (`frontend/src/app/components/circle/IncomingCircleInviteDialog.tsx`).
 2. **Acceptance Action**: The operator clicks "Accept Invite".
 3. **Join Request Construction**: The recipient generates a `JoinRequest` containing the original `InviteToken`, its own `joiner_did`, a random nonce, and an ECDSA-P256 signature generated by its local DID key.
 4. **Redemption Call**: The recipient transmits the `JoinRequest` to the Circle owner via `POST /api/v1/circles/redeem`.
@@ -5833,7 +5850,7 @@ In decentralized edge meshes, members must maintain consistent directories of ac
 
 ### 19.7.1 Versioned `CircleMemberSnapshot` & Owner Signature Validation
 
-The Circle owner publishes periodic cryptographic snapshots ([src/circle/snapshot.rs](file:///home/hp/SGX/src/circle/snapshot.rs)):
+The Circle owner publishes periodic cryptographic snapshots (`src/circle/snapshot.rs`):
 
 - **Snapshot Structure**:
   - `circleId`: Circle UUID.
@@ -5895,15 +5912,15 @@ The Circle subsystem exposes a comprehensive REST interface integrated with the 
 
 ### 19.8.4 React UI Operator Experience
 
-The frontend implementation ([frontend/src/app/screens/network/](file:///home/hp/SGX/frontend/src/app/screens/network/)):
+The frontend implementation (`frontend/src/app/screens/network/`):
 
-- **Circles Overview ([NW01CirclesList.tsx](file:///home/hp/SGX/frontend/src/app/screens/network/NW01CirclesList.tsx))**: Card grid displaying active and archived Circles, member count badges, online indicators, and quick-join triggers.
-- **Create Circle Modal ([NW02CreateCircle.tsx](file:///home/hp/SGX/frontend/src/app/screens/network/NW02CreateCircle.tsx))**: Dialog capturing Circle name, description, operational kind (`Comms` or `Mesh`), and initial credential validity period.
-- **Circle Detail Console ([NW04CircleDetail.tsx](file:///home/hp/SGX/frontend/src/app/screens/network/NW04CircleDetail.tsx))**:
+- **Circles Overview (`frontend/src/app/screens/network/NW01CirclesList.tsx`)**: Card grid displaying active and archived Circles, member count badges, online indicators, and quick-join triggers.
+- **Create Circle Modal (`frontend/src/app/screens/network/NW02CreateCircle.tsx`)**: Dialog capturing Circle name, description, operational kind (`Comms` or `Mesh`), and initial credential validity period.
+- **Circle Detail Console (`frontend/src/app/screens/network/NW04CircleDetail.tsx`)**:
   - **Overview Tab**: Shows Circle DID metadata, owner badges, operational status pills, and communication launch triggers (Chat, Voice, Video).
   - **Members Tab**: Real-time table of members with presence indicators (online/offline), roles, permission badges, join dates, and administrative action menus (Change Role, Expel Member).
   - **Invites Tab**: QR code generation modal, one-click share link copying, pending invite status, and token revocation controls.
-- **QR Join Screen ([CircleJoinScreen.tsx](file:///home/hp/SGX/frontend/src/app/screens/network/CircleJoinScreen.tsx))**: Webcam/camera QR scanner with manual token paste fallback, interactive join preview dialog, and cryptographic verification status indicators.
+- **QR Join Screen (`frontend/src/app/screens/network/CircleJoinScreen.tsx`)**: Webcam/camera QR scanner with manual token paste fallback, interactive join preview dialog, and cryptographic verification status indicators.
 
 ---
 
@@ -5913,16 +5930,16 @@ The following defense matrix summarizes the security protections and fault-toler
 
 | Defense ID | Threat / Failure Mode | Architectural Mitigation | Code Enforcement | Security Guarantee |
 | :--- | :--- | :--- | :--- | :--- |
-| **DEF-CIR-01** | Rogue Circle Creation & Rewind | Monotonic sequence counters and ECDSA-P256 signed registry proofs (`CircleRegistry`). | [model.rs](file:///home/hp/SGX/src/circle/model.rs), [store.rs](file:///home/hp/SGX/src/circle/store.rs) | Nodes cannot forge Circles or rewind registry sequence numbers. |
-| **DEF-CIR-02** | Stolen / Intercepted Credentials | Membership credentials bound to permanent hardware DIDs (`did:guardian:...`). | [members.rs](file:///home/hp/SGX/src/circle/members.rs), [issue.rs](file:///home/hp/SGX/src/vc/issue.rs) | Credentials cannot be transferred or re-used on unauthenticated hardware. |
-| **DEF-CIR-03** | Unauthorized Member Onboarding | Mandatory owner signature verification (`verify_invite`) on all invitation tokens. | [invite.rs](file:///home/hp/SGX/src/circle/invite.rs), [circle.rs](file:///home/hp/SGX/src/api/handlers/circle.rs) | Only the Circle owner or delegated admins can authorize new members. |
-| **DEF-CIR-04** | Invitation Replay & Multi-Use Hijack | 32-byte cryptographic nonces and persistent redemption ledger (`redeemed.json`). | [invite.rs](file:///home/hp/SGX/src/circle/invite.rs) | Single-use tokens cannot be redeemed more than once; replay attacks fail. |
-| **DEF-CIR-05** | Air-Gap QR Density Failures | Strict 2,048-byte QR payload cap (`MAX_QR_PAYLOAD_SIZE = 2048`) and base64 compression. | [invite.rs](file:///home/hp/SGX/src/circle/invite.rs) | Prevents unreadable high-density QR codes on rugged field cameras. |
-| **DEF-CIR-06** | Compromised / Revoked Node Entry | Mandatory CRL revocation checks on both invite issuance and redemption handshakes. | [invite.rs](file:///home/hp/SGX/src/circle/invite.rs), [circle.rs](file:///home/hp/SGX/src/api/handlers/circle.rs) | Revoked DIDs are blocked from receiving invites, joining, or redeeming VCs. |
-| **DEF-CIR-07** | Network Delivery Spoofing | `GuardianService ` signature authentication with 300-second timestamp freshness window. | [circle.rs](file:///home/hp/SGX/src/api/handlers/circle.rs) | Remote delivery requests cannot be forged or replayed over the network. |
-| **DEF-CIR-08** | Delayed Expulsion / Persistent Access | W3C Status List 2021 bit flipping instantly invalidates membership VCs across peers. | [members.rs](file:///home/hp/SGX/src/circle/members.rs), [status_list.rs](file:///home/hp/SGX/src/vc/status_list.rs) | Expelled members lose access to chat, calling, and files immediately. |
-| **DEF-CIR-09** | Central Directory Single Point of Failure | Signed decentralized member snapshots (`CircleMemberSnapshot`) cached locally. | [snapshot.rs](file:///home/hp/SGX/src/circle/snapshot.rs) | Mesh nodes continue peer calling and chat during network partition from owner. |
-| **DEF-CIR-10** | Transactional Join Failures | Compensation rollback (`remove_redemption`) when client-side storage fails. | [invite.rs](file:///home/hp/SGX/src/circle/invite.rs) | Prevents burnt invitation tokens when client transactions encounter local errors. |
+| **DEF-CIR-01** | Rogue Circle Creation & Rewind | Monotonic sequence counters and ECDSA-P256 signed registry proofs (`CircleRegistry`). | `src/circle/model.rs`, `src/circle/store.rs` | Nodes cannot forge Circles or rewind registry sequence numbers. |
+| **DEF-CIR-02** | Stolen / Intercepted Credentials | Membership credentials bound to permanent hardware DIDs (`did:guardian:...`). | `src/circle/members.rs`, `src/vc/issue.rs` | Credentials cannot be transferred or re-used on unauthenticated hardware. |
+| **DEF-CIR-03** | Unauthorized Member Onboarding | Mandatory owner signature verification (`verify_invite`) on all invitation tokens. | `src/circle/invite.rs`, `src/api/handlers/circle.rs` | Only the Circle owner or delegated admins can authorize new members. |
+| **DEF-CIR-04** | Invitation Replay & Multi-Use Hijack | 32-byte cryptographic nonces and persistent redemption ledger (`redeemed.json`). | `src/circle/invite.rs` | Single-use tokens cannot be redeemed more than once; replay attacks fail. |
+| **DEF-CIR-05** | Air-Gap QR Density Failures | Strict 2,048-byte QR payload cap (`MAX_QR_PAYLOAD_SIZE = 2048`) and base64 compression. | `src/circle/invite.rs` | Prevents unreadable high-density QR codes on rugged field cameras. |
+| **DEF-CIR-06** | Compromised / Revoked Node Entry | Mandatory CRL revocation checks on both invite issuance and redemption handshakes. | `src/circle/invite.rs`, `src/api/handlers/circle.rs` | Revoked DIDs are blocked from receiving invites, joining, or redeeming VCs. |
+| **DEF-CIR-07** | Network Delivery Spoofing | `GuardianService ` signature authentication with 300-second timestamp freshness window. | `src/api/handlers/circle.rs` | Remote delivery requests cannot be forged or replayed over the network. |
+| **DEF-CIR-08** | Delayed Expulsion / Persistent Access | W3C Status List 2021 bit flipping instantly invalidates membership VCs across peers. | `src/circle/members.rs`, `src/vc/status_list.rs` | Expelled members lose access to chat, calling, and files immediately. |
+| **DEF-CIR-09** | Central Directory Single Point of Failure | Signed decentralized member snapshots (`CircleMemberSnapshot`) cached locally. | `src/circle/snapshot.rs` | Mesh nodes continue peer calling and chat during network partition from owner. |
+| **DEF-CIR-10** | Transactional Join Failures | Compensation rollback (`remove_redemption`) when client-side storage fails. | `src/circle/invite.rs` | Prevents burnt invitation tokens when client transactions encounter local errors. |
 
 ---
 
@@ -5932,16 +5949,16 @@ The Circle and membership subsystem is verified through the dedicated **CIR-Seri
 
 | Test ID | Test Category & Name | Target Component | Verification Method | Expected Outcome & Pass Criteria |
 | :--- | :--- | :--- | :--- | :--- |
-| **CIR-001** | Circle Creation & Registry Proof Verification | [model.rs](file:///home/hp/SGX/src/circle/model.rs), [store.rs](file:///home/hp/SGX/src/circle/store.rs) | Create Circle; verify sequence increment and ECDSA-P256 signature verification over canonical bytes. | Registry proof validates; modifying Circle name without re-signing fails proof validation. |
-| **CIR-002** | Verifiable Credential Membership Issuance | [members.rs](file:///home/hp/SGX/src/circle/members.rs), [issue.rs](file:///home/hp/SGX/src/vc/issue.rs) | Add member to Circle; inspect issued W3C VC for subject DID, role, and permissions. | VC structure adheres to W3C VC 1.1; permissions match role defaults; status is `Active`. |
-| **CIR-003** | Member Expulsion & Status List Revocation | [members.rs](file:///home/hp/SGX/src/circle/members.rs), [status_list.rs](file:///home/hp/SGX/src/vc/status_list.rs) | Remove active member; verify Status List bitmap flip and VC classification transition. | Member `lifecycle_state` transitions to `Revoked`; subsequent access checks fail. |
-| **CIR-004** | Invite Token Minting & Proof Validation | [invite.rs](file:///home/hp/SGX/src/circle/invite.rs) | Mint `InviteToken` for target DID; verify cryptographic proof using simulated DID resolver. | `verify_invite` succeeds; tampering with `target_did` or `role` triggers `InvalidProof`. |
-| **CIR-005** | Invite Expiration TTL Clamping | [invite.rs](file:///home/hp/SGX/src/circle/invite.rs) | Mint invites with 1-minute and 60-day TTLs; verify clamping to [5 min, 30 days]. | Out-of-bounds TTL values are clamped safely to `MIN_INVITE_TTL_MINUTES` and `MAX_INVITE_TTL_MINUTES`. |
-| **CIR-006** | QR Code Payload Formatting & Size Ceiling | [invite.rs](file:///home/hp/SGX/src/circle/invite.rs) | Serialize invite into URI link; assert length is <= 2048 bytes; test oversized token injection. | Formats valid `sgx-guardian://circle/join` URI; oversized tokens return `QrPayloadTooLarge`. |
-| **CIR-007** | Nonce Anti-Replay & Max-Uses Enforcement | [invite.rs](file:///home/hp/SGX/src/circle/invite.rs) | Attempt to redeem same single-use invite token twice with identical joiner DID. | First redemption succeeds; second attempt returns `CircleError::InviteReplay`. |
-| **CIR-008** | CRL Revocation Interception on Join | [invite.rs](file:///home/hp/SGX/src/circle/invite.rs), [circle.rs](file:///home/hp/SGX/src/api/handlers/circle.rs) | Revoke joiner DID on local CRL; attempt redemption via `POST /circles/redeem`. | Owner detects revoked DID in `crl::is_revoked`, rejects redemption, and logs audit alert. |
-| **CIR-009** | Guardian Service Authentication Handshake | [circle.rs](file:///home/hp/SGX/src/api/handlers/circle.rs) | Deliver invite to `/invites/inbox` using `GuardianService ` headers with valid and expired timestamps. | Valid signature accepts invite; expired timestamp (>300s skew) rejected with HTTP 401. |
-| **CIR-010** | Member Snapshot Synchronization & Offline Caching | [snapshot.rs](file:///home/hp/SGX/src/circle/snapshot.rs) | Publish `CircleMemberSnapshot`; simulate network disconnection; query member list. | Peer node verifies owner signature, caches snapshot, and resolves members offline. |
+| **CIR-001** | Circle Creation & Registry Proof Verification | `src/circle/model.rs`, `src/circle/store.rs` | Create Circle; verify sequence increment and ECDSA-P256 signature verification over canonical bytes. | Registry proof validates; modifying Circle name without re-signing fails proof validation. |
+| **CIR-002** | Verifiable Credential Membership Issuance | `src/circle/members.rs`, `src/vc/issue.rs` | Add member to Circle; inspect issued W3C VC for subject DID, role, and permissions. | VC structure adheres to W3C VC 1.1; permissions match role defaults; status is `Active`. |
+| **CIR-003** | Member Expulsion & Status List Revocation | `src/circle/members.rs`, `src/vc/status_list.rs` | Remove active member; verify Status List bitmap flip and VC classification transition. | Member `lifecycle_state` transitions to `Revoked`; subsequent access checks fail. |
+| **CIR-004** | Invite Token Minting & Proof Validation | `src/circle/invite.rs` | Mint `InviteToken` for target DID; verify cryptographic proof using simulated DID resolver. | `verify_invite` succeeds; tampering with `target_did` or `role` triggers `InvalidProof`. |
+| **CIR-005** | Invite Expiration TTL Clamping | `src/circle/invite.rs` | Mint invites with 1-minute and 60-day TTLs; verify clamping to [5 min, 30 days]. | Out-of-bounds TTL values are clamped safely to `MIN_INVITE_TTL_MINUTES` and `MAX_INVITE_TTL_MINUTES`. |
+| **CIR-006** | QR Code Payload Formatting & Size Ceiling | `src/circle/invite.rs` | Serialize invite into URI link; assert length is <= 2048 bytes; test oversized token injection. | Formats valid `sgx-guardian://circle/join` URI; oversized tokens return `QrPayloadTooLarge`. |
+| **CIR-007** | Nonce Anti-Replay & Max-Uses Enforcement | `src/circle/invite.rs` | Attempt to redeem same single-use invite token twice with identical joiner DID. | First redemption succeeds; second attempt returns `CircleError::InviteReplay`. |
+| **CIR-008** | CRL Revocation Interception on Join | `src/circle/invite.rs`, `src/api/handlers/circle.rs` | Revoke joiner DID on local CRL; attempt redemption via `POST /circles/redeem`. | Owner detects revoked DID in `crl::is_revoked`, rejects redemption, and logs audit alert. |
+| **CIR-009** | Guardian Service Authentication Handshake | `src/api/handlers/circle.rs` | Deliver invite to `/invites/inbox` using `GuardianService ` headers with valid and expired timestamps. | Valid signature accepts invite; expired timestamp (>300s skew) rejected with HTTP 401. |
+| **CIR-010** | Member Snapshot Synchronization & Offline Caching | `src/circle/snapshot.rs` | Publish `CircleMemberSnapshot`; simulate network disconnection; query member list. | Peer node verifies owner signature, caches snapshot, and resolves members offline. |
 
 ---
 
@@ -5950,40 +5967,42 @@ The Circle and membership subsystem is verified through the dedicated **CIR-Seri
 The following list identifies the core source code files implementing Circle-as-Comms Container and Membership Administration:
 
 ### Circle Core Domain & Storage: `src/circle/`
-- **[src/circle/mod.rs](file:///home/hp/SGX/src/circle/mod.rs)**: Subsystem re-exports and module declarations.
-- **[src/circle/model.rs](file:///home/hp/SGX/src/circle/model.rs)**: Core models (`Circle`, `CircleKind`, `CircleStatus`, `CircleRegistry`), canonical sorting, and registry signing.
-- **[src/circle/members.rs](file:///home/hp/SGX/src/circle/members.rs)**: Member management (`CircleMember`, `MemberLifecycleState`), role assignment, VC issuance linkage, and status listing.
-- **[src/circle/invite.rs](file:///home/hp/SGX/src/circle/invite.rs)**: Invitation token engine (`InviteToken`, `JoinRequest`), QR payload formatting (`build_share_link`), TTL validation, and anti-replay ledger.
-- **[src/circle/snapshot.rs](file:///home/hp/SGX/src/circle/snapshot.rs)**: Decentralized directory snapshots (`CircleMemberSnapshot`), owner signature verification, and cache management.
-- **[src/circle/store.rs](file:///home/hp/SGX/src/circle/store.rs)**: Circle database storage, persistence locks (`CIRCLE_WRITE_LOCK`), and signing context initialization.
-- **[src/circle/persistence.rs](file:///home/hp/SGX/src/circle/persistence.rs)**: File paths (`invites`, `redeemed`, `snapshots`), atomic file write primitives, and directory structures.
-- **[src/circle/errors.rs](file:///home/hp/SGX/src/circle/errors.rs)**: Strongly typed Circle domain errors (`CircleError`).
+- **`src/circle/mod.rs`**: Subsystem re-exports and module declarations.
+- **`src/circle/model.rs`**: Core models (`Circle`, `CircleKind`, `CircleStatus`, `CircleRegistry`), canonical sorting, and registry signing.
+- **`src/circle/members.rs`**: Member management (`CircleMember`, `MemberLifecycleState`), role assignment, VC issuance linkage, and status listing.
+- **`src/circle/invite.rs`**: Invitation token engine (`InviteToken`, `JoinRequest`), QR payload formatting (`build_share_link`), TTL validation, and anti-replay ledger.
+- **`src/circle/snapshot.rs`**: Decentralized directory snapshots (`CircleMemberSnapshot`), owner signature verification, and cache management.
+- **`src/circle/store.rs`**: Circle database storage, persistence locks (`CIRCLE_WRITE_LOCK`), and signing context initialization.
+- **`src/circle/persistence.rs`**: File paths (`invites`, `redeemed`, `snapshots`), atomic file write primitives, and directory structures.
+- **`src/circle/errors.rs`**: Strongly typed Circle domain errors (`CircleError`).
 
 ### Verifiable Credential Subsystem: `src/vc/`
-- **[src/vc/credential.rs](file:///home/hp/SGX/src/vc/credential.rs)**: W3C Verifiable Credential data model, role enums (`CredentialRole`), and canonical sorting.
-- **[src/vc/issue.rs](file:///home/hp/SGX/src/vc/issue.rs)**: Membership credential issuance engine, role-to-permission mapping, and owner access verification (`ensure_circle_owner`).
-- **[src/vc/status_list.rs](file:///home/hp/SGX/src/vc/status_list.rs)**: W3C Status List 2021 bitmap management and real-time credential revocation bit-flipping.
-- **[src/vc/persistence.rs](file:///home/hp/SGX/src/vc/persistence.rs)**: Credential storage on flash memory (`issued`, `own`, `peers`).
+- **`src/vc/credential.rs`**: W3C Verifiable Credential data model, role enums (`CredentialRole`), and canonical sorting.
+- **`src/vc/issue.rs`**: Membership credential issuance engine, role-to-permission mapping, and owner access verification (`ensure_circle_owner`).
+- **`src/vc/status_list.rs`**: W3C Status List 2021 bitmap management and real-time credential revocation bit-flipping.
+- **`src/vc/persistence.rs`**: Credential storage on flash memory (`issued`, `own`, `peers`).
 
 ### REST API Handlers & Routing: `src/api/`
-- **[src/api/handlers/circle.rs](file:///home/hp/SGX/src/api/handlers/circle.rs)**: REST endpoints for Circle CRUD, member administration, invite minting, QR delivery, and redemption handshakes.
-- **[src/api/handlers/pwa.rs](file:///home/hp/SGX/src/api/handlers/pwa.rs)**: PWA and browser member enrollment handling within Circles.
-- **[src/api/routes.rs](file:///home/hp/SGX/src/api/routes.rs)**: Route registration for `circle_router()`.
+- **`src/api/handlers/circle.rs`**: REST endpoints for Circle CRUD, member administration, invite minting, QR delivery, and redemption handshakes.
+- **`src/api/handlers/pwa.rs`**: PWA and browser member enrollment handling within Circles.
+- **`src/api/routes.rs`**: Route registration for `circle_router()`.
 
 ### Frontend Components & Services: `frontend/`
-- **[frontend/src/app/services/circleService.ts](file:///home/hp/SGX/frontend/src/app/services/circleService.ts)**: TypeScript API client for Circle management, invites, members, and join previews.
-- **[frontend/src/app/screens/network/NW01CirclesList.tsx](file:///home/hp/SGX/frontend/src/app/screens/network/NW01CirclesList.tsx)**: Circles overview screen listing active/archived Circles and member counts.
-- **[frontend/src/app/screens/network/NW02CreateCircle.tsx](file:///home/hp/SGX/frontend/src/app/screens/network/NW02CreateCircle.tsx)**: Circle creation form with operational kind and validity duration configuration.
-- **[frontend/src/app/screens/network/NW04CircleDetail.tsx](file:///home/hp/SGX/frontend/src/app/screens/network/NW04CircleDetail.tsx)**: Detailed Circle management hub with Overview, Members, and Invites tabs.
-- **[frontend/src/app/screens/network/CircleJoinScreen.tsx](file:///home/hp/SGX/frontend/src/app/screens/network/CircleJoinScreen.tsx)**: Interactive QR code scanner and manual token join screen.
-- **[frontend/src/app/components/circle/IncomingCircleInviteDialog.tsx](file:///home/hp/SGX/frontend/src/app/components/circle/IncomingCircleInviteDialog.tsx)**: Dialog popup for reviewing and accepting push-delivered invitations.
+- **`frontend/src/app/services/circleService.ts`**: TypeScript API client for Circle management, invites, members, and join previews.
+- **`frontend/src/app/screens/network/NW01CirclesList.tsx`**: Circles overview screen listing active/archived Circles and member counts.
+- **`frontend/src/app/screens/network/NW02CreateCircle.tsx`**: Circle creation form with operational kind and validity duration configuration.
+- **`frontend/src/app/screens/network/NW04CircleDetail.tsx`**: Detailed Circle management hub with Overview, Members, and Invites tabs.
+- **`frontend/src/app/screens/network/CircleJoinScreen.tsx`**: Interactive QR code scanner and manual token join screen.
+- **`frontend/src/app/components/circle/IncomingCircleInviteDialog.tsx`**: Dialog popup for reviewing and accepting push-delivered invitations.
 
 ### Integration & Unit Test Suites: `tests/`
-- **[tests/api_circle_handlers_test.rs](file:///home/hp/SGX/tests/api_circle_handlers_test.rs)**: REST handler test suite validating request parsing, Circle mutations, and error codes (`CIR-001`).
-- **[tests/cov_circle_handlers_test.rs](file:///home/hp/SGX/tests/cov_circle_handlers_test.rs)**: Coverage test suite for Circle administration, member role modifications, and invite minting.
-- **[tests/cov_circle_receiving_test.rs](file:///home/hp/SGX/tests/cov_circle_receiving_test.rs)**: Test suite validating incoming invite delivery, network service authentication, and join preview decoding (`CIR-006`, `CIR-009`).
-- **[tests/registry_sync_test.rs](file:///home/hp/SGX/tests/registry_sync_test.rs)**: Registry sequence testing and snapshot synchronization verification (`CIR-010`).
-- **[src/circle/tests/mod.rs](file:///home/hp/SGX/src/circle/tests/mod.rs)**: Unit test suite for `InviteToken` signing, QR payload size caps, and anti-replay ledger logic (`CIR-004`, `CIR-007`).
+- **`tests/api_circle_handlers_test.rs`**: REST handler test suite validating request parsing, Circle mutations, and error codes (`CIR-001`).
+- **`tests/cov_circle_handlers_test.rs`**: Coverage test suite for Circle administration, member role modifications, and invite minting.
+- **`tests/cov_circle_receiving_test.rs`**: Test suite validating incoming invite delivery, network service authentication, and join preview decoding (`CIR-006`, `CIR-009`).
+- **`tests/registry_sync_test.rs`**: Registry sequence testing and snapshot synchronization verification (`CIR-010`).
+- **`src/circle/tests/mod.rs`**: Unit test suite for `InviteToken` signing, QR payload size caps, and anti-replay ledger logic (`CIR-004`, `CIR-007`).
+
+---
 
 # Feature 20: Encrypted Cloud Storage Vault & Device-Hosted File System
 
@@ -5991,7 +6010,7 @@ The following list identifies the core source code files implementing Circle-as-
 
 Commercial cloud storage providers (such as Amazon S3, Google Drive, Microsoft OneDrive, and Dropbox) impose fundamental security and privacy liabilities on mission-critical industrial, tactical, and operational technology (OT) environments. Sensitive blueprints, SCADA configurations, drone telemetry, and tactical communications stored in commercial cloud infrastructure remain vulnerable to third-party subpoenas, cloud provider credential leaks, nation-state metadata analysis, and catastrophic network outages during edge isolation.
 
-The SG-X Guardian **Encrypted Cloud Storage Vault** transforms the physical Guardian appliance into an autonomous, sovereign, device-hosted cloud storage vault. Storage operates entirely at the hardware edge on non-volatile flash memory (eMMC or NVMe SSDs), completely eliminating reliance on centralized cloud providers. 
+The SG-X Guardian **Encrypted Cloud Storage Vault** transforms the physical Guardian appliance into an autonomous, sovereign, device-hosted cloud storage vault. Storage operates entirely at the hardware edge on non-volatile flash memory (eMMC or NVMe SSDs), completely eliminating reliance on centralized cloud providers.
 
 The storage architecture enforces defense-in-depth:
 1. **Zero-Trust Sovereign Hosting**: All files, metadata records, virtual folder indexes, and audit ledgers reside physically on the local Guardian appliance filesystem under `/var/lib/sgx-guardian/vault`. No data, ciphertext, or metadata is ever forwarded to third-party cloud infrastructure.
@@ -6005,11 +6024,11 @@ The storage architecture enforces defense-in-depth:
 
 ## 20.2 Storage Architecture & Hardware Envelope Encryption Engine
 
-The Vault subsystem is implemented in Rust within [src/vault/](file:///home/hp/SGX/src/vault/) and exposes a modular storage engine configured via [VaultConfig](file:///home/hp/SGX/src/vault/mod.rs).
+The Vault subsystem is implemented in Rust within `src/vault/` and exposes a modular storage engine configured via `src/vault/mod.rs`.
 
 ### 20.2.1 Physical Storage Topology (Personal & Circle Namespaces)
 
-Data stored on the appliance is partitioned into isolated namespaces ([src/vault/namespace.rs](file:///home/hp/SGX/src/vault/namespace.rs)):
+Data stored on the appliance is partitioned into isolated namespaces (`src/vault/namespace.rs`):
 - **Personal Namespace (`VaultNamespace::Personal`)**: Bound to the keyword `"personal"`. Stores private operator files, scratch uploads, and direct-message chat attachments. Files in the Personal namespace are strictly isolated by owner DID (`owner_did`), ensuring that multiple operators or browser-enrolled members sharing the same hardware appliance cannot access or list each other's private data.
 - **Circle Namespace (`VaultNamespace::Circle(circle_id)`)**: Bound to a specific Circle UUID. Shared storage repository accessible by authorized members of that Circle. Circle files are governed by Circle role-based access control and W3C Verifiable Credentials.
 
@@ -6026,7 +6045,7 @@ The underlying filesystem structure isolates metadata, encrypted ciphertext blob
 
 ### 20.2.2 AES-256-GCM Streaming Chunked Encryption (`AES-256-GCM/STREAM-BE32`)
 
-To prevent memory exhaustion when handling large files on the embedded NXP i.MX8M Plus processor (which features 2 GB – 4 GB RAM), the cryptographic engine ([src/vault/crypto.rs](file:///home/hp/SGX/src/vault/crypto.rs)) implements chunked streaming authenticated encryption:
+To prevent memory exhaustion when handling large files on the embedded NXP i.MX8M Plus processor (which features 2 GB – 4 GB RAM), the cryptographic engine (`src/vault/crypto.rs`) implements chunked streaming authenticated encryption:
 - **Chunk Sizing**: Data is framed into discrete 256 KiB chunks (`VaultConfig::DEFAULT_CHUNK_BYTES = 262,144` bytes). The final chunk accommodates any remainder.
 - **Framing Structure**: Each chunk written to disk is prefixed with a 4-byte big-endian unsigned integer indicating the total length of the subsequent ciphertext plus authentication tag:
   - 4 Bytes: Chunk Ciphertext Length (`u32::to_be_bytes`)
@@ -6040,7 +6059,7 @@ To prevent memory exhaustion when handling large files on the embedded NXP i.MX8
 
 ### 20.2.3 Secure Element (NXP SE050) Key Wrapping & Software HKDF-SHA256 Fallback
 
-The Vault employs envelope encryption governed by the `KeyWrapper` trait ([src/vault/wrapper.rs](file:///home/hp/SGX/src/vault/wrapper.rs)):
+The Vault employs envelope encryption governed by the `KeyWrapper` trait (`src/vault/wrapper.rs`):
 - **Per-File Data Encryption Key (DEK)**: For every uploaded file, a unique 32-byte AES-256 key (`dek`) is generated from hardware entropy (`OsRng.fill_bytes(&mut dek)`).
 - **Production Hardware Wrapping (`se050-rsa-oaep`)**:
   - Scheme: `SE050_WRAP_SCHEME = "se050-rsa-oaep"`.
@@ -6057,7 +6076,7 @@ The Vault employs envelope encryption governed by the `KeyWrapper` trait ([src/v
 
 ## 20.3 Hierarchical Virtual Folder Engine & Navigation
 
-The Vault provides a complete virtual hierarchical directory tree ([src/vault/folders.rs](file:///home/hp/SGX/src/vault/folders.rs)) layered over flat, content-addressed ciphertext blobs on flash.
+The Vault provides a complete virtual hierarchical directory tree (`src/vault/folders.rs`) layered over flat, content-addressed ciphertext blobs on flash.
 
 ### 20.3.1 Folder Topology (`FolderNode`, `FolderIndex` & URN Scheme)
 
@@ -6100,7 +6119,7 @@ The folder engine implements strict structural validation:
 
 ## 20.4 Streaming Upload, Quota Validation & Multipart Ingestion Pipeline
 
-Uploading files to the Guardian appliance ([src/vault/upload.rs](file:///home/hp/SGX/src/vault/upload.rs), [src/vault/ingest.rs](file:///home/hp/SGX/src/vault/ingest.rs)) uses a memory-safe, quota-guarded streaming pipeline.
+Uploading files to the Guardian appliance (`src/vault/upload.rs`, `src/vault/ingest.rs`) uses a memory-safe, quota-guarded streaming pipeline.
 
 ### 20.4.1 Multipart Staging (`upload-<uuid>.part`) & Zero-Copy Atomic Ingestion
 
@@ -6128,7 +6147,7 @@ To prevent flash memory exhaustion attacks or unintentional appliance lockups:
 
 ### 20.4.3 MIME Whitelisting & Executable Blacklisting (`src/vault/mime_policy.rs`)
 
-To safeguard the Guardian system and connected client nodes against malware and executable injection, all uploads are inspected against a strict content-type policy ([src/vault/mime_policy.rs](file:///home/hp/SGX/src/vault/mime_policy.rs)):
+To safeguard the Guardian system and connected client nodes against malware and executable injection, all uploads are inspected against a strict content-type policy (`src/vault/mime_policy.rs`):
 - **Prefix Whitelist**: Accepts all media and text types matching:
   - `image/*` (PNG, JPEG, GIF, SVG, WebP)
   - `text/*` (Plain text, Markdown, CSV)
@@ -6152,7 +6171,7 @@ To safeguard the Guardian system and connected client nodes against malware and 
 
 ## 20.5 Authenticated Streaming Download & High-Performance Decryption
 
-File downloads ([src/api/handlers/vault.rs](file:///home/hp/SGX/src/api/handlers/vault.rs)) combine high throughput streaming with cryptographic verification.
+File downloads (`src/api/handlers/vault.rs`) combine high throughput streaming with cryptographic verification.
 
 ### 20.5.1 Chunked Decryption Pipeline & Memory-Efficient Streaming (`TempFileStream`)
 
@@ -6171,7 +6190,7 @@ When an authorized client requests a file download (`GET /api/v1/vault/files/{id
 
 ### 20.5.2 Tamper-Evident SHA-256 Digest Verification & Integrity Assurance
 
-During decryption ([src/vault/crypto.rs](file:///home/hp/SGX/src/vault/crypto.rs)):
+During decryption (`src/vault/crypto.rs`):
 - Each chunk's Poly1305 authentication tag is verified by `LessSafeKey::open_in_place`. If any byte in the ciphertext has been modified, decryption halts immediately with `VaultError::Crypto("chunk authentication failed")`.
 - Decrypted chunks are streamed into a running SHA-256 digest engine.
 - Upon reading all chunks, the finalized hash is compared against `record.sha256_plain`.
@@ -6179,7 +6198,7 @@ During decryption ([src/vault/crypto.rs](file:///home/hp/SGX/src/vault/crypto.rs
 
 ### 20.5.3 Audit Trail Logging (`downloads.jsonl` Ledger)
 
-Every download and preview request is logged to an immutable, append-only audit ledger ([src/vault/downloads.rs](file:///home/hp/SGX/src/vault/downloads.rs)):
+Every download and preview request is logged to an immutable, append-only audit ledger (`src/vault/downloads.rs`):
 - **Log Location**: `/var/lib/sgx-guardian/vault/meta/downloads.jsonl`
 - **Locking**: Guarded by a dedicated Tokio asynchronous mutex (`DOWNLOAD_LOG_LOCK`).
 - **Audit Record Schema (`DownloadRecord`)**:
@@ -6197,7 +6216,7 @@ To enable rapid situational awareness in tactical environments without requiring
 
 ### 20.6.1 Supported Formats & Preview Constraints (`PREVIEW_MAX_BYTES = 32 MiB`)
 
-The preview engine ([src/api/handlers/vault.rs](file:///home/hp/SGX/src/api/handlers/vault.rs)) evaluates whether a file qualifies for inline rendering via `is_previewable`:
+The preview engine (`src/api/handlers/vault.rs`) evaluates whether a file qualifies for inline rendering via `is_previewable`:
 - **Size Ceiling**: Previews are capped at 32 MiB (`PREVIEW_MAX_BYTES = 32 * 1024 * 1024`). Files exceeding 32 MiB must be downloaded directly to prevent browser memory exhaustion.
 - **Allowed MIME Families**:
   - Images: `image/png`, `image/jpeg`, `image/gif`, `image/svg+xml`, `image/webp`.
@@ -6211,7 +6230,7 @@ The preview engine ([src/api/handlers/vault.rs](file:///home/hp/SGX/src/api/hand
 When previewing (`GET /api/v1/vault/files/{id}/preview`):
 - The server streams decrypted bytes with `Content-Disposition: inline; filename="<sanitized>"`.
 - Includes custom operational tracking headers: `x-sgx-vault-id: <id>` and `x-sgx-vault-download: /api/v1/vault/files/<id>/download`.
-- Browser clients render the media directly within secure sandboxed dialogs ([FilePreviewDialog.tsx](file:///home/hp/SGX/frontend/src/app/components/vault/FilePreviewDialog.tsx)).
+- Browser clients render the media directly within secure sandboxed dialogs (`frontend/src/app/components/vault/FilePreviewDialog.tsx`).
 
 ### 20.6.3 Safe Text, Image & PDF Rendering Pipeline
 
@@ -6260,7 +6279,7 @@ For operational containment, the file owner can instantly revoke access without 
 
 ## 20.8 Storage Quota Management & Background Garbage Collection
 
-Storage capacity on the Guardian hardware is managed through multi-tiered quotas and automated background maintenance ([src/vault/quota.rs](file:///home/hp/SGX/src/vault/quota.rs), [src/vault/reaper.rs](file:///home/hp/SGX/src/vault/reaper.rs)).
+Storage capacity on the Guardian hardware is managed through multi-tiered quotas and automated background maintenance (`src/vault/quota.rs`, `src/vault/reaper.rs`).
 
 ### 20.8.1 Capacity Thresholds (Global, Personal, Circle) & Environment Overrides
 
@@ -6307,15 +6326,15 @@ When users send images, documents, or audio clips within Text Chat:
 
 ### 20.9.2 In-Circle P2P File Transfer Bridge (`SendSource::VaultId` & Ingest on Delivery)
 
-The Vault integrates directly with the P2P In-Circle File Transfer engine ([src/xfer/](file:///home/hp/SGX/src/xfer/)):
+The Vault integrates directly with the P2P In-Circle File Transfer engine (`src/xfer/`):
 - **Sending from Vault**: An operator can initiate a secure point-to-point file transfer directly from an existing vault record (`SendSource::VaultId`). The transfer engine extracts the ciphertext or streams plaintext through the authenticated transfer channel without requiring client-side re-uploading.
-- **Automatic Ingestion on Delivery**: When a receiving node completes an incoming P2P transfer, the engine executes `mark_receiver_complete_with_vault` ([src/xfer/store.rs](file:///home/hp/SGX/src/xfer/store.rs)), immediately ingesting the received file into the local Circle Vault, wrapping its DEK with the local SE050 chip, and linking it into the Circle virtual folder index.
+- **Automatic Ingestion on Delivery**: When a receiving node completes an incoming P2P transfer, the engine executes `mark_receiver_complete_with_vault` (`src/xfer/store.rs`), immediately ingesting the received file into the local Circle Vault, wrapping its DEK with the local SE050 chip, and linking it into the Circle virtual folder index.
 
 ---
 
 ## 20.10 REST API Catalog & Operator Console Experience
 
-The Vault exposes an authenticated REST API ([src/api/handlers/vault.rs](file:///home/hp/SGX/src/api/handlers/vault.rs)) integrated into the web console.
+The Vault exposes an authenticated REST API (`src/api/handlers/vault.rs`) integrated into the web console.
 
 ### 20.10.1 File Management & Streaming Endpoints
 
@@ -6355,13 +6374,13 @@ The Vault exposes an authenticated REST API ([src/api/handlers/vault.rs](file://
 
 ### 20.10.4 React UI Operator Console Experience
 
-The frontend web console provides an enterprise-grade cloud drive experience ([frontend/src/app/screens/storage/](file:///home/hp/SGX/frontend/src/app/screens/storage/), [frontend/src/app/components/vault/](file:///home/hp/SGX/frontend/src/app/components/vault/)):
-- **Storage Overview ([CS01StorageOverview.tsx](file:///home/hp/SGX/frontend/src/app/screens/storage/CS01StorageOverview.tsx))**: Main file manager featuring namespace switcher (Personal vs Circles), storage capacity progress bar ([StorageBar.tsx](file:///home/hp/SGX/frontend/src/app/components/vault/StorageBar.tsx)), search bar, and interactive file upload modal with drag-and-drop support.
-- **Breadcrumb Navigation ([Breadcrumbs.tsx](file:///home/hp/SGX/frontend/src/app/components/vault/Breadcrumbs.tsx))**: Clickable hierarchical breadcrumbs allowing instant navigation up and down nested virtual folder directories.
-- **Virtual Directory Table ([EntryRow.tsx](file:///home/hp/SGX/frontend/src/app/components/vault/EntryRow.tsx))**: High-performance table listing folder and file entries with file-type icons, plain sizes, modification dates, and action menus (Preview, Download, Star, Rename/Move, Soft Revoke, Delete).
-- **File Detail & Audit Drawer ([FileDetailPanel.tsx](file:///home/hp/SGX/frontend/src/app/components/vault/FileDetailPanel.tsx))**: Sidebar inspector displaying cryptographic SHA-256 digests, encryption wrap schemes, owner DID badges, expiration controls, and the real-time download audit history ledger.
-- **Modal Media Preview ([FilePreviewDialog.tsx](file:///home/hp/SGX/frontend/src/app/components/vault/FilePreviewDialog.tsx))**: Fullscreen dialog rendering inline high-resolution images, scrollable text documents, formatted JSON, and PDF previews.
-- **Secure Transfers Screen ([CS03SecureTransfers.tsx](file:///home/hp/SGX/frontend/src/app/screens/storage/CS03SecureTransfers.tsx))**: Point-to-point transfer console allowing operators to select files directly from the Vault and dispatch them across Circles.
+The frontend web console provides an enterprise-grade cloud drive experience (`frontend/src/app/screens/storage/`, `frontend/src/app/components/vault/`):
+- **Storage Overview (`frontend/src/app/screens/storage/CS01StorageOverview.tsx`)**: Main file manager featuring namespace switcher (Personal vs Circles), storage capacity progress bar (`frontend/src/app/components/vault/StorageBar.tsx`), search bar, and interactive file upload modal with drag-and-drop support.
+- **Breadcrumb Navigation (`frontend/src/app/components/vault/Breadcrumbs.tsx`)**: Clickable hierarchical breadcrumbs allowing instant navigation up and down nested virtual folder directories.
+- **Virtual Directory Table (`frontend/src/app/components/vault/EntryRow.tsx`)**: High-performance table listing folder and file entries with file-type icons, plain sizes, modification dates, and action menus (Preview, Download, Star, Rename/Move, Soft Revoke, Delete).
+- **File Detail & Audit Drawer (`frontend/src/app/components/vault/FileDetailPanel.tsx`)**: Sidebar inspector displaying cryptographic SHA-256 digests, encryption wrap schemes, owner DID badges, expiration controls, and the real-time download audit history ledger.
+- **Modal Media Preview (`frontend/src/app/components/vault/FilePreviewDialog.tsx`)**: Fullscreen dialog rendering inline high-resolution images, scrollable text documents, formatted JSON, and PDF previews.
+- **Secure Transfers Screen (`frontend/src/app/screens/storage/CS03SecureTransfers.tsx`)**: Point-to-point transfer console allowing operators to select files directly from the Vault and dispatch them across Circles.
 
 ---
 
@@ -6371,16 +6390,16 @@ The following defense matrix summarizes the security guarantees and threat mitig
 
 | Defense ID | Threat / Failure Mode | Architectural Mitigation | Code Enforcement | Security Guarantee |
 | :--- | :--- | :--- | :--- | :--- |
-| **DEF-VLT-01** | Cloud Vendor Lock-in & Surveillance | 100% sovereign on-device storage hosting on local eMMC/NVMe flash. | [persistence.rs](file:///home/hp/SGX/src/vault/persistence.rs) | Zero data or telemetry sent to third-party public cloud providers. |
-| **DEF-VLT-02** | Flash Theft & Silicon Extraction | AES-256-GCM chunked encryption with SE050 RSA-2048-OAEP hardware key wrapping. | [crypto.rs](file:///home/hp/SGX/src/vault/crypto.rs), [wrapper.rs](file:///home/hp/SGX/src/vault/wrapper.rs) | Unwrapping keys requires physical access to authenticated SE050 silicon. |
-| **DEF-VLT-03** | Plaintext Residue on Local Flash | `TempFileStream` unlinks decrypted files on `Drop`; staging shredded on completion. | [vault.rs](file:///home/hp/SGX/src/api/handlers/vault.rs), [ingest.rs](file:///home/hp/SGX/src/vault/ingest.rs) | Temporary plaintext never persists on disk after stream completion or abort. |
-| **DEF-VLT-04** | Malicious Executable Uploads | Strict MIME prefix whitelist rejecting `.exe`, `.sh`, ELF, and PE binaries. | [mime_policy.rs](file:///home/hp/SGX/src/vault/mime_policy.rs) | Executable files are blocked before byte staging or disk persistence. |
-| **DEF-VLT-05** | Flash Storage Exhaustion & DoS | Pre-ingestion quota verification and atomic multi-threaded reservations. | [quota.rs](file:///home/hp/SGX/src/vault/quota.rs), [upload.rs](file:///home/hp/SGX/src/vault/upload.rs) | Oversized uploads are aborted mid-stream; quotas cannot be overshot. |
-| **DEF-VLT-06** | Cross-Tenant Namespace Pollution | Strict partition isolation between Personal and Circle namespaces by owner DID. | [namespace.rs](file:///home/hp/SGX/src/vault/namespace.rs), [vault.rs](file:///home/hp/SGX/src/api/handlers/vault.rs) | Operators on shared hardware cannot list or access peers' personal files. |
-| **DEF-VLT-07** | Ciphertext Tampering & Bit-Flipping | Poly1305 GCM tags per chunk plus end-to-end SHA-256 plaintext checksum verification. | [crypto.rs](file:///home/hp/SGX/src/vault/crypto.rs) | Bit-flipped ciphertext chunks immediately fail decryption and output is wiped. |
-| **DEF-VLT-08** | Folder Hierarchy Corruption & Loops | Breadth-first subtree cycle detection (`ensure_no_cycle`) and unique child naming. | [folders.rs](file:///home/hp/SGX/src/vault/folders.rs) | Moving a folder into its own subtree is mathematically prevented. |
-| **DEF-VLT-09** | Unauthorized File Exfiltration | `authorize_record_access` and owner-only checks on revoke, expiry, and history. | [vault.rs](file:///home/hp/SGX/src/api/handlers/vault.rs) | Non-owners and non-members receive HTTP 403 Forbidden on all file endpoints. |
-| **DEF-VLT-10** | Stale Data Accumulation & Zombies | Background `VaultExpiryReaper` daemon executing sweeps every 15 minutes. | [reaper.rs](file:///home/hp/SGX/src/vault/reaper.rs) | Expired records and blobs are automatically shredded and reclaimed from flash. |
+| **DEF-VLT-01** | Cloud Vendor Lock-in & Surveillance | 100% sovereign on-device storage hosting on local eMMC/NVMe flash. | `src/vault/persistence.rs` | Zero data or telemetry sent to third-party public cloud providers. |
+| **DEF-VLT-02** | Flash Theft & Silicon Extraction | AES-256-GCM chunked encryption with SE050 RSA-2048-OAEP hardware key wrapping. | `src/vault/crypto.rs`, `src/vault/wrapper.rs` | Unwrapping keys requires physical access to authenticated SE050 silicon. |
+| **DEF-VLT-03** | Plaintext Residue on Local Flash | `TempFileStream` unlinks decrypted files on `Drop`; staging shredded on completion. | `src/api/handlers/vault.rs`, `src/vault/ingest.rs` | Temporary plaintext never persists on disk after stream completion or abort. |
+| **DEF-VLT-04** | Malicious Executable Uploads | Strict MIME prefix whitelist rejecting `.exe`, `.sh`, ELF, and PE binaries. | `src/vault/mime_policy.rs` | Executable files are blocked before byte staging or disk persistence. |
+| **DEF-VLT-05** | Flash Storage Exhaustion & DoS | Pre-ingestion quota verification and atomic multi-threaded reservations. | `src/vault/quota.rs`, `src/vault/upload.rs` | Oversized uploads are aborted mid-stream; quotas cannot be overshot. |
+| **DEF-VLT-06** | Cross-Tenant Namespace Pollution | Strict partition isolation between Personal and Circle namespaces by owner DID. | `src/vault/namespace.rs`, `src/api/handlers/vault.rs` | Operators on shared hardware cannot list or access peers' personal files. |
+| **DEF-VLT-07** | Ciphertext Tampering & Bit-Flipping | Poly1305 GCM tags per chunk plus end-to-end SHA-256 plaintext checksum verification. | `src/vault/crypto.rs` | Bit-flipped ciphertext chunks immediately fail decryption and output is wiped. |
+| **DEF-VLT-08** | Folder Hierarchy Corruption & Loops | Breadth-first subtree cycle detection (`ensure_no_cycle`) and unique child naming. | `src/vault/folders.rs` | Moving a folder into its own subtree is mathematically prevented. |
+| **DEF-VLT-09** | Unauthorized File Exfiltration | `authorize_record_access` and owner-only checks on revoke, expiry, and history. | `src/api/handlers/vault.rs` | Non-owners and non-members receive HTTP 403 Forbidden on all file endpoints. |
+| **DEF-VLT-10** | Stale Data Accumulation & Zombies | Background `VaultExpiryReaper` daemon executing sweeps every 15 minutes. | `src/vault/reaper.rs` | Expired records and blobs are automatically shredded and reclaimed from flash. |
 
 ---
 
@@ -6390,16 +6409,16 @@ The Vault subsystem is verified through the dedicated **VLT-Series** validation 
 
 | Test ID | Test Category & Name | Target Component | Verification Method | Expected Outcome & Pass Criteria |
 | :--- | :--- | :--- | :--- | :--- |
-| **VLT-001** | AES-256-GCM Streaming Chunk Round-Trip | [crypto.rs](file:///home/hp/SGX/src/vault/crypto.rs) | Encrypt multi-chunk file; tamper with single byte in ciphertext chunk; attempt decrypt. | Untampered file decrypts with matching SHA-256; tampered chunk triggers `Crypto` failure. |
-| **VLT-002** | SE050 Hardware Wrapping & Production Gate | [wrapper.rs](file:///home/hp/SGX/src/vault/wrapper.rs) | Wrap 32-byte DEK in Production mode; verify SE050 backend receives exactly 32 bytes. | Hardware wrapping succeeds; software fallback in Production mode fails closed. |
-| **VLT-003** | Plaintext Temp File Cleanup on Drop | [vault.rs](file:///home/hp/SGX/src/api/handlers/vault.rs) | Initiate file download stream; drop stream mid-flight; assert temp file path is unlinked. | `TempFileStream::drop` unlinks plaintext file; zero residual plaintext bytes remain. |
-| **VLT-004** | Folder Tree CRUD & Cycle Prevention | [folders.rs](file:///home/hp/SGX/src/vault/folders.rs) | Create nested folders; attempt to move parent folder into child folder; assert cycle error. | `ensure_no_cycle` rejects move with `VaultError::Conflict`; folder index remains valid. |
-| **VLT-005** | Pre-Ingestion Quota Enforcement | [quota.rs](file:///home/hp/SGX/src/vault/quota.rs), [upload.rs](file:///home/hp/SGX/src/vault/upload.rs) | Set personal quota to 100 KiB; attempt to stream 150 KiB file upload. | Stream aborts mid-flight at quota boundary; returns HTTP 413 `PayloadTooLarge`. |
-| **VLT-006** | Namespace Quota Isolation & Recovery | [quota.rs](file:///home/hp/SGX/src/vault/quota.rs) | Fill Circle Alpha quota to 100%; verify Circle Beta upload succeeds; delete file and verify quota recovery. | Quotas are strictly isolated per namespace; deleting records recovers used bytes. |
-| **VLT-007** | MIME Whitelist & Executable Rejection | [mime_policy.rs](file:///home/hp/SGX/src/vault/mime_policy.rs) | Attempt upload of `app.exe` (`application/x-msdownload`) and `script.sh` (`application/x-sh`). | Whitelist validation fails immediately; upload returns HTTP 400 without byte staging. |
-| **VLT-008** | Soft Revocation & Expiration Invalidation | [vault.rs](file:///home/hp/SGX/src/api/handlers/vault.rs) | Soft-revoke file via `POST /revoke`; set past `expires_at`; attempt download. | Revoked file returns HTTP 403 Forbidden; expired file returns HTTP 410 Gone. |
-| **VLT-009** | Background Expiry Reaping Daemon | [reaper.rs](file:///home/hp/SGX/src/vault/reaper.rs), [vault_reaper_test.rs](file:///home/hp/SGX/tests/vault_reaper_test.rs) | Create expired file and future file; invoke `VaultExpiryReaper::sweep()`. | Expired metadata and ciphertext blob deleted from disk; future file preserved. |
-| **VLT-010** | Cross-Subsystem Chat & Transfer Ingestion | [xfer/store.rs](file:///home/hp/SGX/src/xfer/store.rs), [model.rs](file:///home/hp/SGX/src/vault/model.rs) | Send P2P file transfer; trigger `mark_receiver_complete_with_vault`; verify vault record. | File seamlessly ingested into receiver Circle Vault with SE050 wrapped DEK. |
+| **VLT-001** | AES-256-GCM Streaming Chunk Round-Trip | `src/vault/crypto.rs` | Encrypt multi-chunk file; tamper with single byte in ciphertext chunk; attempt decrypt. | Untampered file decrypts with matching SHA-256; tampered chunk triggers `Crypto` failure. |
+| **VLT-002** | SE050 Hardware Wrapping & Production Gate | `src/vault/wrapper.rs` | Wrap 32-byte DEK in Production mode; verify SE050 backend receives exactly 32 bytes. | Hardware wrapping succeeds; software fallback in Production mode fails closed. |
+| **VLT-003** | Plaintext Temp File Cleanup on Drop | `src/api/handlers/vault.rs` | Initiate file download stream; drop stream mid-flight; assert temp file path is unlinked. | `TempFileStream::drop` unlinks plaintext file; zero residual plaintext bytes remain. |
+| **VLT-004** | Folder Tree CRUD & Cycle Prevention | `src/vault/folders.rs` | Create nested folders; attempt to move parent folder into child folder; assert cycle error. | `ensure_no_cycle` rejects move with `VaultError::Conflict`; folder index remains valid. |
+| **VLT-005** | Pre-Ingestion Quota Enforcement | `src/vault/quota.rs`, `src/vault/upload.rs` | Set personal quota to 100 KiB; attempt to stream 150 KiB file upload. | Stream aborts mid-flight at quota boundary; returns HTTP 413 `PayloadTooLarge`. |
+| **VLT-006** | Namespace Quota Isolation & Recovery | `src/vault/quota.rs` | Fill Circle Alpha quota to 100%; verify Circle Beta upload succeeds; delete file and verify quota recovery. | Quotas are strictly isolated per namespace; deleting records recovers used bytes. |
+| **VLT-007** | MIME Whitelist & Executable Rejection | `src/vault/mime_policy.rs` | Attempt upload of `app.exe` (`application/x-msdownload`) and `script.sh` (`application/x-sh`). | Whitelist validation fails immediately; upload returns HTTP 400 without byte staging. |
+| **VLT-008** | Soft Revocation & Expiration Invalidation | `src/api/handlers/vault.rs` | Soft-revoke file via `POST /revoke`; set past `expires_at`; attempt download. | Revoked file returns HTTP 403 Forbidden; expired file returns HTTP 410 Gone. |
+| **VLT-009** | Background Expiry Reaping Daemon | `src/vault/reaper.rs`, `tests/vault_reaper_test.rs` | Create expired file and future file; invoke `VaultExpiryReaper::sweep()`. | Expired metadata and ciphertext blob deleted from disk; future file preserved. |
+| **VLT-010** | Cross-Subsystem Chat & Transfer Ingestion | `src/xfer/store.rs`, `src/vault/model.rs` | Send P2P file transfer; trigger `mark_receiver_complete_with_vault`; verify vault record. | File seamlessly ingested into receiver Circle Vault with SE050 wrapped DEK. |
 
 ---
 
@@ -6408,39 +6427,41 @@ The Vault subsystem is verified through the dedicated **VLT-Series** validation 
 The following list identifies the core source code files implementing the Encrypted Cloud Storage Vault:
 
 ### Vault Core Domain & Cryptography: `src/vault/`
-- **[src/vault/mod.rs](file:///home/hp/SGX/src/vault/mod.rs)**: Subsystem entry point, `VaultConfig`, chunk sizing defaults, and write locks.
-- **[src/vault/model.rs](file:///home/hp/SGX/src/vault/model.rs)**: Core data models (`VaultRecord`, `VaultSource`, `EncMeta`) and expiration checking logic (`is_expired`).
-- **[src/vault/crypto.rs](file:///home/hp/SGX/src/vault/crypto.rs)**: AES-256-GCM chunked streaming encryption/decryption (`AES-256-GCM/STREAM-BE32`), 12-byte nonce formulation, and SHA-256 integrity checks.
-- **[src/vault/wrapper.rs](file:///home/hp/SGX/src/vault/wrapper.rs)**: Envelope encryption engine, `KeyWrapper` trait, NXP SE050 Secure Element wrapping (`se050-rsa-oaep`), and Software HKDF fallback (`software-hkdf`).
-- **[src/vault/folders.rs](file:///home/hp/SGX/src/vault/folders.rs)**: Virtual folder index (`FolderIndex`, `FolderNode`), breadcrumb path resolution, recursive deletion, and cycle prevention (`ensure_no_cycle`).
-- **[src/vault/namespace.rs](file:///home/hp/SGX/src/vault/namespace.rs)**: Storage partition isolation (`VaultNamespace::Personal` and `VaultNamespace::Circle`) and validation.
-- **[src/vault/quota.rs](file:///home/hp/SGX/src/vault/quota.rs)**: Capacity management, environment overrides (`SGX_VAULT_CAPACITY_BYTES`), and pre-ingestion reservation checks.
-- **[src/vault/upload.rs](file:///home/hp/SGX/src/vault/upload.rs)**: Staged upload ingestion pipeline and metadata serialization.
-- **[src/vault/ingest.rs](file:///home/hp/SGX/src/vault/ingest.rs)**: Temporary file decryption utilities, MIME type inference, and zero-copy ingestion.
-- **[src/vault/downloads.rs](file:///home/hp/SGX/src/vault/downloads.rs)**: Append-only download and preview audit ledger (`meta/downloads.jsonl`).
-- **[src/vault/reaper.rs](file:///home/hp/SGX/src/vault/reaper.rs)**: 15-minute background garbage collection daemon (`VaultExpiryReaper`) for expired files and orphaned staging fragments.
-- **[src/vault/mime_policy.rs](file:///home/hp/SGX/src/vault/mime_policy.rs)**: MIME type whitelisting and executable binary blacklisting.
-- **[src/vault/persistence.rs](file:///home/hp/SGX/src/vault/persistence.rs)**: Atomic file persistence primitives and path resolution.
-- **[src/vault/errors.rs](file:///home/hp/SGX/src/vault/errors.rs)**: Strongly typed Vault domain errors (`VaultError`).
+- **`src/vault/mod.rs`**: Subsystem entry point, `VaultConfig`, chunk sizing defaults, and write locks.
+- **`src/vault/model.rs`**: Core data models (`VaultRecord`, `VaultSource`, `EncMeta`) and expiration checking logic (`is_expired`).
+- **`src/vault/crypto.rs`**: AES-256-GCM chunked streaming encryption/decryption (`AES-256-GCM/STREAM-BE32`), 12-byte nonce formulation, and SHA-256 integrity checks.
+- **`src/vault/wrapper.rs`**: Envelope encryption engine, `KeyWrapper` trait, NXP SE050 Secure Element wrapping (`se050-rsa-oaep`), and Software HKDF fallback (`software-hkdf`).
+- **`src/vault/folders.rs`**: Virtual folder index (`FolderIndex`, `FolderNode`), breadcrumb path resolution, recursive deletion, and cycle prevention (`ensure_no_cycle`).
+- **`src/vault/namespace.rs`**: Storage partition isolation (`VaultNamespace::Personal` and `VaultNamespace::Circle`) and validation.
+- **`src/vault/quota.rs`**: Capacity management, environment overrides (`SGX_VAULT_CAPACITY_BYTES`), and pre-ingestion reservation checks.
+- **`src/vault/upload.rs`**: Staged upload ingestion pipeline and metadata serialization.
+- **`src/vault/ingest.rs`**: Temporary file decryption utilities, MIME type inference, and zero-copy ingestion.
+- **`src/vault/downloads.rs`**: Append-only download and preview audit ledger (`meta/downloads.jsonl`).
+- **`src/vault/reaper.rs`**: 15-minute background garbage collection daemon (`VaultExpiryReaper`) for expired files and orphaned staging fragments.
+- **`src/vault/mime_policy.rs`**: MIME type whitelisting and executable binary blacklisting.
+- **`src/vault/persistence.rs`**: Atomic file persistence primitives and path resolution.
+- **`src/vault/errors.rs`**: Strongly typed Vault domain errors (`VaultError`).
 
 ### REST API Handlers & Routing: `src/api/`
-- **[src/api/handlers/vault.rs](file:///home/hp/SGX/src/api/handlers/vault.rs)**: REST endpoints for file CRUD, multipart streaming upload, download/preview streaming (`TempFileStream`), soft revocation, folder operations, and quota queries.
-- **[src/api/routes.rs](file:///home/hp/SGX/src/api/routes.rs)**: Vault router registration under `/api/v1/vault/`.
+- **`src/api/handlers/vault.rs`**: REST endpoints for file CRUD, multipart streaming upload, download/preview streaming (`TempFileStream`), soft revocation, folder operations, and quota queries.
+- **`src/api/routes.rs`**: Vault router registration under `/api/v1/vault/`.
 
 ### Frontend Components & Services: `frontend/`
-- **[frontend/src/app/services/vaultService.ts](file:///home/hp/SGX/frontend/src/app/services/vaultService.ts)**: TypeScript API client for files, folders, uploads, downloads, previews, quotas, and audit history.
-- **[frontend/src/app/screens/storage/CS01StorageOverview.tsx](file:///home/hp/SGX/frontend/src/app/screens/storage/CS01StorageOverview.tsx)**: Main Vault explorer screen with folder tree, files list, quota progress bar, and upload triggers.
-- **[frontend/src/app/screens/storage/CS02FileDetail.tsx](file:///home/hp/SGX/frontend/src/app/screens/storage/CS02FileDetail.tsx)**: Dedicated file details view.
-- **[frontend/src/app/screens/storage/CS03SecureTransfers.tsx](file:///home/hp/SGX/frontend/src/app/screens/storage/CS03SecureTransfers.tsx)**: In-Circle secure file transfer hub with direct Vault integration.
-- **[frontend/src/app/components/vault/Breadcrumbs.tsx](file:///home/hp/SGX/frontend/src/app/components/vault/Breadcrumbs.tsx)**: Clickable folder breadcrumb navigation component.
-- **[frontend/src/app/components/vault/EntryRow.tsx](file:///home/hp/SGX/frontend/src/app/components/vault/EntryRow.tsx)**: Virtual directory row component with actions menu (Preview, Download, Star, Delete).
-- **[frontend/src/app/components/vault/FileDetailPanel.tsx](file:///home/hp/SGX/frontend/src/app/components/vault/FileDetailPanel.tsx)**: Detailed file inspector drawer with cryptographic checksums and download history ledger.
-- **[frontend/src/app/components/vault/FilePreviewDialog.tsx](file:///home/hp/SGX/frontend/src/app/components/vault/FilePreviewDialog.tsx)**: Modal viewer for inline image, text, JSON, and PDF previews.
-- **[frontend/src/app/components/vault/StorageBar.tsx](file:///home/hp/SGX/frontend/src/app/components/vault/StorageBar.tsx)**: Graphical storage quota utilization component.
+- **`frontend/src/app/services/vaultService.ts`**: TypeScript API client for files, folders, uploads, downloads, previews, quotas, and audit history.
+- **`frontend/src/app/screens/storage/CS01StorageOverview.tsx`**: Main Vault explorer screen with folder tree, files list, quota progress bar, and upload triggers.
+- **`frontend/src/app/screens/storage/CS02FileDetail.tsx`**: Dedicated file details view.
+- **`frontend/src/app/screens/storage/CS03SecureTransfers.tsx`**: In-Circle secure file transfer hub with direct Vault integration.
+- **`frontend/src/app/components/vault/Breadcrumbs.tsx`**: Clickable folder breadcrumb navigation component.
+- **`frontend/src/app/components/vault/EntryRow.tsx`**: Virtual directory row component with actions menu (Preview, Download, Star, Delete).
+- **`frontend/src/app/components/vault/FileDetailPanel.tsx`**: Detailed file inspector drawer with cryptographic checksums and download history ledger.
+- **`frontend/src/app/components/vault/FilePreviewDialog.tsx`**: Modal viewer for inline image, text, JSON, and PDF previews.
+- **`frontend/src/app/components/vault/StorageBar.tsx`**: Graphical storage quota utilization component.
 
 ### Integration & Unit Test Suites: `tests/`
-- **[tests/vault_reaper_test.rs](file:///home/hp/SGX/tests/vault_reaper_test.rs)**: Integration test suite verifying periodic expiration sweeping and blob deletion (`VLT-009`).
-- **[src/vault/tests/mod.rs](file:///home/hp/SGX/src/vault/tests/mod.rs)**: Comprehensive unit and integration test suite covering chunked crypto round-trips, SE050 hardware key wrapping, folder hierarchy cycle checks, and quota limits (`VLT-001` through `VLT-008`).
+- **`tests/vault_reaper_test.rs`**: Integration test suite verifying periodic expiration sweeping and blob deletion (`VLT-009`).
+- **`src/vault/tests/mod.rs`**: Comprehensive unit and integration test suite covering chunked crypto round-trips, SE050 hardware key wrapping, folder hierarchy cycle checks, and quota limits (`VLT-001` through `VLT-008`).
+
+---
 
 # Feature 21: Smart Home Integration & Autonomous Edge Automation
 
@@ -6448,43 +6469,43 @@ The following list identifies the core source code files implementing the Encryp
 
 Commercial smart home ecosystems (such as Google Home, Amazon Alexa, Apple HomeKit, and proprietary cloud vendor hubs) operate under centralized cloud telemetry models. Every sensor event, doorbell chime, temperature adjustment, and lock actuation is transmitted across public internet infrastructure to vendor cloud servers. In high-assurance industrial environments, tactical operations centers, defense installations, and privacy-sensitive executive facilities, this paradigm introduces severe vulnerabilities: vendor cloud outages disable physical facility actuators, eavesdropped telemetry exposes room occupancy and perimeter movements, and cloud credential compromises provide adversaries with direct physical ingress.
 
-The SG-X Guardian **Smart Home Integration & Autonomous Edge Automation** subsystem re-architects smart home and industrial IoT control into a zero-trust, sovereign edge platform. 
+The SG-X Guardian **Smart Home Integration & Autonomous Edge Automation** subsystem re-architects smart home and industrial IoT control into a zero-trust, sovereign edge platform.
 
 The architecture establishes a strict separation of concerns:
 1. **Edge Integration Abstraction Layer**: An embedded **Home Assistant (HA)** container running locally on the appliance (`network_mode: host`, port 8123) serves strictly as the hardware communication layer, driver runtime, and protocol adapter. It interfaces with local IP networks, proprietary cloud APIs, and physical RF dongles.
-2. **Guardian Rust Core Authority**: The Guardian Rust Core daemon ([src/homeassistant/](file:///home/hp/SGX/src/homeassistant/), [src/device/](file:///home/hp/SGX/src/device/), [src/integration/](file:///home/hp/SGX/src/integration/), [src/automation/](file:///home/hp/SGX/src/automation/)) acts as the single source of truth, security gatekeeper, and central brain. All business logic, automation rule evaluations, cyber-physical safety guards, encrypted token storage, audit logs, and frontend APIs execute natively inside the Guardian core.
+2. **Guardian Rust Core Authority**: The Guardian Rust Core daemon (`src/homeassistant/`, `src/device/`, `src/integration/`, `src/automation/`) acts as the single source of truth, security gatekeeper, and central brain. All business logic, automation rule evaluations, cyber-physical safety guards, encrypted token storage, audit logs, and frontend APIs execute natively inside the Guardian core.
 3. **Supported Vendor Ecosystems**: Unifies **Google Nest** (cloud SDM API) and **TP-Link Kasa** (local subnet broadcast & cloud sync) alongside local RF/LAN devices into a single normalized entity catalog.
 4. **Local Hardware Hub & Dongle Management**: Discovers and bridges local physical hubs (Philips Hue, Hubitat Elevation, Home Assistant Core) and low-power RF USB dongles (Zigbee 3.0, Z-Wave Plus, BLE) directly connected to Guardian USB expansion ports.
-5. **Zero-Trust Credential Security**: External OAuth tokens and device credentials are encrypted at rest using AES-256-GCM ([src/integration/crypto.rs](file:///home/hp/SGX/src/integration/crypto.rs)), with background token refresh workers preventing unannounced service drops.
+5. **Zero-Trust Credential Security**: External OAuth tokens and device credentials are encrypted at rest using AES-256-GCM (`src/integration/crypto.rs`), with background token refresh workers preventing unannounced service drops.
 6. **Cyber-Physical Automation Engine**: Links network cyber defenses directly to physical facility actuators. High-severity intrusion alerts from Suricata IDS or CRL revocations automatically trigger physical smart lock engagements, security lighting illuminations, and siren activations without human latency.
 
 ---
 
 ## 21.2 Smart Home Vendor Integration Layer (Google Nest & TP-Link Kasa)
 
-The Guardian platform provides direct, first-party vendor integration adapters strictly for **Google Nest** and **TP-Link Kasa** ([src/integration/provider.rs](file:///home/hp/SGX/src/integration/provider.rs)):
+The Guardian platform provides direct, first-party vendor integration adapters strictly for **Google Nest** and **TP-Link Kasa** (`src/integration/provider.rs`):
 
 ### 21.2.1 Google Nest Integration (SDM API, GCP OAuth 2.0 Web Client, Project ID, Climate & Camera Control)
 
 Google Nest smart thermostats (Nest Learning Thermostat, Nest Thermostat E) and smart cameras are integrated via Google Smart Device Management (SDM) API and GCP OAuth 2.0:
 - **GCP Project & OAuth Configuration**: Configured using Google Cloud Platform (GCP) OAuth 2.0 Web Client credentials and a Device Access Console Project ID (`SGX_NEST_PROJECT_ID`, `SGX_NEST_CLIENT_ID`, `SGX_NEST_CLIENT_SECRET`).
-- **OAuth Authorization Flow ([src/nest/ha_config_flow.rs](file:///home/hp/SGX/src/nest/ha_config_flow.rs))**: Generates an authenticated consent URL (`GET /api/v1/ha/integrations/google_nest/oauth/auth_url`) and captures the authorization code via callback (`GET /api/v1/ha/integrations/google_nest/oauth/callback`) to exchange for initial access and refresh tokens.
-- **Climate Control Engine ([src/nest/climate.rs](file:///home/hp/SGX/src/nest/climate.rs))**: Normalizes HVAC modes (`heat`, `cool`, `heat_cool`, `off`, `eco`), manages temperature setpoints with temperature unit conversions (°C vs °F), and reads ambient temperature and relative humidity telemetry.
-- **Automatic Token Lifecycle ([src/nest/refresh.rs](file:///home/hp/SGX/src/nest/refresh.rs))**: Handles OAuth access token expiration by dispatching background refresh requests against Google OAuth endpoints before the 3,600-second TTL expires.
+- **OAuth Authorization Flow (`src/nest/ha_config_flow.rs`)**: Generates an authenticated consent URL (`GET /api/v1/ha/integrations/google_nest/oauth/auth_url`) and captures the authorization code via callback (`GET /api/v1/ha/integrations/google_nest/oauth/callback`) to exchange for initial access and refresh tokens.
+- **Climate Control Engine (`src/nest/climate.rs`)**: Normalizes HVAC modes (`heat`, `cool`, `heat_cool`, `off`, `eco`), manages temperature setpoints with temperature unit conversions (°C vs °F), and reads ambient temperature and relative humidity telemetry.
+- **Automatic Token Lifecycle (`src/nest/refresh.rs`)**: Handles OAuth access token expiration by dispatching background refresh requests against Google OAuth endpoints before the 3,600-second TTL expires.
 
 ### 21.2.2 TP-Link Kasa Integration (Local UDP/TCP Broadcast Sub-Millisecond Control & Cloud Credential Storage)
 
 TP-Link Kasa smart plugs (HS100, KP115, EP25), wall switches, and multi-plug power strips operate via direct local network socket communication:
-- **Local Control Priority**: Unlike cloud-tethered platforms, Kasa devices communicate over the local LAN using XOR-encrypted UDP broadcast discovery (port 9999) and direct TCP command streams ([src/kasa/ha_config_flow.rs](file:///home/hp/SGX/src/kasa/ha_config_flow.rs)).
+- **Local Control Priority**: Unlike cloud-tethered platforms, Kasa devices communicate over the local LAN using XOR-encrypted UDP broadcast discovery (port 9999) and direct TCP command streams (`src/kasa/ha_config_flow.rs`).
 - **Sub-Millisecond Actuation**: Eliminates internet round-trip latency. Commands to toggle power relays execute in under 15 milliseconds directly across the local subnet.
-- **Dual-Mode Authentication ([src/kasa/credentials.rs](file:///home/hp/SGX/src/kasa/credentials.rs))**: Supports both unauthenticated local LAN mode (`mode: "local"`) and authenticated cloud-synced mode (`mode: "cloud"`) using TP-Link ID credentials stored securely at rest.
+- **Dual-Mode Authentication (`src/kasa/credentials.rs`)**: Supports both unauthenticated local LAN mode (`mode: "local"`) and authenticated cloud-synced mode (`mode: "cloud"`) using TP-Link ID credentials stored securely at rest.
 - **Energy Telemetry**: Captures real-time voltage (V), current (mA), instantaneous power (W), and cumulative energy consumption (kWh) on hardware models equipped with energy monitoring.
 
 ---
 
 ## 21.3 Local Hardware Hub & USB Dongle Management
 
-The Guardian appliance acts as an overarching hardware coordinator for physical smart home hubs and USB radio dongles ([frontend/docs/flows/smart-home-integration.md](file:///home/hp/SGX/frontend/docs/flows/smart-home-integration.md)):
+The Guardian appliance acts as an overarching hardware coordinator for physical smart home hubs and USB radio dongles (`frontend/docs/flows/smart-home-integration.md`):
 
 ### 21.3.1 Local LAN Hub Discovery & Control
 
@@ -6515,13 +6536,13 @@ The hub coordination subsystem exposes lifecycle control APIs:
 
 ## 21.4 Smart Home Device Registry, Capability Derivation & Command Dispatch
 
-All smart home devices, whether Google Nest, TP-Link Kasa, or local hub/dongle devices, are normalized into a unified schema ([src/device/](file:///home/hp/SGX/src/device/)).
+All smart home devices, whether Google Nest, TP-Link Kasa, or local hub/dongle devices, are normalized into a unified schema (`src/device/`).
 
 ### 21.4.1 Device Registry (`DeviceRegistry`, `devices.json`, `flock` File Locking)
 
-The device registry ([src/device/registry.rs](file:///home/hp/SGX/src/device/registry.rs)) maintains in-memory device state backed by persistent JSON storage on flash:
+The device registry (`src/device/registry.rs`) maintains in-memory device state backed by persistent JSON storage on flash:
 - **Unique Identifier (`id`)**: Every device is assigned a Guardian device ID formatted as `dev_<uuid-hex>` (e.g. `dev_3806a26d469d491e886b9408236c6a84`), completely decoupling Guardian entities from brittle upstream vendor naming.
-- **Device Entity Record (`Device`)** ([src/device/state.rs](file:///home/hp/SGX/src/device/state.rs)):
+- **Device Entity Record (`Device`)** (`src/device/state.rs`):
   - `id`: Internal unique device ID.
   - `ha_entity_id`: Upstream Home Assistant entity pointer (e.g. `climate.living_room_thermostat`, `switch.kasa_plug_1`).
   - `vendor`: Normalized vendor identifier (`"google_nest"`, `"tp_link"`, or `"Unknown"`).
@@ -6532,11 +6553,11 @@ The device registry ([src/device/registry.rs](file:///home/hp/SGX/src/device/reg
   - `health_status`: Connection health enum (`Online`, `Offline`, `BatteryLow`, `AuthenticationError`, `IntegrationError`).
   - `last_seen`: RFC3339 timestamp of the most recent telemetry heartbeat.
   - `attributes`: Verbatim capture of upstream device state attributes (hvac modes, brightness, supported features).
-- **Concurrency & Atomic Storage**: Persisted under `/var/lib/sgx-guardian/devices.json` via `SecureFileStore` ([src/storage/file_lock.rs](file:///home/hp/SGX/src/storage/file_lock.rs)) using POSIX `flock` advisory locks and atomic file replacement to prevent corruption during unexpected power drops.
+- **Concurrency & Atomic Storage**: Persisted under `/var/lib/sgx-guardian/devices.json` via `SecureFileStore` (`src/storage/file_lock.rs`) using POSIX `flock` advisory locks and atomic file replacement to prevent corruption during unexpected power drops.
 
 ### 21.4.2 Dynamic Capability Derivation (`CommandParamSpec`, `derive_capabilities`)
 
-To prevent sending invalid commands to actuators (such as requesting cooling mode on a heating-only furnace or adjusting color temp on a non-RGB smart plug), Guardian dynamically derives exact hardware capabilities directly from entity attributes ([src/device/capabilities.rs](file:///home/hp/SGX/src/device/capabilities.rs)):
+To prevent sending invalid commands to actuators (such as requesting cooling mode on a heating-only furnace or adjusting color temp on a non-RGB smart plug), Guardian dynamically derives exact hardware capabilities directly from entity attributes (`src/device/capabilities.rs`):
 - **Feature Bitmask Decoding**: Parses standard Home Assistant integer bitmasks (`supported_features`):
   - Climate Features (`climate_features`): `TARGET_TEMPERATURE (1)`, `TARGET_TEMPERATURE_RANGE (2)`, `TARGET_HUMIDITY (4)`, `FAN_MODE (8)`, `PRESET_MODE (16)`, `SWING_MODE (32)`, `TURN_OFF (128)`, `TURN_ON (256)`.
   - Light Features (`light_features`): `EFFECT (4)`, `FLASH (8)`, `TRANSITION (32)`.
@@ -6550,20 +6571,20 @@ To prevent sending invalid commands to actuators (such as requesting cooling mod
 
 When an operator or automation executes a device command (`POST /api/v1/ha/devices/{id}/command`):
 1. **Capability Validation**: Validates that the requested `command` exists within the device's derived capabilities and that supplied arguments strictly adhere to `CommandParamSpec` bounds.
-2. **Rate Limiting**: Enforces a sliding-window rate limit of 10 commands per minute per device ([src/api/auth/rate_limiter.rs](file:///home/hp/SGX/src/api/auth/rate_limiter.rs)), preventing motor burnout on smart blinds, contactor wear on relays, or denial-of-service on battery devices.
+2. **Rate Limiting**: Enforces a sliding-window rate limit of 10 commands per minute per device (`src/api/auth/rate_limiter.rs`), preventing motor burnout on smart blinds, contactor wear on relays, or denial-of-service on battery devices.
 3. **No-Op Rejection**: If the requested command targets the device's current state (e.g. sending `turn_on` to a switch that is already `"on"`), the request is rejected immediately with HTTP 400 to conserve radio bandwidth and power.
-4. **Command Tracking ID**: Generates a unique tracking token `cmd_<uuid>` ([src/device/command_tracker.rs](file:///home/hp/SGX/src/device/command_tracker.rs)) and dispatches the service call asynchronously to Home Assistant with a 30-second timeout window.
+4. **Command Tracking ID**: Generates a unique tracking token `cmd_<uuid>` (`src/device/command_tracker.rs`) and dispatches the service call asynchronously to Home Assistant with a 30-second timeout window.
 5. **State Acknowledgment**: When Home Assistant confirms execution over WebSocket, the tracker completes the command record and updates the in-memory state cache.
 
 ---
 
 ## 21.5 Real-Time Telemetry Synchronization & Device Health Matrix
 
-Guardian maintains sub-second situational awareness across all connected smart home devices ([src/homeassistant/](file:///home/hp/SGX/src/homeassistant/), [src/telemetry/](file:///home/hp/SGX/src/telemetry/)).
+Guardian maintains sub-second situational awareness across all connected smart home devices (`src/homeassistant/`, `src/telemetry/`).
 
 ### 21.5.1 Sub-Second WebSocket Streaming (`WSS /api/v1/ha/ws`, `EventBus`)
 
-The Guardian daemon establishes a persistent, self-healing WebSocket connection to Home Assistant ([src/homeassistant/websocket.rs](file:///home/hp/SGX/src/homeassistant/websocket.rs)):
+The Guardian daemon establishes a persistent, self-healing WebSocket connection to Home Assistant (`src/homeassistant/websocket.rs`):
 - **Subscription Handshake**: Authenticates using the long-lived `HA_TOKEN` and issues an `event_subscription` request for `state_changed` events.
 - **Event Dispatch Engine (`EventBus`)**: Decodes incoming JSON frames into strongly typed `HaEvent::StateChanged` variants and broadcasts them across a bounded asynchronous multi-producer multi-consumer (MPSC) channel.
 - **Downstream WebSocket Broadcast**: Streams real-time updates to connected operator web sessions at `GET /api/v1/ha/ws` across isolated topic channels:
@@ -6576,7 +6597,7 @@ The Guardian daemon establishes a persistent, self-healing WebSocket connection 
 
 Device health is classified continuously based on telemetry signals and connection states:
 - **`Online`**: Device is actively reporting valid states and responding to commands within acceptable latency thresholds.
-- **`Offline`**: Device has transitioned to state `"unavailable"` or has failed to deliver a telemetry heartbeat within 300 seconds. Automatically triggers a notification alert ([src/device/manager.rs](file:///home/hp/SGX/src/device/manager.rs)).
+- **`Offline`**: Device has transitioned to state `"unavailable"` or has failed to deliver a telemetry heartbeat within 300 seconds. Automatically triggers a notification alert (`src/device/manager.rs`).
 - **`BatteryLow`**: Battery-operated sensors or door locks reporting remaining charge under 20%.
 - **`AuthenticationError`**: Upstream cloud provider rejected credentials or OAuth refresh token has expired.
 - **`IntegrationError`**: Local driver or network bridge failure preventing communication with the hardware.
@@ -6592,19 +6613,19 @@ To prevent flash memory exhaustion while maintaining high-fidelity telemetry gra
 
 ## 21.6 Zero-Trust Credential Security & Background Token Refresh Engine
 
-Authentication tokens for third-party cloud platforms represent high-value targets. Guardian enforces strict hardware and cryptographic defenses ([src/integration/](file:///home/hp/SGX/src/integration/)):
+Authentication tokens for third-party cloud platforms represent high-value targets. Guardian enforces strict hardware and cryptographic defenses (`src/integration/`):
 
 ### 21.6.1 AES-256-GCM Encrypted Token Store (`integrations.json`, `crypto.rs`)
 
-Credential persistence is governed by `IntegrationManager` ([src/integration/manager.rs](file:///home/hp/SGX/src/integration/manager.rs)):
-- **Encryption at Rest ([src/integration/crypto.rs](file:///home/hp/SGX/src/integration/crypto.rs))**: All OAuth access tokens, refresh tokens, client secrets, and device passwords are encrypted using authenticated `AES-256-GCM`.
+Credential persistence is governed by `IntegrationManager` (`src/integration/manager.rs`):
+- **Encryption at Rest (`src/integration/crypto.rs`)**: All OAuth access tokens, refresh tokens, client secrets, and device passwords are encrypted using authenticated `AES-256-GCM`.
 - **Silicon-Derived Key Encryption Key**: The master key for decrypting credentials is derived from the hardware Secure Element (NXP SE050) and machine serial number, ensuring that credentials cannot be decrypted if the physical flash drive is removed from the Guardian chassis.
 - **Atomic Persistence**: Stored under `/var/lib/sgx-guardian/integrations.json` with POSIX `0o600` file permissions.
 
 ### 21.6.2 `TokenRefreshWorker`: 30-Minute Proactive Expiration Sweep
 
 To prevent sudden automation failures caused by expired OAuth access tokens:
-- **Background Sweeper ([src/integration/refresh_worker.rs](file:///home/hp/SGX/src/integration/refresh_worker.rs))**: A background task executes every 30 minutes (`tokio::time::interval(30 * 60)`).
+- **Background Sweeper (`src/integration/refresh_worker.rs`)**: A background task executes every 30 minutes (`tokio::time::interval(30 * 60)`).
 - **Proactive Refresh Margin**: Inspects `expires_at` timestamps on all active OAuth credentials. If a token is within 60 minutes of expiration, the worker proactively invokes the vendor's token endpoint to mint a new access token.
 - **Fail-Closed Isolation**: If a vendor refresh request fails (e.g. due to revoked upstream permissions or password change), the integration transitions immediately to `IntegrationStatus::Expired` or `IntegrationStatus::Error`, generating a High-severity security notification to the administrator while preserving existing device states in cache.
 
@@ -6612,17 +6633,17 @@ To prevent sudden automation failures caused by expired OAuth access tokens:
 
 ## 21.7 Event-Driven Smart Home Automation Rules Engine
 
-The Guardian automation engine ([src/automation/](file:///home/hp/SGX/src/automation/)) executes complex, multi-device rules entirely at the local edge without cloud connectivity:
+The Guardian automation engine (`src/automation/`) executes complex, multi-device rules entirely at the local edge without cloud connectivity:
 
 ### 21.7.1 Automation Schema: Triggers, Conditions & Actions
 
-Automation rules are modeled in [src/automation/schema.rs](file:///home/hp/SGX/src/automation/schema.rs):
+Automation rules are modeled in `src/automation/schema.rs`:
 - **Rule Triggers (`RuleTrigger`)**:
   - `StateChanged { entity_id, to_state }`: Evaluates when a smart device transitions to a specific state (e.g. motion sensor turns `"on"`, door contact opens).
   - Time & Schedule: Evaluates at specified chronological intervals or daily times.
 - **Rule Conditions (`RuleCondition`)**:
   - `State { entity_id, operator, value }`: Compares current entity state (`"equals"`, `"not_equals"`).
-  - `Presence { operator, value }`: Checks facility occupancy state (`"home"`, `"nobody_home"`) managed by `PresenceTracker` ([src/automation/presence.rs](file:///home/hp/SGX/src/automation/presence.rs)).
+  - `Presence { operator, value }`: Checks facility occupancy state (`"home"`, `"nobody_home"`) managed by `PresenceTracker` (`src/automation/presence.rs`).
 - **Rule Actions (`RuleAction`)**:
   - `Command { entity_id, domain, command, service_data, on_failure }`: Dispatches an actuation command to a target smart device.
   - `Notification { message, severity, on_failure }`: Emits an operator alert across WebSocket and notification logs.
@@ -6640,14 +6661,14 @@ Guardian unifies cyber security alerts with physical smart home controls:
   - Smart Deadbolts: Immediate lock actuation across exterior perimeter doors.
   - Siren & Relays: Energizes high-output alarm strobes and isolates network switch power via Kasa smart plugs.
   - Climate Lockdown: Sets HVAC systems to fan shutoff to prevent aerosolized toxic dispersal in industrial facilities.
-- **Geofence Boundary Security**: When authorized operator mobile devices exit the facility geofence zone ([src/geofence/](file:///home/hp/SGX/src/geofence/)), Guardian transitions `PresenceTracker` to `"nobody_home"`, engaging security alarms, and setting Nest thermostats to energy-saving eco mode.
+- **Geofence Boundary Security**: When authorized operator mobile devices exit the facility geofence zone (`src/geofence/`), Guardian transitions `PresenceTracker` to `"nobody_home"`, engaging security alarms, and setting Nest thermostats to energy-saving eco mode.
 
 ### 21.7.3 Priority-Based Conflict Resolution & Durable Timers
 
 To resolve competing automations safely:
-- **Priority Ranking (`priority: i32`)**: Every rule declares a priority (default 100). When multiple rules trigger simultaneously and target the same device with conflicting commands (e.g. Rule A demands `turn_on` while Rule B demands `turn_off`), `ConflictResolver` ([src/automation/conflict.rs](file:///home/hp/SGX/src/automation/conflict.rs)) grants precedence to the higher-priority rule.
+- **Priority Ranking (`priority: i32`)**: Every rule declares a priority (default 100). When multiple rules trigger simultaneously and target the same device with conflicting commands (e.g. Rule A demands `turn_on` while Rule B demands `turn_off`), `ConflictResolver` (`src/automation/conflict.rs`) grants precedence to the higher-priority rule.
 - **Equal-Priority Conflict Alerts**: If rules with identical priority conflict, the engine maintains device state and dispatches an immediate `AutomationConflict` alert to the administrator.
-- **Durable Delayed Actions (`PendingActionStore`)**: Pending delayed actions ([src/automation/timer_store.rs](file:///home/hp/SGX/src/automation/timer_store.rs)) are serialized atomically to `/var/lib/sgx-guardian/pending_actions.json`. If the appliance is rebooted or loses power mid-delay, the engine reloads pending timers on boot and resumes countdowns accurately.
+- **Durable Delayed Actions (`PendingActionStore`)**: Pending delayed actions (`src/automation/timer_store.rs`) are serialized atomically to `/var/lib/sgx-guardian/pending_actions.json`. If the appliance is rebooted or loses power mid-delay, the engine reloads pending timers on boot and resumes countdowns accurately.
 
 ---
 
@@ -6696,7 +6717,7 @@ The Smart Home subsystem exposes an authenticated REST and WebSocket API integra
 
 ### 21.8.4 React UI Operator Console Experience
 
-The web console exposes a complete operational management suite ([frontend/src/app/screens/devices/DV11SmartHome.tsx](file:///home/hp/SGX/frontend/src/app/screens/devices/DV11SmartHome.tsx)):
+The web console exposes a complete operational management suite (`frontend/src/app/screens/devices/DV11SmartHome.tsx`):
 - **Devices Tab**: Card grid displaying real-time smart devices, operational status pills (`Online`, `Offline`), temperature readings with dynamic unit formatting, climate HVAC controls, lighting brightness sliders, and toggle switches.
 - **Hubs Tab**: Hardware hub controller with service start/stop buttons, discovery triggers, and real-time activity event log showing timestamped network scan results.
 - **Dongles Tab**: Physical USB dongle manager reporting connected Zigbee and Z-Wave transceivers, USB device nodes, and radio operating states.
@@ -6712,16 +6733,16 @@ The following defense matrix summarizes the security protections and fault-toler
 
 | Defense ID | Threat / Failure Mode | Architectural Mitigation | Code Enforcement | Security Guarantee |
 | :--- | :--- | :--- | :--- | :--- |
-| **DEF-SMH-01** | Cloud Vendor Surveillance & Eavesdropping | Local Home Assistant container proxying all LAN devices; zero cloud routing for local packets. | [manager.rs](file:///home/hp/SGX/src/device/manager.rs), [ha_config_flow.rs](file:///home/hp/SGX/src/kasa/ha_config_flow.rs) | Local smart home traffic never exits the appliance to commercial cloud servers. |
-| **DEF-SMH-02** | Cloud Credential Theft & Disk Forensics | AES-256-GCM envelope encryption for all OAuth tokens and secrets at rest in `integrations.json`. | [crypto.rs](file:///home/hp/SGX/src/integration/crypto.rs), [manager.rs](file:///home/hp/SGX/src/integration/manager.rs) | Stolen flash memory chips cannot decrypt third-party cloud API tokens. |
-| **DEF-SMH-03** | Token Expiration & Unannounced Outages | `TokenRefreshWorker` executes sweeps every 30 min, refreshing tokens 60 min before expiry. | [refresh_worker.rs](file:///home/hp/SGX/src/integration/refresh_worker.rs) | Prevents cloud disconnects and maintains uninterrupted automation execution. |
-| **DEF-SMH-04** | Actuator Flooding & Relay Burnout | 10 commands per minute sliding-window rate limiter per device and no-op command rejection. | [rate_limiter.rs](file:///home/hp/SGX/src/api/auth/rate_limiter.rs), [command_auth.rs](file:///home/hp/SGX/src/api/auth/command_auth.rs) | Protects physical smart relays, blinds, and motors from exhaustion and wear attacks. |
-| **DEF-SMH-05** | Conflicting Automation Race Conditions | Deterministic priority ranking (`priority: i32`) with `ConflictResolver` and conflict alert logs. | [conflict.rs](file:///home/hp/SGX/src/automation/conflict.rs), [engine.rs](file:///home/hp/SGX/src/automation/engine.rs) | Competing rules resolve deterministically; equal conflicts alert administrators. |
-| **DEF-SMH-06** | Power Drop During Delayed Automations | Atomic durable persistence of active timers in `pending_actions.json` (`PendingActionStore`). | [timer_store.rs](file:///home/hp/SGX/src/automation/timer_store.rs) | Multi-step automations resume countdowns accurately across system reboots. |
-| **DEF-SMH-07** | Invalid Actuator Parameter Injection | Schema and parameter bounds derived dynamically from hardware bitmasks (`capabilities.rs`). | [capabilities.rs](file:///home/hp/SGX/src/device/capabilities.rs), [command_auth.rs](file:///home/hp/SGX/src/api/auth/command_auth.rs) | Actuators cannot be commanded beyond physical operational specifications. |
-| **DEF-SMH-08** | Flash Storage Exhaustion via Telemetry | 60-second sensor sampling limit, 72-hour rolling retention, and automated 6-hour pruning daemon. | [ha_telemetry.rs](file:///home/hp/SGX/src/api/handlers/ha_telemetry.rs) | Prevents telemetry log saturation on embedded flash memory. |
-| **DEF-SMH-09** | Unauthorized LAN Hub Spoofing | Session JWT and DID signature verification required on all hub and device mutation endpoints. | [middleware.rs](file:///home/hp/SGX/src/api/auth/middleware.rs) | Rogue network actors cannot execute unauthorized actuator commands or add fake hubs. |
-| **DEF-SMH-10** | Physical Security Breach During Cyber Attack | Direct cyber-physical security triggers linking Suricata High alerts to physical smart deadbolts. | [rules/model.rs](file:///home/hp/SGX/src/rules/model.rs), [engine.rs](file:///home/hp/SGX/src/automation/engine.rs) | Physical premises lock down automatically during severe cyber security intrusions. |
+| **DEF-SMH-01** | Cloud Vendor Surveillance & Eavesdropping | Local Home Assistant container proxying all LAN devices; zero cloud routing for local packets. | `src/device/manager.rs`, `src/kasa/ha_config_flow.rs` | Local smart home traffic never exits the appliance to commercial cloud servers. |
+| **DEF-SMH-02** | Cloud Credential Theft & Disk Forensics | AES-256-GCM envelope encryption for all OAuth tokens and secrets at rest in `integrations.json`. | `src/integration/crypto.rs`, `src/integration/manager.rs` | Stolen flash memory chips cannot decrypt third-party cloud API tokens. |
+| **DEF-SMH-03** | Token Expiration & Unannounced Outages | `TokenRefreshWorker` executes sweeps every 30 min, refreshing tokens 60 min before expiry. | `src/integration/refresh_worker.rs` | Prevents cloud disconnects and maintains uninterrupted automation execution. |
+| **DEF-SMH-04** | Actuator Flooding & Relay Burnout | 10 commands per minute sliding-window rate limiter per device and no-op command rejection. | `src/api/auth/rate_limiter.rs`, `src/api/auth/command_auth.rs` | Protects physical smart relays, blinds, and motors from exhaustion and wear attacks. |
+| **DEF-SMH-05** | Conflicting Automation Race Conditions | Deterministic priority ranking (`priority: i32`) with `ConflictResolver` and conflict alert logs. | `src/automation/conflict.rs`, `src/automation/engine.rs` | Competing rules resolve deterministically; equal conflicts alert administrators. |
+| **DEF-SMH-06** | Power Drop During Delayed Automations | Atomic durable persistence of active timers in `pending_actions.json` (`PendingActionStore`). | `src/automation/timer_store.rs` | Multi-step automations resume countdowns accurately across system reboots. |
+| **DEF-SMH-07** | Invalid Actuator Parameter Injection | Schema and parameter bounds derived dynamically from hardware bitmasks (`capabilities.rs`). | `src/device/capabilities.rs`, `src/api/auth/command_auth.rs` | Actuators cannot be commanded beyond physical operational specifications. |
+| **DEF-SMH-08** | Flash Storage Exhaustion via Telemetry | 60-second sensor sampling limit, 72-hour rolling retention, and automated 6-hour pruning daemon. | `src/api/handlers/ha_telemetry.rs` | Prevents telemetry log saturation on embedded flash memory. |
+| **DEF-SMH-09** | Unauthorized LAN Hub Spoofing | Session JWT and DID signature verification required on all hub and device mutation endpoints. | `src/api/auth/middleware.rs` | Rogue network actors cannot execute unauthorized actuator commands or add fake hubs. |
+| **DEF-SMH-10** | Physical Security Breach During Cyber Attack | Direct cyber-physical security triggers linking Suricata High alerts to physical smart deadbolts. | `src/rules/model.rs`, `src/automation/engine.rs` | Physical premises lock down automatically during severe cyber security intrusions. |
 
 ---
 
@@ -6731,16 +6752,16 @@ The Smart Home subsystem is verified through the dedicated **SMH-Series** valida
 
 | Test ID | Test Category & Name | Target Component | Verification Method | Expected Outcome & Pass Criteria |
 | :--- | :--- | :--- | :--- | :--- |
-| **SMH-001** | Device Discovery & Registry Persistence | [registry.rs](file:///home/hp/SGX/src/device/registry.rs), [manager.rs](file:///home/hp/SGX/src/device/manager.rs) | Trigger `sync_devices`; assert devices saved to `devices.json`; simulate reboot and reconcile. | All valid HA entities registered; persistent JSON matches memory cache; startup reconciliation updates states. |
-| **SMH-002** | Hardware Capability Derivation | [capabilities.rs](file:///home/hp/SGX/src/device/capabilities.rs) | Inject thermostat with `supported_features = 401`; inspect derived `CommandSpec` and bounds. | Correctly decodes target temperature and presets; suppresses unsupported fan/humidity commands. |
-| **SMH-003** | Command Rate Limiting & Tracking | [command_auth.rs](file:///home/hp/SGX/src/api/auth/command_auth.rs), [command_tracker.rs](file:///home/hp/SGX/src/device/command_tracker.rs) | Dispatch 12 rapid commands to single device within 10 seconds. | First 10 commands accepted with `cmd_...` ID; commands 11 and 12 rejected with HTTP 429 Too Many Requests. |
-| **SMH-004** | AES-256-GCM Credential Encryption | [crypto.rs](file:///home/hp/SGX/src/integration/crypto.rs), [store.rs](file:///home/hp/SGX/src/integration/store.rs) | Encrypt OAuth credentials; verify raw ciphertext on disk does not contain plaintext tokens; decrypt. | Ciphertext on disk is randomized; decryption recovers exact original OAuth tokens and secret. |
-| **SMH-005** | Proactive Token Refresh Worker | [refresh_worker.rs](file:///home/hp/SGX/src/integration/refresh_worker.rs) | Seed token expiring in 40 minutes; invoke `TokenRefreshWorker::sweep()`. | Worker detects impending expiration (<60m); mints new token; updates `expires_at` in encrypted store. |
-| **SMH-006** | Sub-Second WebSocket Event Ingestion | [websocket.rs](file:///home/hp/SGX/src/homeassistant/websocket.rs), [events.rs](file:///home/hp/SGX/src/homeassistant/events.rs) | Emit mock `state_changed` event over WebSocket mock server. | Event parsed in <10ms; device in registry updated; downstream WebSocket subscribers receive frame. |
-| **SMH-007** | Device Health Offline Alert Dispatch | [manager.rs](file:///home/hp/SGX/src/device/manager.rs), [notifications.rs](file:///home/hp/SGX/src/api/handlers/ha_notifications.rs) | Transition device state to `"unavailable"`. | Health status mutates to `DeviceHealth::Offline`; high-severity notification published to alerts log. |
-| **SMH-008** | Automation Trigger & Condition Evaluation | [engine.rs](file:///home/hp/SGX/src/automation/engine.rs), [schema.rs](file:///home/hp/SGX/src/automation/schema.rs) | Seed rule with `state_changed` trigger and `nobody_home` presence condition; emit trigger. | Condition evaluates truthy; target device command executed according to failure policy. |
-| **SMH-009** | Priority-Based Automation Conflict Resolution | [conflict.rs](file:///home/hp/SGX/src/automation/conflict.rs) | Trigger two conflicting rules (Rule A priority 200 `lock`, Rule B priority 100 `unlock`) simultaneously. | Higher-priority Rule A executes; Rule B command suppressed; conflict event logged. |
-| **SMH-010** | Multi-Step Delay Persistence Across Reboots | [timer_store.rs](file:///home/hp/SGX/src/automation/timer_store.rs) | Queue rule action with 300s delay; save to disk; simulate daemon crash; reload `PendingActionStore`. | Pending action correctly restored with remaining seconds; executes upon timer expiration. |
+| **SMH-001** | Device Discovery & Registry Persistence | `src/device/registry.rs`, `src/device/manager.rs` | Trigger `sync_devices`; assert devices saved to `devices.json`; simulate reboot and reconcile. | All valid HA entities registered; persistent JSON matches memory cache; startup reconciliation updates states. |
+| **SMH-002** | Hardware Capability Derivation | `src/device/capabilities.rs` | Inject thermostat with `supported_features = 401`; inspect derived `CommandSpec` and bounds. | Correctly decodes target temperature and presets; suppresses unsupported fan/humidity commands. |
+| **SMH-003** | Command Rate Limiting & Tracking | `src/api/auth/command_auth.rs`, `src/device/command_tracker.rs` | Dispatch 12 rapid commands to single device within 10 seconds. | First 10 commands accepted with `cmd_...` ID; commands 11 and 12 rejected with HTTP 429 Too Many Requests. |
+| **SMH-004** | AES-256-GCM Credential Encryption | `src/integration/crypto.rs`, `src/integration/store.rs` | Encrypt OAuth credentials; verify raw ciphertext on disk does not contain plaintext tokens; decrypt. | Ciphertext on disk is randomized; decryption recovers exact original OAuth tokens and secret. |
+| **SMH-005** | Proactive Token Refresh Worker | `src/integration/refresh_worker.rs` | Seed token expiring in 40 minutes; invoke `TokenRefreshWorker::sweep()`. | Worker detects impending expiration (<60m); mints new token; updates `expires_at` in encrypted store. |
+| **SMH-006** | Sub-Second WebSocket Event Ingestion | `src/homeassistant/websocket.rs`, `src/homeassistant/events.rs` | Emit mock `state_changed` event over WebSocket mock server. | Event parsed in <10ms; device in registry updated; downstream WebSocket subscribers receive frame. |
+| **SMH-007** | Device Health Offline Alert Dispatch | `src/device/manager.rs`, `src/api/handlers/ha_notifications.rs` | Transition device state to `"unavailable"`. | Health status mutates to `DeviceHealth::Offline`; high-severity notification published to alerts log. |
+| **SMH-008** | Automation Trigger & Condition Evaluation | `src/automation/engine.rs`, `src/automation/schema.rs` | Seed rule with `state_changed` trigger and `nobody_home` presence condition; emit trigger. | Condition evaluates truthy; target device command executed according to failure policy. |
+| **SMH-009** | Priority-Based Automation Conflict Resolution | `src/automation/conflict.rs` | Trigger two conflicting rules (Rule A priority 200 `lock`, Rule B priority 100 `unlock`) simultaneously. | Higher-priority Rule A executes; Rule B command suppressed; conflict event logged. |
+| **SMH-010** | Multi-Step Delay Persistence Across Reboots | `src/automation/timer_store.rs` | Queue rule action with 300s delay; save to disk; simulate daemon crash; reload `PendingActionStore`. | Pending action correctly restored with remaining seconds; executes upon timer expiration. |
 
 ---
 
@@ -6749,65 +6770,65 @@ The Smart Home subsystem is verified through the dedicated **SMH-Series** valida
 The following list identifies the core source code files implementing the Smart Home Integration and Automation subsystem:
 
 ### Home Assistant Adapter & Core Integration: `src/homeassistant/`
-- **[src/homeassistant/mod.rs](file:///home/hp/SGX/src/homeassistant/mod.rs)**: Subsystem re-exports and module declarations.
-- **[src/homeassistant/rest.rs](file:///home/hp/SGX/src/homeassistant/rest.rs)**: HTTP REST client communicating with Home Assistant Core on port 8123.
-- **[src/homeassistant/websocket.rs](file:///home/hp/SGX/src/homeassistant/websocket.rs)**: Full-duplex WebSocket connection, auto-reconnect logic, and subscription management.
-- **[src/homeassistant/events.rs](file:///home/hp/SGX/src/homeassistant/events.rs)**: Event bus definitions (`EventBus`, `HaEvent::StateChanged`) and event routing.
-- **[src/homeassistant/circuit_breaker.rs](file:///home/hp/SGX/src/homeassistant/circuit_breaker.rs)**: Circuit breaker pattern preventing cascade failures during HA restarts.
+- **`src/homeassistant/mod.rs`**: Subsystem re-exports and module declarations.
+- **`src/homeassistant/rest.rs`**: HTTP REST client communicating with Home Assistant Core on port 8123.
+- **`src/homeassistant/websocket.rs`**: Full-duplex WebSocket connection, auto-reconnect logic, and subscription management.
+- **`src/homeassistant/events.rs`**: Event bus definitions (`EventBus`, `HaEvent::StateChanged`) and event routing.
+- **`src/homeassistant/circuit_breaker.rs`**: Circuit breaker pattern preventing cascade failures during HA restarts.
 
 ### Device Registry & Capability Derivation: `src/device/`
-- **[src/device/mod.rs](file:///home/hp/SGX/src/device/mod.rs)**: Device subsystem re-exports.
-- **[src/device/state.rs](file:///home/hp/SGX/src/device/state.rs)**: Normalized `Device` model, `DeviceHealth` enum, and domain support filters (`is_supported_domain`).
-- **[src/device/registry.rs](file:///home/hp/SGX/src/device/registry.rs)**: In-memory device cache and atomic JSON disk persistence (`devices.json`).
-- **[src/device/capabilities.rs](file:///home/hp/SGX/src/device/capabilities.rs)**: Dynamic capability derivation from Home Assistant feature bitmasks (`climate_features`, `light_features`, `cover_features`, `lock_features`).
-- **[src/device/manager.rs](file:///home/hp/SGX/src/device/manager.rs)**: Device management hub, startup state reconciliation, temperature unit management, and offline notifications.
-- **[src/device/command_tracker.rs](file:///home/hp/SGX/src/device/command_tracker.rs)**: Command acknowledgment tracker managing unique `cmd_...` tokens.
+- **`src/device/mod.rs`**: Device subsystem re-exports.
+- **`src/device/state.rs`**: Normalized `Device` model, `DeviceHealth` enum, and domain support filters (`is_supported_domain`).
+- **`src/device/registry.rs`**: In-memory device cache and atomic JSON disk persistence (`devices.json`).
+- **`src/device/capabilities.rs`**: Dynamic capability derivation from Home Assistant feature bitmasks (`climate_features`, `light_features`, `cover_features`, `lock_features`).
+- **`src/device/manager.rs`**: Device management hub, startup state reconciliation, temperature unit management, and offline notifications.
+- **`src/device/command_tracker.rs`**: Command acknowledgment tracker managing unique `cmd_...` tokens.
 
 ### Vendor Integrations & Credential Security: `src/integration/`, `src/nest/`, `src/kasa/`
-- **[src/integration/mod.rs](file:///home/hp/SGX/src/integration/mod.rs)**: Integration subsystem re-exports.
-- **[src/integration/provider.rs](file:///home/hp/SGX/src/integration/provider.rs)**: Vendor enums (`VendorProvider::GoogleNest`, `VendorProvider::TpLinkKasa`), `IntegrationStatus`, and metadata models.
-- **[src/integration/crypto.rs](file:///home/hp/SGX/src/integration/crypto.rs)**: AES-256-GCM encryption and decryption primitives for credentials at rest.
-- **[src/integration/store.rs](file:///home/hp/SGX/src/integration/store.rs)**: Encrypted integration record persistence in `integrations.json`.
-- **[src/integration/manager.rs](file:///home/hp/SGX/src/integration/manager.rs)**: Integration lifecycle coordinator managing connect, disconnect, and status queries.
-- **[src/integration/refresh_worker.rs](file:///home/hp/SGX/src/integration/refresh_worker.rs)**: Background 30-minute worker proactively refreshing expiring OAuth tokens.
-- **[src/nest/ha_config_flow.rs](file:///home/hp/SGX/src/nest/ha_config_flow.rs)**: Google Nest SDM OAuth authorization URL generation and callback exchange.
-- **[src/nest/climate.rs](file:///home/hp/SGX/src/nest/climate.rs)**: Google Nest thermostat climate actuation and setpoint normalization.
-- **[src/nest/credentials.rs](file:///home/hp/SGX/src/nest/credentials.rs)**: Google Nest credential storage model.
-- **[src/nest/refresh.rs](file:///home/hp/SGX/src/nest/refresh.rs)**: Google Nest OAuth token refresh network call implementation.
-- **[src/kasa/credentials.rs](file:///home/hp/SGX/src/kasa/credentials.rs)**: TP-Link Kasa local and cloud credential models.
-- **[src/kasa/ha_config_flow.rs](file:///home/hp/SGX/src/kasa/ha_config_flow.rs)**: TP-Link Kasa configuration flow and local UDP/TCP discovery.
+- **`src/integration/mod.rs`**: Integration subsystem re-exports.
+- **`src/integration/provider.rs`**: Vendor enums (`VendorProvider::GoogleNest`, `VendorProvider::TpLinkKasa`), `IntegrationStatus`, and metadata models.
+- **`src/integration/crypto.rs`**: AES-256-GCM encryption and decryption primitives for credentials at rest.
+- **`src/integration/store.rs`**: Encrypted integration record persistence in `integrations.json`.
+- **`src/integration/manager.rs`**: Integration lifecycle coordinator managing connect, disconnect, and status queries.
+- **`src/integration/refresh_worker.rs`**: Background 30-minute worker proactively refreshing expiring OAuth tokens.
+- **`src/nest/ha_config_flow.rs`**: Google Nest SDM OAuth authorization URL generation and callback exchange.
+- **`src/nest/climate.rs`**: Google Nest thermostat climate actuation and setpoint normalization.
+- **`src/nest/credentials.rs`**: Google Nest credential storage model.
+- **`src/nest/refresh.rs`**: Google Nest OAuth token refresh network call implementation.
+- **`src/kasa/credentials.rs`**: TP-Link Kasa local and cloud credential models.
+- **`src/kasa/ha_config_flow.rs`**: TP-Link Kasa configuration flow and local UDP/TCP discovery.
 
 ### Automation Engine: `src/automation/`
-- **[src/automation/mod.rs](file:///home/hp/SGX/src/automation/mod.rs)**: Automation subsystem re-exports.
-- **[src/automation/schema.rs](file:///home/hp/SGX/src/automation/schema.rs)**: Automation rule models (`AutomationRule`, `RuleTrigger`, `RuleCondition`, `RuleAction`, `FailurePolicy`).
-- **[src/automation/engine.rs](file:///home/hp/SGX/src/automation/engine.rs)**: Real-time rule evaluation engine, event bus consumer, and action dispatcher.
-- **[src/automation/conflict.rs](file:///home/hp/SGX/src/automation/conflict.rs)**: Priority-based conflict resolution algorithm (`ConflictResolver`).
-- **[src/automation/presence.rs](file:///home/hp/SGX/src/automation/presence.rs)**: Facility occupancy presence tracker (`home` vs `nobody_home`).
-- **[src/automation/timer_store.rs](file:///home/hp/SGX/src/automation/timer_store.rs)**: Durable multi-step timer persistence (`pending_actions.json`).
+- **`src/automation/mod.rs`**: Automation subsystem re-exports.
+- **`src/automation/schema.rs`**: Automation rule models (`AutomationRule`, `RuleTrigger`, `RuleCondition`, `RuleAction`, `FailurePolicy`).
+- **`src/automation/engine.rs`**: Real-time rule evaluation engine, event bus consumer, and action dispatcher.
+- **`src/automation/conflict.rs`**: Priority-based conflict resolution algorithm (`ConflictResolver`).
+- **`src/automation/presence.rs`**: Facility occupancy presence tracker (`home` vs `nobody_home`).
+- **`src/automation/timer_store.rs`**: Durable multi-step timer persistence (`pending_actions.json`).
 
 ### REST API Handlers & Routing: `src/api/`
-- **[src/api/handlers/ha_devices.rs](file:///home/hp/SGX/src/api/handlers/ha_devices.rs)**: REST endpoints for device listing, state inspection, capability queries, commands, and sync.
-- **[src/api/handlers/ha_integrations.rs](file:///home/hp/SGX/src/api/handlers/ha_integrations.rs)**: REST endpoints for integration catalog, status checks, Nest OAuth, and connect/disconnect.
-- **[src/api/handlers/ha_automations.rs](file:///home/hp/SGX/src/api/handlers/ha_automations.rs)**: REST endpoints for automation rule CRUD and enable/disable controls.
-- **[src/api/handlers/ha_telemetry.rs](file:///home/hp/SGX/src/api/handlers/ha_telemetry.rs)**: REST endpoints for historical telemetry queries and aggregated device health.
-- **[src/api/handlers/ha_notifications.rs](file:///home/hp/SGX/src/api/handlers/ha_notifications.rs)**: REST endpoints for smart home alerts and mark-as-read updates.
-- **[src/api/handlers/ha_websocket.rs](file:///home/hp/SGX/src/api/handlers/ha_websocket.rs)**: Full-duplex WebSocket handler streaming events, telemetry, and notifications.
-- **[src/api/routes.rs](file:///home/hp/SGX/src/api/routes.rs)**: Route registration for `ha_api_router()`.
+- **`src/api/handlers/ha_devices.rs`**: REST endpoints for device listing, state inspection, capability queries, commands, and sync.
+- **`src/api/handlers/ha_integrations.rs`**: REST endpoints for integration catalog, status checks, Nest OAuth, and connect/disconnect.
+- **`src/api/handlers/ha_automations.rs`**: REST endpoints for automation rule CRUD and enable/disable controls.
+- **`src/api/handlers/ha_telemetry.rs`**: REST endpoints for historical telemetry queries and aggregated device health.
+- **`src/api/handlers/ha_notifications.rs`**: REST endpoints for smart home alerts and mark-as-read updates.
+- **`src/api/handlers/ha_websocket.rs`**: Full-duplex WebSocket handler streaming events, telemetry, and notifications.
+- **`src/api/routes.rs`**: Route registration for `ha_api_router()`.
 
 ### Frontend Components & Services: `frontend/`
-- **[frontend/src/app/services/smartHomeService.ts](file:///home/hp/SGX/frontend/src/app/services/smartHomeService.ts)**: TypeScript API client, WebSocket subscription coordinator (`openSmartHomeSocket`), and domain types.
-- **[frontend/src/app/screens/devices/DV11SmartHome.tsx](file:///home/hp/SGX/frontend/src/app/screens/devices/DV11SmartHome.tsx)**: Main smart home management console with Hubs, Dongles, Cloud Services, Automation Rules, Telemetry, and Notifications tabs.
+- **`frontend/src/app/services/smartHomeService.ts`**: TypeScript API client, WebSocket subscription coordinator (`openSmartHomeSocket`), and domain types.
+- **`frontend/src/app/screens/devices/DV11SmartHome.tsx`**: Main smart home management console with Hubs, Dongles, Cloud Services, Automation Rules, Telemetry, and Notifications tabs.
 
 ### Integration & Unit Test Suites: `tests/`
-- **[tests/device_manager_test.rs](file:///home/hp/SGX/tests/device_manager_test.rs)**: Test suite validating device discovery, registry synchronization, and vendor heuristics (`SMH-001`).
-- **[tests/cov_wave12_device_capability_command_auth_test.rs](file:///home/hp/SGX/tests/cov_wave12_device_capability_command_auth_test.rs)**: Tests for capability derivation, command validation, and rate limiting (`SMH-002`, `SMH-003`).
-- **[tests/integration_crypto_test.rs](file:///home/hp/SGX/tests/integration_crypto_test.rs)**: Unit test suite for AES-256-GCM credential encryption at rest (`SMH-004`).
-- **[tests/integration_manager_test.rs](file:///home/hp/SGX/tests/integration_manager_test.rs)**: Test suite for integration lifecycle, connect/disconnect, and status queries.
-- **[tests/integration_refresh_worker_test.rs](file:///home/hp/SGX/tests/integration_refresh_worker_test.rs)**: Tests for proactive 30-minute OAuth token refresh worker (`SMH-005`).
-- **[tests/cov_ha_websocket_test.rs](file:///home/hp/SGX/tests/cov_ha_websocket_test.rs)**: Test suite for Home Assistant WebSocket event ingestion and streaming (`SMH-006`).
-- **[tests/automation_engine_test.rs](file:///home/hp/SGX/tests/automation_engine_test.rs)**: Automation engine execution and trigger evaluation test suite (`SMH-008`).
-- **[tests/automation_conflict_test.rs](file:///home/hp/SGX/tests/automation_conflict_test.rs)**: Unit tests for priority-based rule conflict resolution (`SMH-009`).
-- **[tests/automation_timer_store_test.rs](file:///home/hp/SGX/tests/automation_timer_store_test.rs)**: Tests for durable delayed timer persistence and restart recovery (`SMH-010`).
+- **`tests/device_manager_test.rs`**: Test suite validating device discovery, registry synchronization, and vendor heuristics (`SMH-001`).
+- **`tests/cov_wave12_device_capability_command_auth_test.rs`**: Tests for capability derivation, command validation, and rate limiting (`SMH-002`, `SMH-003`).
+- **`tests/integration_crypto_test.rs`**: Unit test suite for AES-256-GCM credential encryption at rest (`SMH-004`).
+- **`tests/integration_manager_test.rs`**: Test suite for integration lifecycle, connect/disconnect, and status queries.
+- **`tests/integration_refresh_worker_test.rs`**: Tests for proactive 30-minute OAuth token refresh worker (`SMH-005`).
+- **`tests/cov_ha_websocket_test.rs`**: Test suite for Home Assistant WebSocket event ingestion and streaming (`SMH-006`).
+- **`tests/automation_engine_test.rs`**: Automation engine execution and trigger evaluation test suite (`SMH-008`).
+- **`tests/automation_conflict_test.rs`**: Unit tests for priority-based rule conflict resolution (`SMH-009`).
+- **`tests/automation_timer_store_test.rs`**: Tests for durable delayed timer persistence and restart recovery (`SMH-010`).
 
 ---
 
@@ -6815,14 +6836,14 @@ The following list identifies the core source code files implementing the Smart 
 
 ## 22.1 Executive Summary & Unified Network Topology Architecture
 
-In zero-trust, tactical edge networks, network visibility cannot rely on traditional centralized network management systems (NMS) or cloud-hosted telemetry dashboards. Edge installations—such as forward operating bases, industrial automation plants, air-gapped utility substations, and sovereign peer-to-peer Circles—operate over dynamic, encrypted mesh overlays ([Nebula](file:///home/hp/SGX/src/nebula/)) and dual-band 802.11s wireless backbones without continuous wide-area internet connectivity. In these environments, operators require immediate, sub-second situational awareness regarding physical appliance locations, encrypted peer links, relay paths, hardware-attested trust boundaries, and cyber-physical security incidents.
+In zero-trust, tactical edge networks, network visibility cannot rely on traditional centralized network management systems (NMS) or cloud-hosted telemetry dashboards. Edge installations—such as forward operating bases, industrial automation plants, air-gapped utility substations, and sovereign peer-to-peer Circles—operate over dynamic, encrypted mesh overlays (`src/nebula/`) and dual-band 802.11s wireless backbones without continuous wide-area internet connectivity. In these environments, operators require immediate, sub-second situational awareness regarding physical appliance locations, encrypted peer links, relay paths, hardware-attested trust boundaries, and cyber-physical security incidents.
 
 The SG-X Guardian **Live Network Topology & Mesh Map** subsystem delivers an end-to-end, multi-layered visual command and monitoring suite. Operating directly on the local appliance without third-party mapping dependencies, it unifies:
-1. **Multi-Scale Visualization Engines**: A dual-canvas presentation model comprising an **Enterprise Multi-Zone Topology Canvas** ([frontend/src/app/components/topology/EnterpriseTopology.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/EnterpriseTopology.tsx), rendered at `/home/topology` via [HM03NetworkTopology.tsx](file:///home/hp/SGX/frontend/src/app/screens/home/HM03NetworkTopology.tsx)) and an interactive, D3-powered **Circle DID Mesh Canvas** ([frontend/src/app/components/circle-topology/CircleLiveTopology.tsx](file:///home/hp/SGX/frontend/src/app/components/circle-topology/CircleLiveTopology.tsx), embedded within [NW01CirclesList.tsx](file:///home/hp/SGX/frontend/src/app/screens/network/NW01CirclesList.tsx)).
-2. **Dynamic Node & Link Mapping**: Ingests real-time peer rosters from `peerService` (`GET /api/v1/peers`), DID registries from `didService` (`GET /api/v1/did/documents`), relay node records from `relayService` (`GET /api/v1/relays`), local machine identity from `guardianService`, and cryptographic circle container snapshots ([src/circle/](file:///home/hp/SGX/src/circle/)).
-3. **Sovereign Geolocation & Mercator World Map Projection**: Converts geographic GPS fixes and ambient RF observations into scaled screen coordinates on a sovereign Mercator world map projection ([frontend/src/app/components/topology/lib/world-map.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/world-map.ts)), maintaining true physical-to-digital spatial alignment.
-4. **Geofence Zone Coordination & Autonomous Countermeasures**: Integrates directly with the Guardian geofence engine ([src/geofence/](file:///home/hp/SGX/src/geofence/), [src/api/handlers/geofence.rs](file:///home/hp/SGX/src/api/handlers/geofence.rs)), anchoring spatial perimeters to specific mesh nodes via `topology_node_ref` and dispatching automated lockdown actions upon perimeter violations.
-5. **Real-Time Event Logging & Cyber-Physical Threat Alerting**: Streams live network events, attestation state changes, and Suricata IDS intrusion alerts ([AL09LiveAttackTopology.tsx](file:///home/hp/SGX/frontend/src/app/screens/alerts/AL09LiveAttackTopology.tsx)) across rolling HUD log marquees with instant click-to-focus capabilities.
+1. **Multi-Scale Visualization Engines**: A dual-canvas presentation model comprising an **Enterprise Multi-Zone Topology Canvas** (`frontend/src/app/components/topology/EnterpriseTopology.tsx`, rendered at `/home/topology` via `frontend/src/app/screens/home/HM03NetworkTopology.tsx`) and an interactive, D3-powered **Circle DID Mesh Canvas** (`frontend/src/app/components/circle-topology/CircleLiveTopology.tsx`, embedded within `frontend/src/app/screens/network/NW01CirclesList.tsx`).
+2. **Dynamic Node & Link Mapping**: Ingests real-time peer rosters from `peerService` (`GET /api/v1/peers`), DID registries from `didService` (`GET /api/v1/did/documents`), relay node records from `relayService` (`GET /api/v1/relays`), local machine identity from `guardianService`, and cryptographic circle container snapshots (`src/circle/`).
+3. **Sovereign Geolocation & Mercator World Map Projection**: Converts geographic GPS fixes and ambient RF observations into scaled screen coordinates on a sovereign Mercator world map projection (`frontend/src/app/components/topology/lib/world-map.ts`), maintaining true physical-to-digital spatial alignment.
+4. **Geofence Zone Coordination & Autonomous Countermeasures**: Integrates directly with the Guardian geofence engine (`src/geofence/`, `src/api/handlers/geofence.rs`), anchoring spatial perimeters to specific mesh nodes via `topology_node_ref` and dispatching automated lockdown actions upon perimeter violations.
+5. **Real-Time Event Logging & Cyber-Physical Threat Alerting**: Streams live network events, attestation state changes, and Suricata IDS intrusion alerts (`frontend/src/app/screens/alerts/AL09LiveAttackTopology.tsx`) across rolling HUD log marquees with instant click-to-focus capabilities.
 6. **Hardware Telemetry & Cryptographic Trust Scoring**: Derives real-time trust scores (0–100) and threat severity indices from silicon hardware attestation (NXP SE050 / TPM), certificate lifecycles, and network performance telemetry.
 
 ---
@@ -6833,7 +6854,7 @@ The Guardian platform provides two complementary topology visualization engines 
 
 ### 22.2.1 Enterprise Multi-Zone Canvas (`EnterpriseTopology.tsx`, `TopologyScene.tsx`)
 
-The Enterprise Multi-Zone Canvas ([frontend/src/app/components/topology/EnterpriseTopology.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/EnterpriseTopology.tsx)) provides macro-level tactical monitoring across complex corporate and industrial facilities ([frontend/src/app/components/topology/lib/topology.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/topology.ts)):
+The Enterprise Multi-Zone Canvas (`frontend/src/app/components/topology/EnterpriseTopology.tsx`) provides macro-level tactical monitoring across complex corporate and industrial facilities (`frontend/src/app/components/topology/lib/topology.ts`):
 - **Four Canonical Circles of Trust**:
   - **Zone ALPHA (Industrial West)**: Teal perimeter (`#14B8A6`), housing 47 industrial automation assets including programmable logic controllers (PLCs), sensor meshes, HMI operator panels, and surveillance cameras.
   - **Zone BRAVO (IT Core)**: Purple perimeter (`#9333EA`), containing 31 IT infrastructure devices such as application servers, core switches, workstations, and historical data historians.
@@ -6851,24 +6872,24 @@ The Enterprise Multi-Zone Canvas ([frontend/src/app/components/topology/Enterpri
 
 ### 22.2.2 Circle DID Mesh Canvas (`CircleLiveTopology.tsx`, `useCircleTopology.ts`)
 
-The Circle Live Topology Canvas ([frontend/src/app/components/circle-topology/CircleLiveTopology.tsx](file:///home/hp/SGX/frontend/src/app/components/circle-topology/CircleLiveTopology.tsx)) visualizes encrypted peer relationships within sovereign DID Circles ([src/circle/](file:///home/hp/SGX/src/circle/)):
+The Circle Live Topology Canvas (`frontend/src/app/components/circle-topology/CircleLiveTopology.tsx`) visualizes encrypted peer relationships within sovereign DID Circles (`src/circle/`):
 - **Dual Presentation Modes**:
   - **Mesh Mode (`mode === "mesh"`)**: Radial force-directed graph powered by D3 (`d3-zoom`, `d3-selection`). Nodes revolve around the primary lighthouse anchor with dynamic spring physics, animated orbital rings, and SVG pulse vectors representing active encrypted packet streams.
-  - **Map Mode (`mode === "map"`)**: Direct spatial projection rendering mesh nodes and geofence perimeters over a vector-rendered Mercator world map ([frontend/src/app/components/topology/lib/world-map.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/world-map.ts)).
+  - **Map Mode (`mode === "map"`)**: Direct spatial projection rendering mesh nodes and geofence perimeters over a vector-rendered Mercator world map (`frontend/src/app/components/topology/lib/world-map.ts`).
 - **Circle Scope Filtering**:
   - **Global Roster (`ALL_CIRCLES_ID`)**: Visualizes all known mesh nodes across the entire local peer cache and Nebula overlay.
-  - **Scoped Circle Views**: Filters visible nodes strictly to the authorized members of a specific Circle container ([frontend/src/app/components/circle-topology/circleMembership.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/circleMembership.ts)).
+  - **Scoped Circle Views**: Filters visible nodes strictly to the authorized members of a specific Circle container (`frontend/src/app/components/circle-topology/circleMembership.ts`).
   - **Dynamic Link Re-synthesis**: Link building (`buildTopologyLinks`) executes as a pure function over the active filtered node subset, ensuring links never point to missing or out-of-scope anchor nodes.
 
 ---
 
 ## 22.3 Node & Link Mapping Engine (Roles, Presence, Attestation & Link Dynamics)
 
-The topology engine synthesizes multi-source network state into a unified data structure updated every 10 seconds (`POLL_MS = 10_000`) by `useCircleTopology` ([frontend/src/app/components/circle-topology/useCircleTopology.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/useCircleTopology.ts)):
+The topology engine synthesizes multi-source network state into a unified data structure updated every 10 seconds (`POLL_MS = 10_000`) by `useCircleTopology` (`frontend/src/app/components/circle-topology/useCircleTopology.ts`):
 
 ### 22.3.1 Normalized Node Data Model (`CircleTopologyNode`)
 
-Every entity rendered on the mesh map conforms to a normalized node contract ([frontend/src/app/components/circle-topology/types.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/types.ts)):
+Every entity rendered on the mesh map conforms to a normalized node contract (`frontend/src/app/components/circle-topology/types.ts`):
 - **Identity & Addressing**:
   - `id`: Normalized unique string identifier derived via `normalizeNodeId`.
   - `label`: Human-readable display label resolved via local contact names, DID document metadata, or appliance hostname.
@@ -6887,7 +6908,7 @@ Every entity rendered on the mesh map conforms to a normalized node contract ([f
 
 ### 22.3.2 Cryptographic Attestation Badges & Presence Classification
 
-Nodes continuously display verified presence and security attestation states ([frontend/src/app/components/circle-topology/palette.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/palette.ts)):
+Nodes continuously display verified presence and security attestation states (`frontend/src/app/components/circle-topology/palette.ts`):
 - **Presence Classification (`PresenceStatus`)**:
   - `online` (Green `#3AC569`): Node has delivered an authenticated heartbeat or telemetry sample within the last 60 seconds.
   - `stale` (Amber `#F4B640`): Heartbeat timestamp is between 60 and 300 seconds old.
@@ -6901,7 +6922,7 @@ Nodes continuously display verified presence and security attestation states ([f
 
 ### 22.3.3 Dynamic Link Synthesis & Visual Encoding (`buildTopologyLinks`)
 
-Network links are generated dynamically based on active routing tables and cryptographic relationships ([frontend/src/app/components/circle-topology/useCircleTopology.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/useCircleTopology.ts#L196-L220)):
+Network links are generated dynamically based on active routing tables and cryptographic relationships (`frontend/src/app/components/circle-topology/useCircleTopology.ts#L196-L220`):
 - **Link Types (`CircleTopologyLink`)**:
   - **`mesh`**: Direct peer-to-peer encrypted tunnel established across the Nebula overlay (`Noise_IK` curve25519 / ChaCha20-Poly1305). Rendered as solid lines with animated particle vectors indicating packet direction.
   - **`relay`**: Indirect path routed through an intermediate relay node when direct P2P hole-punching fails. Rendered as dashed amber vectors.
@@ -6919,15 +6940,15 @@ The topology subsystem provides full geospatial situational awareness, rendering
 
 ### 22.4.1 Resilient Multi-Tier Browser & Hardware Location Acquisition
 
-The frontend implements a resilient, three-stage fallback pipeline to acquire accurate geographic coordinates ([frontend/src/app/components/circle-topology/CircleLiveTopology.tsx](file:///home/hp/SGX/frontend/src/app/components/circle-topology/CircleLiveTopology.tsx#L59-L120)):
+The frontend implements a resilient, three-stage fallback pipeline to acquire accurate geographic coordinates (`frontend/src/app/components/circle-topology/CircleLiveTopology.tsx#L59-L120`):
 1. **Tier 1 (Fast Cached Fix)**: Requests browser position with low accuracy requirements (`enableHighAccuracy: false`, timeout: 2,000ms, maximum cache age: 300,000ms).
 2. **Tier 2 (Active GPS Fix)**: If Tier 1 times out, initiates an active geolocation request (`enableHighAccuracy: false`, timeout: 12,000ms, maximum cache age: 60,000ms).
 3. **Tier 3 (Continuous Watch Fallback)**: If active requests fail or stall, registers a temporary `watchPosition` observer with a 25,000ms hard ceiling, capturing the first valid position delivered by the operating system.
-4. **Permission Denial Handling**: Explicitly traps `error.code === 1` (`PERMISSION_DENIED`), gracefully falling back to appliance static configuration coordinates ([src/startup/config.rs](file:///home/hp/SGX/src/startup/config.rs)) without throwing unhandled exceptions.
+4. **Permission Denial Handling**: Explicitly traps `error.code === 1` (`PERMISSION_DENIED`), gracefully falling back to appliance static configuration coordinates (`src/startup/config.rs`) without throwing unhandled exceptions.
 
 ### 22.4.2 Mathematical Mercator Projection Engine (`projectLocation`, `projectLngLat`)
 
-Geographic coordinates (latitude, longitude) are mapped into SVG canvas pixels through a high-precision spherical Mercator projection ([frontend/src/app/components/circle-topology/CircleLiveTopology.tsx](file:///home/hp/SGX/frontend/src/app/components/circle-topology/CircleLiveTopology.tsx#L235-L246), [frontend/src/app/components/topology/lib/geospatial.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/geospatial.ts#L48-L57)):
+Geographic coordinates (latitude, longitude) are mapped into SVG canvas pixels through a high-precision spherical Mercator projection (`frontend/src/app/components/circle-topology/CircleLiveTopology.tsx#L235-L246`, `frontend/src/app/components/topology/lib/geospatial.ts#L48-L57`):
 - **Coordinate Normalization**:
   - Clamps latitude between -85.0° and +85.0° to prevent asymptotic infinite projection at poles.
   - Wraps longitude symmetrically into the standard `[-180.0°, +180.0°]` interval:
@@ -6937,7 +6958,7 @@ Geographic coordinates (latitude, longitude) are mapped into SVG canvas pixels t
   - `mercatorY = 0.5 - ln((1 + sinLat) / (1 - sinLat)) / (4 * π)`
   - `canvasX = ((wrappedLng + 180) / 360) * MAP_SIZE`
   - `canvasY = mercatorY * MAP_SIZE + MAP_Y`
-- **World Map Baseline**: Uses 64 KB of optimized SVG vector geometries ([frontend/src/app/components/topology/lib/world-map.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/world-map.ts)) rendering sovereign coastlines, international borders, 11 major oceanic labels, and 16 key country centroids without network traffic.
+- **World Map Baseline**: Uses 64 KB of optimized SVG vector geometries (`frontend/src/app/components/topology/lib/world-map.ts`) rendering sovereign coastlines, international borders, 11 major oceanic labels, and 16 key country centroids without network traffic.
 
 ### 22.4.3 Haversine Geodesic Radius Conversion (`radiusToPixels`, `radiusMetersToPixels`)
 
@@ -6956,37 +6977,37 @@ To render circular geofence perimeters accurately regardless of geographic latit
 
 ## 22.5 Geofence Zone Integration & Autonomous Countermeasures
 
-The live topology subsystem integrates natively with the Guardian backend Geofence Engine ([src/geofence/](file:///home/hp/SGX/src/geofence/)):
+The live topology subsystem integrates natively with the Guardian backend Geofence Engine (`src/geofence/`):
 
 ### 22.5.1 Backend Geofence Subsystem & Topology Node Binding
 
-The backend REST API ([src/api/handlers/geofence.rs](file:///home/hp/SGX/src/api/handlers/geofence.rs)) manages geofence boundaries with direct foreign-key bindings to topology nodes:
+The backend REST API (`src/api/handlers/geofence.rs`) manages geofence boundaries with direct foreign-key bindings to topology nodes:
 - **Zone Data Model (`GeofenceZone`)**:
   - `id`: Unique zone UUID (`zone_<uuid>`).
   - `name`: Human-readable zone designation (e.g. `Tactical Command Post Alpha`).
   - `topology_node_ref`: Explicit string reference binding this geofence boundary to a specific mesh node identifier or DID (`did:guardian:...`).
   - `kind`: Detection methodology:
     - `ZoneKind::Coordinate`: Spherical centroid (`center_lat`, `center_lng`) with a radial boundary (`radius_m`).
-    - `ZoneKind::RfSignature`: Physical perimeter defined by ambient Wi-Fi BSSIDs and Bluetooth LE beacon signal strengths ([src/geofence/model.rs](file:///home/hp/SGX/src/geofence/model.rs)).
+    - `ZoneKind::RfSignature`: Physical perimeter defined by ambient Wi-Fi BSSIDs and Bluetooth LE beacon signal strengths (`src/geofence/model.rs`).
   - `severity`: Zone criticality rating (`low`, `medium`, `high`, `critical`).
   - `on_entry` / `on_exit`: Boolean flags enabling automated transition hooks.
-- **Evaluation Mechanics ([src/geofence/eval.rs](file:///home/hp/SGX/src/geofence/eval.rs))**: Evaluates incoming device locations against active zones using the Haversine distance formula, applying temporal hysteresis (`SGX_GEOFENCE_HYSTERESIS`) to prevent boundary jitter when devices linger near zone edges.
+- **Evaluation Mechanics (`src/geofence/eval.rs`)**: Evaluates incoming device locations against active zones using the Haversine distance formula, applying temporal hysteresis (`SGX_GEOFENCE_HYSTERESIS`) to prevent boundary jitter when devices linger near zone edges.
 
 ### 22.5.2 In-Map Zone Management & Spatial Editing
 
-Operators manage spatial perimeters directly from the live map interface ([frontend/src/app/components/circle-topology/CircleLiveTopology.tsx](file:///home/hp/SGX/frontend/src/app/components/circle-topology/CircleLiveTopology.tsx#L204-L221)):
+Operators manage spatial perimeters directly from the live map interface (`frontend/src/app/components/circle-topology/CircleLiveTopology.tsx#L204-L221`):
 - **Interactive Zone Creation (`ZoneDialog`, `ZoneForm`)**: Clicking on any node or canvas coordinate opens the modal dialog pre-filled with active GPS coordinates and node anchors.
 - **Dynamic Radius & Color Assignment**: Zones are color-coded based on severity (`#18B5C8` teal for routine zones, `#F4B640` amber for elevated security, `#E14D4D` red for high-risk exclusion perimeters). Radii dynamically resize on the canvas as the operator adjusts the meter input.
 - **Persistence Pipeline**: Dispatches `POST /api/v1/geofence/zones` and `PUT /api/v1/geofence/zones/{id}` directly to the Guardian daemon, committing zone definitions atomically to `/var/lib/sgx-guardian/geofence/zones.json`.
 
 ### 22.5.3 Automated Countermeasures & Incident Response (`ZoneAutomation`)
 
-Perimeter transitions automatically execute deterministic policy actions ([src/geofence/actions/](file:///home/hp/SGX/src/geofence/actions/)):
+Perimeter transitions automatically execute deterministic policy actions (`src/geofence/actions/`):
 - **Configured Automation Actions (`ZoneAutomation`)**:
   - `notify`: Emits an operator notification across the real-time HUD and WebSocket log.
   - `raise_alert`: Generates a high-severity `ThreatAlert` logged to the central security audit trail.
-  - `isolate`: Dispatches network quarantine commands to the local firewall ([src/enforcement/](file:///home/hp/SGX/src/enforcement/)), dropping iptables forwarding rules for the offending device.
-  - `lockdown`: Actuates physical facility smart locks and security relays via the Smart Home subsystem ([src/automation/](file:///home/hp/SGX/src/automation/)).
+  - `isolate`: Dispatches network quarantine commands to the local firewall (`src/enforcement/`), dropping iptables forwarding rules for the offending device.
+  - `lockdown`: Actuates physical facility smart locks and security relays via the Smart Home subsystem (`src/automation/`).
 - **Action Testing Pipeline (`POST /api/v1/geofence/actions/test`)**: Operators can validate end-to-end trigger rules in simulation mode without requiring physical device movement.
 
 ---
@@ -6997,7 +7018,7 @@ Situational awareness requires immediate chronological tracking of network anoma
 
 ### 22.6.1 Rolling Ring Buffer Event Stream (`TopologyLogBar.tsx`, `useEventLog.ts`)
 
-The topology footer houses a persistent, scrolling event log bar ([frontend/src/app/components/topology/TopologyLogBar.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/TopologyLogBar.tsx)):
+The topology footer houses a persistent, scrolling event log bar (`frontend/src/app/components/topology/TopologyLogBar.tsx`):
 - **Ring Buffer Ingestion (`useEventLog.ts`)**: Maintains a bounded rolling memory buffer of the most recent 500 events, dropping stale records to prevent memory bloat during prolonged operator sessions.
 - **Log Item Visual Hierarchy**:
   - **Timestamp**: High-precision UTC clock formatting (`HH:MM:SS`).
@@ -7006,8 +7027,8 @@ The topology footer houses a persistent, scrolling event log bar ([frontend/src/
 
 ### 22.6.2 Live Threat Alert Integration & Node Highlighting
 
-The topology canvas unifies cyber attack detection with spatial visualization ([frontend/src/app/screens/alerts/AL09LiveAttackTopology.tsx](file:///home/hp/SGX/frontend/src/app/screens/alerts/AL09LiveAttackTopology.tsx)):
-- **Suricata IDS Ingestion**: High-severity intrusion alerts generated by the Suricata deep packet inspection engine ([src/threat/](file:///home/hp/SGX/src/threat/)) are ingested via `useThreatAlerts` (`GET /api/v1/geofence/alerts`).
+The topology canvas unifies cyber attack detection with spatial visualization (`frontend/src/app/screens/alerts/AL09LiveAttackTopology.tsx`):
+- **Suricata IDS Ingestion**: High-severity intrusion alerts generated by the Suricata deep packet inspection engine (`src/threat/`) are ingested via `useThreatAlerts` (`GET /api/v1/geofence/alerts`).
 - **Target Node Highlighting**: When an alert targets a node, the canvas transitions the node into an alarmed state:
   - Renders a pulsing red hazard ring (`#EF4444`) around the target node icon.
   - Draws an animated red attack vector between the attacker IP and the target node.
@@ -7021,7 +7042,7 @@ The topology engine computes comprehensive hardware telemetry and security score
 
 ### 22.7.1 Real-Time Node Telemetry Gauges
 
-Selecting any node opens a detailed inspection side-panel ([frontend/src/app/components/topology/EnterpriseTopology.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/EnterpriseTopology.tsx#L36-L62)):
+Selecting any node opens a detailed inspection side-panel (`frontend/src/app/components/topology/EnterpriseTopology.tsx#L36-L62`):
 - **Resource Utilization Meters**:
   - **CPU Utilization**: Real-time processor load percentage with color-coded horizontal bars (Green < 60%, Amber 60–85%, Red > 85%).
   - **Memory Usage**: RAM footprint percentage.
@@ -7058,7 +7079,7 @@ The operator console incorporates an advanced tactical control toolset:
 
 ### 22.8.1 D3-Powered Pan, Zoom & Camera Centering
 
-The viewport provides fluid pan-and-zoom navigation ([frontend/src/app/components/topology/hooks/usePanZoom.ts](file:///home/hp/SGX/frontend/src/app/components/topology/hooks/usePanZoom.ts)):
+The viewport provides fluid pan-and-zoom navigation (`frontend/src/app/components/topology/hooks/usePanZoom.ts`):
 - **D3 Zoom Physics (`d3-zoom`)**: Smooth mouse-drag panning and scroll-wheel zooming with scale constraints clamped between `0.25x` (overview) and `4.0x` (component inspection).
 - **Interactive Control Cluster**:
   - `ZoomIn` / `ZoomOut`: Incremental 20% zoom stepping.
@@ -7068,13 +7089,13 @@ The viewport provides fluid pan-and-zoom navigation ([frontend/src/app/component
 
 ### 22.8.2 Picture-in-Picture Mini-Map Navigator (`MiniMap.tsx`)
 
-The lower-right viewport features a persistent radar minimap ([frontend/src/app/components/topology/MiniMap.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/MiniMap.tsx)):
+The lower-right viewport features a persistent radar minimap (`frontend/src/app/components/topology/MiniMap.tsx`):
 - **Downscaled Canvas Mirror**: Renders simplified node silhouettes, cluster zones, and threat indicators at a 1:8 scale factor.
 - **Interactive Viewport Frame**: Draws a highlighted rectangular bounding box representing the active screen camera. Operators can drag this frame directly inside the minimap to pan across vast enterprise topologies rapidly.
 
 ### 22.8.3 Dynamic Multi-Criteria Filtering & Node Search
 
-The top toolbar provides instantaneous entity filtering ([frontend/src/app/components/topology/TopologyTopBar.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/TopologyTopBar.tsx)):
+The top toolbar provides instantaneous entity filtering (`frontend/src/app/components/topology/TopologyTopBar.tsx`):
 - **Filter Modes**:
   - Enterprise Canvas: `all`, `guardians`, `threats`, `shared`, `clusters`.
   - Circle Mesh Canvas: `all`, `online`, `offline`, `verified`, `lighthouse`, `relay`.
@@ -7082,7 +7103,7 @@ The top toolbar provides instantaneous entity filtering ([frontend/src/app/compo
 
 ### 22.8.4 Tactical Corner HUD & Status Watermarks (`CornerLabels.tsx`)
 
-HUD corner overlays furnish military-grade tactical context ([frontend/src/app/components/topology/CornerLabels.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/CornerLabels.tsx)):
+HUD corner overlays furnish military-grade tactical context (`frontend/src/app/components/topology/CornerLabels.tsx`):
 - **Top-Left (CornerTL)**: Operational security classification (`RESTRICTED // SGX-SEC-PHASE2`), active circle container name, and total monitored asset counters.
 - **Bottom-Left (CornerBL)**: Real-time geospatial coordinate bounds, active map projection mode, and geofence evaluation daemon heartbeat.
 - **Bottom-Right (CornerBR)**: Active cryptographic cipher suite (`ChaCha20-Poly1305 / Noise_IK`), overlay mesh version, and live packet stream rate.
@@ -7095,16 +7116,16 @@ The following defense matrix summarizes the enterprise security safeguards and f
 
 | Defense ID | Threat / Failure Mode | Architectural Mitigation | Code Enforcement | Security Guarantee |
 | :--- | :--- | :--- | :--- | :--- |
-| **DEF-TOP-01** | External Mapping Telemetry Leakage | Sovereign vector world map and local SVG geometries; zero external tile server network calls. | [world-map.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/world-map.ts), [geospatial.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/geospatial.ts) | Operational coordinates and facility maps never leak to commercial cloud providers. |
-| **DEF-TOP-02** | Node Spoofing & Identity Impersonation | W3C DID verification and Ed25519 hardware signature checks required before node insertion into mesh graph. | [useCircleTopology.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/useCircleTopology.ts), [didService.ts](file:///home/hp/SGX/frontend/src/app/services/didService.ts) | Rogue network devices cannot inject fake nodes or forge topology presence. |
-| **DEF-TOP-03** | Geolocation Permission Denial Denial-of-Service | Three-stage progressive fallback pipeline with static hardware coordinate fallback. | [CircleLiveTopology.tsx](file:///home/hp/SGX/frontend/src/app/components/circle-topology/CircleLiveTopology.tsx), [config.rs](file:///home/hp/SGX/src/startup/config.rs) | Browser location permission denial never crashes or disables the topology canvas. |
-| **DEF-TOP-04** | Client Memory Exhaustion via High-Rate Logs | Fixed-capacity rolling ring buffer limiting event log memory to 500 items. | [useEventLog.ts](file:///home/hp/SGX/frontend/src/app/components/topology/hooks/useEventLog.ts), [TopologyLogBar.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/TopologyLogBar.tsx) | Prevents browser tab memory exhaustion during intense, long-running cyber attack logging. |
-| **DEF-TOP-05** | Unauthorized Geofence Perimeter Tampering | Session JWT and administrative DID verification required on all geofence zone mutations. | [geofence.rs](file:///home/hp/SGX/src/api/handlers/geofence.rs), [middleware.rs](file:///home/hp/SGX/src/api/auth/middleware.rs) | Unauthenticated actors cannot create, edit, or delete facility exclusion zones. |
-| **DEF-TOP-06** | Geofence Boundary Flutter & Churn | Temporal evaluation hysteresis algorithm filtering rapid edge-transition oscillation. | [eval.rs](file:///home/hp/SGX/src/geofence/eval.rs), [zones.rs](file:///home/hp/SGX/src/geofence/zones.rs) | Eliminates false-positive notification storms when devices linger along perimeter borders. |
-| **DEF-TOP-07** | Stale Peer Graph Inconsistencies | Pure functional link synthesis (`buildTopologyLinks`) evaluated over active filtered nodes. | [useCircleTopology.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/useCircleTopology.ts) | Scoped circle views never display orphan links pointing to hidden or missing anchor nodes. |
-| **DEF-TOP-08** | High-Latitude Polar Mercator Asymptote | Strict mathematical latitude clamping to `[-85.0°, +85.0°]` and symmetric longitudinal wrapping. | [geospatial.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/geospatial.ts), [CircleLiveTopology.tsx](file:///home/hp/SGX/frontend/src/app/components/circle-topology/CircleLiveTopology.tsx) | Prevents mathematical infinity and NaN rendering errors in high-latitude deployment zones. |
-| **DEF-TOP-09** | Physical Distortion of Geodesic Radii | Haversine cosine latitude correction dynamically adjusting meters-to-pixel conversion ratios. | [geospatial.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/geospatial.ts) | Geofence perimeters accurately reflect ground distances across all geographical latitudes. |
-| **DEF-TOP-10** | Cascading Failure on Stale Peer Registries | Fail-safe normalization falling back to circle membership manifests when peer registry is offline. | [useCircleTopology.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/useCircleTopology.ts) | Network graph remains fully operable and interactive during partial backend daemon restarts. |
+| **DEF-TOP-01** | External Mapping Telemetry Leakage | Sovereign vector world map and local SVG geometries; zero external tile server network calls. | `frontend/src/app/components/topology/lib/world-map.ts`, `frontend/src/app/components/topology/lib/geospatial.ts` | Operational coordinates and facility maps never leak to commercial cloud providers. |
+| **DEF-TOP-02** | Node Spoofing & Identity Impersonation | W3C DID verification and Ed25519 hardware signature checks required before node insertion into mesh graph. | `frontend/src/app/components/circle-topology/useCircleTopology.ts`, `frontend/src/app/services/didService.ts` | Rogue network devices cannot inject fake nodes or forge topology presence. |
+| **DEF-TOP-03** | Geolocation Permission Denial Denial-of-Service | Three-stage progressive fallback pipeline with static hardware coordinate fallback. | `frontend/src/app/components/circle-topology/CircleLiveTopology.tsx`, `src/startup/config.rs` | Browser location permission denial never crashes or disables the topology canvas. |
+| **DEF-TOP-04** | Client Memory Exhaustion via High-Rate Logs | Fixed-capacity rolling ring buffer limiting event log memory to 500 items. | `frontend/src/app/components/topology/hooks/useEventLog.ts`, `frontend/src/app/components/topology/TopologyLogBar.tsx` | Prevents browser tab memory exhaustion during intense, long-running cyber attack logging. |
+| **DEF-TOP-05** | Unauthorized Geofence Perimeter Tampering | Session JWT and administrative DID verification required on all geofence zone mutations. | `src/api/handlers/geofence.rs`, `src/api/auth/middleware.rs` | Unauthenticated actors cannot create, edit, or delete facility exclusion zones. |
+| **DEF-TOP-06** | Geofence Boundary Flutter & Churn | Temporal evaluation hysteresis algorithm filtering rapid edge-transition oscillation. | `src/geofence/eval.rs`, `src/geofence/zones.rs` | Eliminates false-positive notification storms when devices linger along perimeter borders. |
+| **DEF-TOP-07** | Stale Peer Graph Inconsistencies | Pure functional link synthesis (`buildTopologyLinks`) evaluated over active filtered nodes. | `frontend/src/app/components/circle-topology/useCircleTopology.ts` | Scoped circle views never display orphan links pointing to hidden or missing anchor nodes. |
+| **DEF-TOP-08** | High-Latitude Polar Mercator Asymptote | Strict mathematical latitude clamping to `[-85.0°, +85.0°]` and symmetric longitudinal wrapping. | `frontend/src/app/components/topology/lib/geospatial.ts`, `frontend/src/app/components/circle-topology/CircleLiveTopology.tsx` | Prevents mathematical infinity and NaN rendering errors in high-latitude deployment zones. |
+| **DEF-TOP-09** | Physical Distortion of Geodesic Radii | Haversine cosine latitude correction dynamically adjusting meters-to-pixel conversion ratios. | `frontend/src/app/components/topology/lib/geospatial.ts` | Geofence perimeters accurately reflect ground distances across all geographical latitudes. |
+| **DEF-TOP-10** | Cascading Failure on Stale Peer Registries | Fail-safe normalization falling back to circle membership manifests when peer registry is offline. | `frontend/src/app/components/circle-topology/useCircleTopology.ts` | Network graph remains fully operable and interactive during partial backend daemon restarts. |
 
 ---
 
@@ -7114,16 +7135,16 @@ The Live Network Topology & Mesh Map subsystem is validated through the comprehe
 
 | Test ID | Test Category & Name | Target Component | Verification Method | Expected Outcome & Pass Criteria |
 | :--- | :--- | :--- | :--- | :--- |
-| **TOP-001** | Mathematical Mercator Projection Accuracy | [geospatial.test.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/geospatial.test.ts) | Project known GPS benchmark coordinates (San Francisco, London, Tokyo, Sydney); verify output XY pixels. | Canvas coordinates match calculated pixel values within +/- 0.01% floating-point tolerance. |
-| **TOP-002** | Geodesic Radius Meter-to-Pixel Scaling | [geospatial.test.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/geospatial.test.ts) | Calculate 500m radius at 0° latitude vs 60° latitude; compare horizontal and vertical radii (`rx`, `ry`). | Elliptical pixel scaling matches exact Haversine cosine distortion ratio without distortion. |
-| **TOP-003** | Dynamic Mesh & Relay Link Synthesis | [useCircleTopology.test.tsx](file:///home/hp/SGX/frontend/src/app/components/circle-topology/useCircleTopology.test.tsx) | Feed mock peers containing 1 lighthouse, 2 relay nodes, and 5 members; invoke `buildTopologyLinks`. | Synthesizes exact mesh links to lighthouse, designates relay routes, and adds attestation overlays. |
-| **TOP-004** | Circle-Scoped Roster Isolation | [circleMembership.test.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/circleMembership.test.ts) | Filter by specific Circle ID; verify excluded circle members do not render on canvas or link graph. | Only authorized circle members and active links appear; all other network peers are cleanly suppressed. |
-| **TOP-005** | Geofence Zone Disk Persistence & Atomicity | [cov_wave8_geofence_zones_persistence_test.rs](file:///home/hp/SGX/tests/cov_wave8_geofence_zones_persistence_test.rs) | Create coordinate and RF signature zones; assert JSON format on disk; simulate daemon crash and reload. | Zone data reloaded with zero corruption; `topology_node_ref` bindings and trigger rules preserved. |
-| **TOP-006** | Geofence Perimeter Transition Evaluation | [cov_wave8_geofence_zones_persistence_test.rs](file:///home/hp/SGX/tests/cov_wave8_geofence_zones_persistence_test.rs) | Inject sequential GPS fixes simulating entry, dwell, and exit across a 250m perimeter. | Hysteresis engine triggers entry notification upon ingress and raises exit alert upon departure. |
-| **TOP-007** | Automated Threat Alert Generation | [geofence_alerts_unit_test.rs](file:///home/hp/SGX/tests/geofence_alerts_unit_test.rs) | Inject perimeter violation with severity `critical`; verify alert pipeline output. | High-severity `ThreatAlert` generated, logged to audit database, and streamed to HUD marquee. |
-| **TOP-008** | Autonomous Countermeasure Execution | [geofence_actions_unit_test.rs](file:///home/hp/SGX/tests/geofence_actions_unit_test.rs) | Trigger zone transition linked to `notify` and `raise_alert` automated actions. | Automation engine executes configured actions, verifies safety preconditions, and logs action results. |
-| **TOP-009** | Progressive Geolocation Fallback Handling | [CircleLiveTopology.tsx](file:///home/hp/SGX/frontend/src/app/components/circle-topology/CircleLiveTopology.tsx) | Simulate Tier 1 and Tier 2 geolocation timeouts; verify Tier 3 watcher and static fallback. | Fallback completes gracefully; map centers on appliance hardware coordinates without UI freeze. |
-| **TOP-010** | D3 Pan, Zoom & Camera Centering Transforms | [topology.test.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/topology.test.ts) | Simulate node click event; verify D3 zoom transform matrix translation and scale values. | Viewport smoothly animates to target node coordinates, centering node within active screen bounds. |
+| **TOP-001** | Mathematical Mercator Projection Accuracy | `frontend/src/app/components/topology/lib/geospatial.test.ts` | Project known GPS benchmark coordinates (San Francisco, London, Tokyo, Sydney); verify output XY pixels. | Canvas coordinates match calculated pixel values within +/- 0.01% floating-point tolerance. |
+| **TOP-002** | Geodesic Radius Meter-to-Pixel Scaling | `frontend/src/app/components/topology/lib/geospatial.test.ts` | Calculate 500m radius at 0° latitude vs 60° latitude; compare horizontal and vertical radii (`rx`, `ry`). | Elliptical pixel scaling matches exact Haversine cosine distortion ratio without distortion. |
+| **TOP-003** | Dynamic Mesh & Relay Link Synthesis | `frontend/src/app/components/circle-topology/useCircleTopology.test.tsx` | Feed mock peers containing 1 lighthouse, 2 relay nodes, and 5 members; invoke `buildTopologyLinks`. | Synthesizes exact mesh links to lighthouse, designates relay routes, and adds attestation overlays. |
+| **TOP-004** | Circle-Scoped Roster Isolation | `frontend/src/app/components/circle-topology/circleMembership.test.ts` | Filter by specific Circle ID; verify excluded circle members do not render on canvas or link graph. | Only authorized circle members and active links appear; all other network peers are cleanly suppressed. |
+| **TOP-005** | Geofence Zone Disk Persistence & Atomicity | `tests/cov_wave8_geofence_zones_persistence_test.rs` | Create coordinate and RF signature zones; assert JSON format on disk; simulate daemon crash and reload. | Zone data reloaded with zero corruption; `topology_node_ref` bindings and trigger rules preserved. |
+| **TOP-006** | Geofence Perimeter Transition Evaluation | `tests/cov_wave8_geofence_zones_persistence_test.rs` | Inject sequential GPS fixes simulating entry, dwell, and exit across a 250m perimeter. | Hysteresis engine triggers entry notification upon ingress and raises exit alert upon departure. |
+| **TOP-007** | Automated Threat Alert Generation | `tests/geofence_alerts_unit_test.rs` | Inject perimeter violation with severity `critical`; verify alert pipeline output. | High-severity `ThreatAlert` generated, logged to audit database, and streamed to HUD marquee. |
+| **TOP-008** | Autonomous Countermeasure Execution | `tests/geofence_actions_unit_test.rs` | Trigger zone transition linked to `notify` and `raise_alert` automated actions. | Automation engine executes configured actions, verifies safety preconditions, and logs action results. |
+| **TOP-009** | Progressive Geolocation Fallback Handling | `frontend/src/app/components/circle-topology/CircleLiveTopology.tsx` | Simulate Tier 1 and Tier 2 geolocation timeouts; verify Tier 3 watcher and static fallback. | Fallback completes gracefully; map centers on appliance hardware coordinates without UI freeze. |
+| **TOP-010** | D3 Pan, Zoom & Camera Centering Transforms | `frontend/src/app/components/topology/lib/topology.test.ts` | Simulate node click event; verify D3 zoom transform matrix translation and scale values. | Viewport smoothly animates to target node coordinates, centering node within active screen bounds. |
 
 ---
 
@@ -7132,57 +7153,57 @@ The Live Network Topology & Mesh Map subsystem is validated through the comprehe
 The following list identifies the core source code files implementing the Live Network Topology and Mesh Map subsystem:
 
 ### Frontend Topology & Visualization Components: `frontend/src/app/components/`
-- **[frontend/src/app/components/topology/EnterpriseTopology.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/EnterpriseTopology.tsx)**: Main enterprise multi-zone topology canvas with D3 pan/zoom, geofence side-panel, telemetry gauges, and panic actions.
-- **[frontend/src/app/components/topology/TopologyScene.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/TopologyScene.tsx)**: SVG rendering scene for enterprise zones, overlapping DMZ regions, industrial clusters, and threat actors.
-- **[frontend/src/app/components/topology/WorldMap.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/WorldMap.tsx)**: Vector world map component for geographic projection view.
-- **[frontend/src/app/components/topology/MiniMap.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/MiniMap.tsx)**: Interactive picture-in-picture radar navigator with draggable viewport bounding box.
-- **[frontend/src/app/components/topology/TopologyTopBar.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/TopologyTopBar.tsx)**: Header navigation bar with category filter toggles, search input, and fullscreen trigger.
-- **[frontend/src/app/components/topology/TopologyLogBar.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/TopologyLogBar.tsx)**: Real-time scrolling event log marquee with severity badging and node click-to-focus.
-- **[frontend/src/app/components/topology/CornerLabels.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/CornerLabels.tsx)**: Tactical heads-up display (HUD) corner overlays rendering classification, spatial bounds, and crypto watermarks.
-- **[frontend/src/app/components/topology/topology.css](file:///home/hp/SGX/frontend/src/app/components/topology/topology.css)**: CSS stylesheets and animation keyframes for pulse vectors, glow filters, and modal panels.
+- **`frontend/src/app/components/topology/EnterpriseTopology.tsx`**: Main enterprise multi-zone topology canvas with D3 pan/zoom, geofence side-panel, telemetry gauges, and panic actions.
+- **`frontend/src/app/components/topology/TopologyScene.tsx`**: SVG rendering scene for enterprise zones, overlapping DMZ regions, industrial clusters, and threat actors.
+- **`frontend/src/app/components/topology/WorldMap.tsx`**: Vector world map component for geographic projection view.
+- **`frontend/src/app/components/topology/MiniMap.tsx`**: Interactive picture-in-picture radar navigator with draggable viewport bounding box.
+- **`frontend/src/app/components/topology/TopologyTopBar.tsx`**: Header navigation bar with category filter toggles, search input, and fullscreen trigger.
+- **`frontend/src/app/components/topology/TopologyLogBar.tsx`**: Real-time scrolling event log marquee with severity badging and node click-to-focus.
+- **`frontend/src/app/components/topology/CornerLabels.tsx`**: Tactical heads-up display (HUD) corner overlays rendering classification, spatial bounds, and crypto watermarks.
+- **`frontend/src/app/components/topology/topology.css`**: CSS stylesheets and animation keyframes for pulse vectors, glow filters, and modal panels.
 
 ### Circle DID Mesh Topology Components: `frontend/src/app/components/circle-topology/`
-- **[frontend/src/app/components/circle-topology/CircleLiveTopology.tsx](file:///home/hp/SGX/frontend/src/app/components/circle-topology/CircleLiveTopology.tsx)**: Live Circle mesh topology canvas with dual view modes (Mesh vs Map), in-map geofence creation, and attestation badges.
-- **[frontend/src/app/components/circle-topology/useCircleTopology.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/useCircleTopology.ts)**: State aggregation hook polling peers, DIDs, relays, and circle membership manifests (`mergeLiveNodes`, `buildTopologyLinks`).
-- **[frontend/src/app/components/circle-topology/circleMembership.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/circleMembership.ts)**: Circle membership index builder and node ID normalization utilities.
-- **[frontend/src/app/components/circle-topology/nodeTelemetry.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/nodeTelemetry.ts)**: Real-time telemetry matcher linking DID documents to active network nodes.
-- **[frontend/src/app/components/circle-topology/palette.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/palette.ts)**: Color tokens and CSS variables for presence states, trust levels, and zone borders.
-- **[frontend/src/app/components/circle-topology/types.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/types.ts)**: Domain type definitions (`CircleTopologyNode`, `CircleTopologyLink`, `PresenceStatus`, `AttestationStatus`).
-- **[frontend/src/app/components/circle-topology/circle-topology.css](file:///home/hp/SGX/frontend/src/app/components/circle-topology/circle-topology.css)**: Styles for mesh node orbital rings, attestation badges, and zone forms.
+- **`frontend/src/app/components/circle-topology/CircleLiveTopology.tsx`**: Live Circle mesh topology canvas with dual view modes (Mesh vs Map), in-map geofence creation, and attestation badges.
+- **`frontend/src/app/components/circle-topology/useCircleTopology.ts`**: State aggregation hook polling peers, DIDs, relays, and circle membership manifests (`mergeLiveNodes`, `buildTopologyLinks`).
+- **`frontend/src/app/components/circle-topology/circleMembership.ts`**: Circle membership index builder and node ID normalization utilities.
+- **`frontend/src/app/components/circle-topology/nodeTelemetry.ts`**: Real-time telemetry matcher linking DID documents to active network nodes.
+- **`frontend/src/app/components/circle-topology/palette.ts`**: Color tokens and CSS variables for presence states, trust levels, and zone borders.
+- **`frontend/src/app/components/circle-topology/types.ts`**: Domain type definitions (`CircleTopologyNode`, `CircleTopologyLink`, `PresenceStatus`, `AttestationStatus`).
+- **`frontend/src/app/components/circle-topology/circle-topology.css`**: Styles for mesh node orbital rings, attestation badges, and zone forms.
 
 ### Topology Libraries & Custom Hooks: `frontend/src/app/components/topology/lib/`, `hooks/`
-- **[frontend/src/app/components/topology/lib/geospatial.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/geospatial.ts)**: Mathematical spherical Mercator projection (`projectLngLat`) and Haversine radius scaling (`radiusMetersToPixels`).
-- **[frontend/src/app/components/topology/lib/world-map.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/world-map.ts)**: Vector geometric path dataset representing global landmasses, country boundaries, and oceans.
-- **[frontend/src/app/components/topology/lib/topology.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/topology.ts)**: Enterprise zone definitions (ALPHA through DELTA), industrial clusters, shared nodes, and mock threat profiles.
-- **[frontend/src/app/components/topology/hooks/usePanZoom.ts](file:///home/hp/SGX/frontend/src/app/components/topology/hooks/usePanZoom.ts)**: D3 pan and zoom interaction controller with boundary clamping and reset logic.
-- **[frontend/src/app/components/topology/hooks/useZoomPercent.ts](file:///home/hp/SGX/frontend/src/app/components/topology/hooks/useZoomPercent.ts)**: Real-time zoom magnification percentage calculator.
-- **[frontend/src/app/components/topology/hooks/useFocusedZone.ts](file:///home/hp/SGX/frontend/src/app/components/topology/hooks/useFocusedZone.ts)**: Camera focusing hook for centering on specific geofence zones.
-- **[frontend/src/app/components/topology/hooks/useEventLog.ts](file:///home/hp/SGX/frontend/src/app/components/topology/hooks/useEventLog.ts)**: Bounded rolling ring buffer event logging hook.
+- **`frontend/src/app/components/topology/lib/geospatial.ts`**: Mathematical spherical Mercator projection (`projectLngLat`) and Haversine radius scaling (`radiusMetersToPixels`).
+- **`frontend/src/app/components/topology/lib/world-map.ts`**: Vector geometric path dataset representing global landmasses, country boundaries, and oceans.
+- **`frontend/src/app/components/topology/lib/topology.ts`**: Enterprise zone definitions (ALPHA through DELTA), industrial clusters, shared nodes, and mock threat profiles.
+- **`frontend/src/app/components/topology/hooks/usePanZoom.ts`**: D3 pan and zoom interaction controller with boundary clamping and reset logic.
+- **`frontend/src/app/components/topology/hooks/useZoomPercent.ts`**: Real-time zoom magnification percentage calculator.
+- **`frontend/src/app/components/topology/hooks/useFocusedZone.ts`**: Camera focusing hook for centering on specific geofence zones.
+- **`frontend/src/app/components/topology/hooks/useEventLog.ts`**: Bounded rolling ring buffer event logging hook.
 
 ### Screens & Application Routing: `frontend/src/app/screens/`
-- **[frontend/src/app/screens/home/HM03NetworkTopology.tsx](file:///home/hp/SGX/frontend/src/app/screens/home/HM03NetworkTopology.tsx)**: Main network topology screen mounted at `/home/topology`.
-- **[frontend/src/app/screens/network/NW01CirclesList.tsx](file:///home/hp/SGX/frontend/src/app/screens/network/NW01CirclesList.tsx)**: Circle management screen embedding `CircleLiveTopology` in the right rail.
-- **[frontend/src/app/screens/settings/STTopology.tsx](file:///home/hp/SGX/frontend/src/app/screens/settings/STTopology.tsx)**: Legacy topology route redirecting operators to `/home/topology`.
-- **[frontend/src/app/screens/alerts/AL09LiveAttackTopology.tsx](file:///home/hp/SGX/frontend/src/app/screens/alerts/AL09LiveAttackTopology.tsx)**: Specialized live attack topology screen for OT/Modbus intrusion visualization.
+- **`frontend/src/app/screens/home/HM03NetworkTopology.tsx`**: Main network topology screen mounted at `/home/topology`.
+- **`frontend/src/app/screens/network/NW01CirclesList.tsx`**: Circle management screen embedding `CircleLiveTopology` in the right rail.
+- **`frontend/src/app/screens/settings/STTopology.tsx`**: Legacy topology route redirecting operators to `/home/topology`.
+- **`frontend/src/app/screens/alerts/AL09LiveAttackTopology.tsx`**: Specialized live attack topology screen for OT/Modbus intrusion visualization.
 
 ### Backend Geofence & Location Engine: `src/geofence/`, `src/api/`
-- **[src/api/handlers/geofence.rs](file:///home/hp/SGX/src/api/handlers/geofence.rs)**: REST API endpoints for geofence zones, location updates, events, threat alerts, and automated action testing.
-- **[src/geofence/zones.rs](file:///home/hp/SGX/src/geofence/zones.rs)**: Core zone CRUD operations, `topology_node_ref` bindings, and atomic disk persistence.
-- **[src/geofence/model.rs](file:///home/hp/SGX/src/geofence/model.rs)**: Domain models (`GeofenceZone`, `ZoneKind`, `Fix`, `RfSignature`, `GeofenceEvent`).
-- **[src/geofence/eval.rs](file:///home/hp/SGX/src/geofence/eval.rs)**: Spatial evaluation engine executing Haversine distance computations and hysteresis tracking.
-- **[src/geofence/actions/mod.rs](file:///home/hp/SGX/src/geofence/actions/mod.rs)**: Automated countermeasure dispatcher (`ZoneAutomation`).
-- **[src/geofence/alerts.rs](file:///home/hp/SGX/src/geofence/alerts.rs)**: High-severity geofence alert generator and threat audit logger.
-- **[src/geofence/persistence.rs](file:///home/hp/SGX/src/geofence/persistence.rs)**: Atomic file persistence primitives for geofence registry data.
+- **`src/api/handlers/geofence.rs`**: REST API endpoints for geofence zones, location updates, events, threat alerts, and automated action testing.
+- **`src/geofence/zones.rs`**: Core zone CRUD operations, `topology_node_ref` bindings, and atomic disk persistence.
+- **`src/geofence/model.rs`**: Domain models (`GeofenceZone`, `ZoneKind`, `Fix`, `RfSignature`, `GeofenceEvent`).
+- **`src/geofence/eval.rs`**: Spatial evaluation engine executing Haversine distance computations and hysteresis tracking.
+- **`src/geofence/actions/mod.rs`**: Automated countermeasure dispatcher (`ZoneAutomation`).
+- **`src/geofence/alerts.rs`**: High-severity geofence alert generator and threat audit logger.
+- **`src/geofence/persistence.rs`**: Atomic file persistence primitives for geofence registry data.
 
 ### Integration & Unit Test Suites: `frontend/` & `tests/`
-- **[frontend/src/app/components/topology/lib/geospatial.test.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/geospatial.test.ts)**: Unit tests for Mercator projections and geodesic radius conversions (`TOP-001`, `TOP-002`).
-- **[frontend/src/app/components/topology/lib/topology.test.ts](file:///home/hp/SGX/frontend/src/app/components/topology/lib/topology.test.ts)**: Unit tests for enterprise zone boundaries and cluster definitions (`TOP-010`).
-- **[frontend/src/app/components/circle-topology/useCircleTopology.test.tsx](file:///home/hp/SGX/frontend/src/app/components/circle-topology/useCircleTopology.test.tsx)**: React hook test suite verifying live node merging and link building (`TOP-003`).
-- **[frontend/src/app/components/circle-topology/circleMembership.test.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/circleMembership.test.ts)**: Tests for circle-scoped node filtering and ID normalization (`TOP-004`).
-- **[frontend/src/app/components/circle-topology/nodeTelemetry.test.ts](file:///home/hp/SGX/frontend/src/app/components/circle-topology/nodeTelemetry.test.ts)**: Unit tests for DID document matching and telemetry parsing.
-- **[tests/cov_wave8_geofence_zones_persistence_test.rs](file:///home/hp/SGX/tests/cov_wave8_geofence_zones_persistence_test.rs)**: Rust integration test suite verifying geofence zone persistence, hysteresis, and evaluations (`TOP-005`, `TOP-006`).
-- **[tests/geofence_alerts_unit_test.rs](file:///home/hp/SGX/tests/geofence_alerts_unit_test.rs)**: Unit test suite for geofence threat alert generation (`TOP-007`).
-- **[tests/geofence_actions_unit_test.rs](file:///home/hp/SGX/tests/geofence_actions_unit_test.rs)**: Unit tests verifying automated countermeasure dispatch (`TOP-008`).
+- **`frontend/src/app/components/topology/lib/geospatial.test.ts`**: Unit tests for Mercator projections and geodesic radius conversions (`TOP-001`, `TOP-002`).
+- **`frontend/src/app/components/topology/lib/topology.test.ts`**: Unit tests for enterprise zone boundaries and cluster definitions (`TOP-010`).
+- **`frontend/src/app/components/circle-topology/useCircleTopology.test.tsx`**: React hook test suite verifying live node merging and link building (`TOP-003`).
+- **`frontend/src/app/components/circle-topology/circleMembership.test.ts`**: Tests for circle-scoped node filtering and ID normalization (`TOP-004`).
+- **`frontend/src/app/components/circle-topology/nodeTelemetry.test.ts`**: Unit tests for DID document matching and telemetry parsing.
+- **`tests/cov_wave8_geofence_zones_persistence_test.rs`**: Rust integration test suite verifying geofence zone persistence, hysteresis, and evaluations (`TOP-005`, `TOP-006`).
+- **`tests/geofence_alerts_unit_test.rs`**: Unit test suite for geofence threat alert generation (`TOP-007`).
+- **`tests/geofence_actions_unit_test.rs`**: Unit tests verifying automated countermeasure dispatch (`TOP-008`).
 
 ---
 
@@ -7190,9 +7211,9 @@ The following list identifies the core source code files implementing the Live N
 
 ## 23.1 Executive Summary & Zero-Trust Spatial Security Architecture
 
-Physical spatial awareness is a core pillar of the SG-X Guardian zero-trust security architecture. In high-assurance defense, critical infrastructure, and enterprise edge deployments, tactical mesh nodes and secure mobile gateways carry sovereign cryptographic key material, confidential vault partitions, decentralized identities (DIDs), and active mesh network credentials. If a gateway is physically stolen, relocated outside a secure operations facility, or carried into an unauthorized hostile operational theater, traditional network-layer cryptographic controls are no longer sufficient to guarantee perimeter integrity. 
+Physical spatial awareness is a core pillar of the SG-X Guardian zero-trust security architecture. In high-assurance defense, critical infrastructure, and enterprise edge deployments, tactical mesh nodes and secure mobile gateways carry sovereign cryptographic key material, confidential vault partitions, decentralized identities (DIDs), and active mesh network credentials. If a gateway is physically stolen, relocated outside a secure operations facility, or carried into an unauthorized hostile operational theater, traditional network-layer cryptographic controls are no longer sufficient to guarantee perimeter integrity.
 
-To eliminate this vulnerability, SG-X Guardian implements a hardware-integrated, dual-modal **Geofencing & Location Zones Subsystem** ([src/geofence/](file:///home/hp/SGX/src/geofence/)). The subsystem enforces strict spatial boundaries across the fleet, evaluating device locations against authorized geographic zones and triggering immediate defensive countermeasures upon detected boundary infractions.
+To eliminate this vulnerability, SG-X Guardian implements a hardware-integrated, dual-modal **Geofencing & Location Zones Subsystem** (`src/geofence/`). The subsystem enforces strict spatial boundaries across the fleet, evaluating device locations against authorized geographic zones and triggering immediate defensive countermeasures upon detected boundary infractions.
 
 The geofencing engine departs fundamentally from standard commercial geofencing solutions through five zero-trust design principles:
 
@@ -7200,13 +7221,13 @@ The geofencing engine departs fundamentally from standard commercial geofencing 
 2. **Autonomous Multi-Source Location Arbitration**: Ingests fixes from five heterogeneous location providers (GNSS serial receivers, ambient RF scanners, authenticated operator reports, fixed administrative coordinates, and an autonomous arbiter). The autonomous engine dynamically elects the highest-fidelity active provider while enforcing strict freshness windows, multi-cycle confirmation thresholds, and hold-down timers to eliminate signal flapping.
 3. **Temporal Hysteresis & Edge-Jitter Elimination**: Spatial transitions (zone entry and exit) are filtered through a multi-sample state machine (`ZoneRuntimeState`). A transition is committed only after consecutive confirmatory evaluation cycles satisfy configured hysteresis thresholds, preventing false-positive alert cascades caused by GPS multipath reflections or transient signal attenuation.
 4. **Autonomous Cyber-Physical Countermeasures**: Beyond passive alerting, zones configure automated response pipelines (`ZoneAutomation`). In response to perimeter breaches, the system autonomously executes operator notifications, initiates deep vulnerability discovery scans, performs emergency cryptographic key rotation, or triggers hardware-enforced transport network interface locks (`LockNetwork`).
-5. **Suricata IDS Integration & AI Bridge Forwarding**: Geofence infractions are elevated into formal Suricata-compatible threat alerts assigned dedicated signature IDs (`10_000_900` for entry, `10_000_901` for exit). Alerts are ingested into the system-wide threat ledger (`alerts.jsonl`) and dispatched in real time to the local AI Threat Analysis Bridge for contextual evaluation.
+5. **Suricata IDS Integration & Threat Bridge Forwarding**: Geofence infractions are elevated into formal Suricata-compatible threat alerts assigned dedicated signature IDs (`10_000_900` for entry, `10_000_901` for exit). Alerts are ingested into the system-wide threat ledger (`alerts.jsonl`) and dispatched in real time to the local Threat Analysis Bridge for contextual evaluation.
 
 ---
 
 ## 23.2 Multi-Source Location Provider Subsystem (Auto, Manual, Reported, RF, GNSS)
 
-The location provider architecture ([src/geofence/sources/mod.rs](file:///home/hp/SGX/src/geofence/sources/mod.rs)) decouples the spatial evaluation engine from specific hardware positioning sensors. All location providers implement the asynchronous [LocationSource](file:///home/hp/SGX/src/geofence/sources/mod.rs#L14-L27) trait:
+The location provider architecture (`src/geofence/sources/mod.rs`) decouples the spatial evaluation engine from specific hardware positioning sensors. All location providers implement the asynchronous `src/geofence/sources/mod.rs#L14-L27` trait:
 
     #[async_trait]
     pub trait LocationSource: Send + Sync {
@@ -7219,19 +7240,19 @@ The location provider architecture ([src/geofence/sources/mod.rs](file:///home/h
 
 ### 23.2.1 The Five Ingestion Providers (`SourceKind`)
 
-The system supports five operational source configurations defined by [SourceKind](file:///home/hp/SGX/src/geofence/sources/mod.rs#L29-L36):
+The system supports five operational source configurations defined by `src/geofence/sources/mod.rs#L29-L36`:
 
 1. **`AutoSource` (`auto`)**: The default autonomous arbiter. Dynamically monitors GNSS, RF, and reported location providers, selecting the healthiest, highest-priority source and handling automated failover.
-2. **`ManualSource` (`manual`)** ([src/geofence/sources/manual.rs](file:///home/hp/SGX/src/geofence/sources/manual.rs)): Retrieves a static, operator-defined coordinate fix stored in local persistent storage. Intended for fixed-mount base stations, industrial racks, and stationary gateway appliances.
-3. **`ReportedSource` (`reported`)** ([src/geofence/sources/reported.rs](file:///home/hp/SGX/src/geofence/sources/reported.rs)): Ingests dynamic coordinate fixes reported by authenticated operator browsers, mobile clients, or field terminals via the REST endpoint `POST /api/v1/geofence/location`.
-4. **`RfSource` (`rf`)** ([src/geofence/sources/rf.rs](file:///home/hp/SGX/src/geofence/sources/rf.rs)): Directly commands the host wireless radio interface to perform an active Layer 2 802.11 beacon survey, yielding a collection of observed BSSIDs and signal levels (`ApObservation`).
-5. **`GnssSource` (`gnss`)** ([src/geofence/sources/gnss.rs](file:///home/hp/SGX/src/geofence/sources/gnss.rs)): Interfaces directly with onboard GNSS/GPS serial hardware modules (e.g. NMEA 0183 / u-blox UART interfaces) for direct satellite positioning.
+2. **`ManualSource` (`manual`)** (`src/geofence/sources/manual.rs`): Retrieves a static, operator-defined coordinate fix stored in local persistent storage. Intended for fixed-mount base stations, industrial racks, and stationary gateway appliances.
+3. **`ReportedSource` (`reported`)** (`src/geofence/sources/reported.rs`): Ingests dynamic coordinate fixes reported by authenticated operator browsers, mobile clients, or field terminals via the REST endpoint `POST /api/v1/geofence/location`.
+4. **`RfSource` (`rf`)** (`src/geofence/sources/rf.rs`): Directly commands the host wireless radio interface to perform an active Layer 2 802.11 beacon survey, yielding a collection of observed BSSIDs and signal levels (`ApObservation`).
+5. **`GnssSource` (`gnss`)** (`src/geofence/sources/gnss.rs`): Interfaces directly with onboard GNSS/GPS serial hardware modules (e.g. NMEA 0183 / u-blox UART interfaces) for direct satellite positioning.
 
 The active provider mode is configured via the environment variable `SGX_GEOFENCE_SOURCE` (`auto`, `manual`, `reported`, `rf`, or `gnss`). When set to any mode other than `auto`, the engine operates in `forced` selection mode.
 
 ### 23.2.2 The Autonomous Source Arbiter (`AutoSource` State Machine)
 
-When configured in `auto` mode, [AutoSource](file:///home/hp/SGX/src/geofence/sources/mod.rs#L167-L184) evaluates available candidates using a strict hierarchical priority matrix:
+When configured in `auto` mode, `src/geofence/sources/mod.rs#L167-L184` evaluates available candidates using a strict hierarchical priority matrix:
 
 | Priority Rank | Provider Kind | Technology | Validation & Health Criteria |
 | :--- | :--- | :--- | :--- |
@@ -7251,17 +7272,17 @@ To prevent rapid, erratic oscillation between competing location sources in frin
 - **Active Failure Threshold (`SGX_GEOFENCE_SOURCE_FAILURE_THRESHOLD`, default 3 cycles)**: An active provider is not abandoned on a single transient missed sample. It is flagged as failed only after 3 consecutive empty or invalid cycles.
 - **Source Hold-Down Timer (`SGX_GEOFENCE_SOURCE_HOLD_DOWN_SECS`, default 60 seconds)**: Once a new source is promoted to active, the engine locks source selection for at least 60 seconds. During this hold-down interval, lower-priority candidate promotions are suppressed unless the active source suffers total failure exceeding the failure threshold.
 
-The active selection status, current provider ID, human-readable reason string, and timestamp are atomically recorded to `/var/lib/sgx-guardian/geofence/source_selection.json` ([SourceSelectionStatus](file:///home/hp/SGX/src/geofence/model.rs#L84-L105)).
+The active selection status, current provider ID, human-readable reason string, and timestamp are atomically recorded to `/var/lib/sgx-guardian/geofence/source_selection.json` (`src/geofence/model.rs#L84-L105`).
 
 ---
 
 ## 23.3 Dual-Modal Geofence Zone Models (Coordinate Centroids & RF Signatures)
 
-The geofence data model ([src/geofence/model.rs](file:///home/hp/SGX/src/geofence/model.rs)) provides unified schema representation for both spatial centroids and ambient radio signatures.
+The geofence data model (`src/geofence/model.rs`) provides unified schema representation for both spatial centroids and ambient radio signatures.
 
 ### 23.3.1 Domain Zone Model (`GeofenceZone`, `ZoneKind`, `topology_node_ref`)
 
-A geofence boundary is represented by the [GeofenceZone](file:///home/hp/SGX/src/geofence/model.rs#L107-L128) struct:
+A geofence boundary is represented by the `src/geofence/model.rs#L107-L128` struct:
 
     pub struct GeofenceZone {
         pub zone_id: String,
@@ -7284,41 +7305,41 @@ A geofence boundary is represented by the [GeofenceZone](file:///home/hp/SGX/src
 Key model attributes include:
 - `zone_id`: Unique Uniform Resource Name (`urn:uuid:<uuid-v4>`).
 - `topology_node_ref`: Optional node DID or device identifier linking the zone directly to a network vertex on the live topology canvas.
-- `kind`: Specifies evaluation mode via [ZoneKind](file:///home/hp/SGX/src/geofence/model.rs#L6-L11) (`Coordinate` vs `RfSignature`).
+- `kind`: Specifies evaluation mode via `src/geofence/model.rs#L6-L11` (`Coordinate` vs `RfSignature`).
 - `center_lat`, `center_lng`, `radius_m`: Centroid coordinates in decimal degrees and boundary radius in meters (mandatory for `Coordinate` zones).
-- `rf_signature`: Fingerprint containing a vector of [ApObservation](file:///home/hp/SGX/src/geofence/model.rs#L13-L17) items (`bssid`, `signal_dbm`) and an acceptance `threshold` (default `0.6`, requiring 60% BSSID match).
+- `rf_signature`: Fingerprint containing a vector of `src/geofence/model.rs#L13-L17` items (`bssid`, `signal_dbm`) and an acceptance `threshold` (default `0.6`, requiring 60% BSSID match).
 - `on_entry`, `on_exit`: Boolean activation gates determining whether transitions into or out of the boundary trigger alerts and automated actions.
 - `severity`: Standardized classification (`info`, `low`, `medium`, `high`, `critical`).
-- `automation`: Autonomous countermeasure specification ([ZoneAutomation](file:///home/hp/SGX/src/geofence/actions/mod.rs#L15-L25)).
+- `automation`: Autonomous countermeasure specification (`src/geofence/actions/mod.rs#L15-L25`).
 - `enabled`: Administrative toggle allowing zones to be silenced without deleting their configuration.
 
 ### 23.3.2 Atomic Disk Persistence & Tamper-Evident SHA-256 Registry Sealing (`zones.json`)
 
-All configured zones are aggregated into the [GeofenceRegistry](file:///home/hp/SGX/src/geofence/model.rs#L130-L139) container, stored at `/var/lib/sgx-guardian/geofence/zones.json` (overridable via `SGX_GUARDIAN_GEOFENCE_BASE`).
+All configured zones are aggregated into the `src/geofence/model.rs#L130-L139` container, stored at `/var/lib/sgx-guardian/geofence/zones.json` (overridable via `SGX_GUARDIAN_GEOFENCE_BASE`).
 
 To protect against offline disk modification, hostile file corruption, or unauthorized boundary manipulation, the registry implements cryptographic sealing and atomic file commits:
 
-1. **Global Concurrency Synchronization**: All registry mutations acquire the global reentrant mutex `GEOFENCE_WRITE_LOCK` ([src/geofence/zones.rs](file:///home/hp/SGX/src/geofence/zones.rs#L14)).
+1. **Global Concurrency Synchronization**: All registry mutations acquire the global reentrant mutex `GEOFENCE_WRITE_LOCK` (`src/geofence/zones.rs#L14`).
 2. **Canonical JSON Key Sorting**: `GeofenceRegistry::canonical_bytes_for_proof()` recursively reorders all JSON object keys into lexicographical order using `BTreeMap` structures, guaranteeing deterministic serialization independent of memory representation.
-3. **W3C DataIntegrityProof Sealing**: The system computes a SHA-256 digest over the canonical bytes and attaches a cryptographic [Proof](file:///home/hp/SGX/src/geofence/model.rs#L138) (`proof_type: "DataIntegrityProof"`, `cryptosuite: "sha2-256-tamper-evident"`, `proof_purpose: "assertionMethod"`).
-4. **Integrity Verification on Boot**: When loading the registry, [verify_registry](file:///home/hp/SGX/src/geofence/zones.rs#L290-L301) recalculates the SHA-256 digest over canonical bytes. If the computed hash fails to match `proof.proof_value`, the engine fails closed with [GeofenceError::InvalidProof](file:///home/hp/SGX/src/geofence/errors.rs#L9-L10), rejecting tampered boundary definitions.
+3. **W3C DataIntegrityProof Sealing**: The system computes a SHA-256 digest over the canonical bytes and attaches a cryptographic `src/geofence/model.rs#L138` (`proof_type: "DataIntegrityProof"`, `cryptosuite: "sha2-256-tamper-evident"`, `proof_purpose: "assertionMethod"`).
+4. **Integrity Verification on Boot**: When loading the registry, `src/geofence/zones.rs#L290-L301` recalculates the SHA-256 digest over canonical bytes. If the computed hash fails to match `proof.proof_value`, the engine fails closed with `src/geofence/errors.rs#L9-L10`, rejecting tampered boundary definitions.
 5. **Atomic Two-Phase Flush (`write_atomic`)**: Serialized data is written to a temporary sibling file (`zones.json.tmp`), explicitly flushed to physical media via `file.sync_all()`, renamed over `zones.json` via POSIX `rename()`, and finalized with `sync_parent_dir()` to ensure file-table durability across hardware power loss.
 
 Optional bootstrap seeding is supported via `SGX_GEOFENCE_SEED_DEMO_ZONES=1`, which pre-populates initial baseline zones (`Facility Perimeter`, radius 250m; `Control Room`, radius 50m) on initial startup.
 
 ### 23.3.3 Zone CRUD Operations & Partial Mutations (`ZonePatch`)
 
-Zone administration is exposed through thread-safe functions in [src/geofence/zones.rs](file:///home/hp/SGX/src/geofence/zones.rs):
+Zone administration is exposed through thread-safe functions in `src/geofence/zones.rs`:
 - `list_zones()`: Reads and verifies the active registry, returning all configured zones.
 - `create_zone(zone)`: Validates coordinate finiteness, radius positivity, and RF thresholds; generates a UUID-based URN; increments the registry sequence counter; updates timestamps; seals the registry; and commits to disk.
-- `update_zone(id, patch)`: Applies partial updates via [ZonePatch](file:///home/hp/SGX/src/geofence/zones.rs#L18-L32). Allows atomic modification of individual fields (such as toggling `enabled`, altering `radius_m`, or updating `automation`) without requiring full record replacement. Re-validates the modified zone and increments the sequence counter before re-sealing.
+- `update_zone(id, patch)`: Applies partial updates via `src/geofence/zones.rs#L18-L32`. Allows atomic modification of individual fields (such as toggling `enabled`, altering `radius_m`, or updating `automation`) without requiring full record replacement. Re-validates the modified zone and increments the sequence counter before re-sealing.
 - `delete_zone(id)`: Removes the target zone from the registry array, increments the sequence counter, re-seals, and flushes to disk.
 
 ---
 
 ## 23.4 Spatial Evaluation Engine (Spherical Haversine & Temporal Hysteresis)
 
-The spatial evaluation engine ([src/geofence/eval.rs](file:///home/hp/SGX/src/geofence/eval.rs)) runs continuously as a background Tokio task spawned during daemon initialization ([src/geofence/mod.rs#L28-L45](file:///home/hp/SGX/src/geofence/mod.rs#L28-L45)).
+The spatial evaluation engine (`src/geofence/eval.rs`) runs continuously as a background Tokio task spawned during daemon initialization (`src/geofence/mod.rs#L28-L45`).
 
 ### 23.4.1 Asynchronous Background Evaluation Loop (`eval::evaluation_loop`)
 
@@ -7327,19 +7348,19 @@ The evaluation loop executes on a periodic timer initialized via `tokio::time::i
     eval_secs = SGX_GEOFENCE_EVAL_SECS (default: 30 seconds, clamped 1..=3600)
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay)
 
-During each cycle, the engine executes [run_evaluation_cycle](file:///home/hp/SGX/src/geofence/eval.rs#L58-L172):
+During each cycle, the engine executes `src/geofence/eval.rs#L58-L172`:
 1. Samples the active location provider (`source.current().await`).
 2. Persists observations to disk (`location.json`, `reported_location.json`, or `rf_location.json`).
 3. Loads the verified zone registry and iterates over all enabled zones.
 4. Matches each zone with its appropriate fix type (`Coordinate` zones receive coordinate fixes; `RfSignature` zones receive observed AP lists).
-5. Computes spatial status ([evaluate_zone](file:///home/hp/SGX/src/geofence/zones.rs#L161-L194)).
+5. Computes spatial status (`src/geofence/zones.rs#L161-L194`).
 6. Evaluates candidate transitions through the temporal hysteresis filter.
 7. Dispatches alerts and automated countermeasures when transitions are committed.
 8. Writes updated zone evaluation statuses to `/var/lib/sgx-guardian/geofence/status.json`.
 
 ### 23.4.2 Exact Spherical Haversine Geodesic Distance Computation (`haversine_m`)
 
-For coordinate zones, geodesic distance between the device fix `(lat1, lng1)` and the zone centroid `(lat2, lng2)` is calculated using the exact spherical Haversine trigonometric formulation ([haversine_m](file:///home/hp/SGX/src/geofence/zones.rs#L207-L214)):
+For coordinate zones, geodesic distance between the device fix `(lat1, lng1)` and the zone centroid `(lat2, lng2)` is calculated using the exact spherical Haversine trigonometric formulation (`src/geofence/zones.rs#L207-L214`):
 
     const EARTH_RADIUS_M: f64 = 6_371_000.0;
 
@@ -7353,7 +7374,7 @@ For coordinate zones, geodesic distance between the device fix `(lat1, lng1)` an
         2.0 * EARTH_RADIUS_M * a.sqrt().atan2((1.0 - a).sqrt())
     }
 
-Strict input validation ([validate_coordinate](file:///home/hp/SGX/src/geofence/zones.rs#L216-L233)) rejects `NaN`, infinite values, latitudes outside `[-90.0, 90.0]`, longitudes outside `[-180.0, 180.0]`, and non-positive radii (`radius_m <= 0.0`). The inside condition is met when:
+Strict input validation (`src/geofence/zones.rs#L216-L233`) rejects `NaN`, infinite values, latitudes outside `[-90.0, 90.0]`, longitudes outside `[-180.0, 180.0]`, and non-positive radii (`radius_m <= 0.0`). The inside condition is met when:
 
     distance_m <= zone.radius_m
 
@@ -7375,13 +7396,13 @@ Hysteresis evaluation proceeds as follows:
       candidate_count >= config.hysteresis
       (configured via SGX_GEOFENCE_HYSTERESIS, default: 2 cycles, clamped 1..=100)
 
-- Once confirmed, `confirmed_inside` updates to the new state, `candidate_count` resets, and if the zone has enabled `on_entry` or `on_exit` triggers, the engine invokes [emit_transition](file:///home/hp/SGX/src/geofence/eval.rs#L230-L268).
+- Once confirmed, `confirmed_inside` updates to the new state, `candidate_count` resets, and if the zone has enabled `on_entry` or `on_exit` triggers, the engine invokes `src/geofence/eval.rs#L230-L268`.
 
 ---
 
 ## 23.5 Ambient RF Signature Fingerprinting & Signal Matching
 
-In GPS-denied tactical environments, underground vaults, and hardened industrial facilities, satellite navigation signals are unavailable or susceptible to electronic spoofing. The RF Signature geofencing engine ([src/geofence/sources/rf.rs](file:///home/hp/SGX/src/geofence/sources/rf.rs)) establishes physical presence by fingerprinting ambient 802.11 Access Points.
+In GPS-denied tactical environments, underground vaults, and hardened industrial facilities, satellite navigation signals are unavailable or susceptible to electronic spoofing. The RF Signature geofencing engine (`src/geofence/sources/rf.rs`) establishes physical presence by fingerprinting ambient 802.11 Access Points.
 
 ### 23.5.1 Wireless Interface Discovery & Management Interface Isolation
 
@@ -7400,7 +7421,7 @@ Wireless PHY chips cannot handle concurrent active scans from multiple caller th
 
 ### 23.5.3 Jaccard Similarity Scoring & Threshold Evaluation
 
-A reference RF signature stores a list of authorized BSSIDs and an acceptance threshold ([RfSignature](file:///home/hp/SGX/src/geofence/model.rs#L20-L25)):
+A reference RF signature stores a list of authorized BSSIDs and an acceptance threshold (`src/geofence/model.rs#L20-L25`):
 
     pub struct RfSignature {
         pub aps: Vec<ApObservation>,
@@ -7429,16 +7450,16 @@ Operators capture ambient fingerprints for a zone via `POST /api/v1/geofence/zon
 
 ## 23.6 Autonomous Zone Countermeasures & Incident Response (ZoneAutomation)
 
-Perimeter violations can automatically trigger defensive actions defined within the zone's automation policy ([src/geofence/actions/](file:///home/hp/SGX/src/geofence/actions/)).
+Perimeter violations can automatically trigger defensive actions defined within the zone's automation policy (`src/geofence/actions/`).
 
 ### 23.6.1 Automated Countermeasure Catalog (`GeofenceAction`)
 
-Zone automation policies ([ZoneAutomation](file:///home/hp/SGX/src/geofence/actions/mod.rs#L15-L25)) configure discrete action pipelines for both `on_entry` and `on_exit` transitions:
+Zone automation policies (`src/geofence/actions/mod.rs#L15-L25`) configure discrete action pipelines for both `on_entry` and `on_exit` transitions:
 
 | Action Variant | Serialization Tag | Operational Behavior & Impact |
 | :--- | :--- | :--- |
 | `Notify { severity }` | `"notify"` | Dispatches high-visibility visual notifications to operator consoles and the audit trail. |
-| `RaiseAlert { severity }` | `"raise_alert"` | Synthesizes formal Suricata IDS threat alerts logged to `alerts.jsonl` and dispatched to AI bridge. |
+| `RaiseAlert { severity }` | `"raise_alert"` | Synthesizes formal Suricata IDS threat alerts logged to `alerts.jsonl` and dispatched to the threat bridge. |
 | `RunScan` | `"run_scan"` | Triggers automated local network asset discovery scan (`dkp discovery scan`). |
 | `EmergencyKeyRotation` | `"emergency_key_rotation"` | **Destructive**: Triggers immediate cryptographic key rotation (`dkp emergency-rotate`), revoking session keys and generating fresh DID keys. |
 | `LockNetwork` | `"lock_network"` | **Destructive**: Physical interface isolation. Writes lock file to `/var/lib/sgx-guardian/cot/transport_lock_{node_id}.txt` to sever communications. |
@@ -7447,7 +7468,7 @@ Default zone configuration enforces a conservative baseline: `on_entry` is empty
 
 ### 23.6.2 Anti-Retrigger One-Shot Latching (`FIRED` State Machine)
 
-To prevent action storms when a device remains inside or outside a zone across hundreds of evaluation cycles, the action executor ([src/geofence/actions/executor.rs](file:///home/hp/SGX/src/geofence/actions/executor.rs)) maintains an in-memory execution latch:
+To prevent action storms when a device remains inside or outside a zone across hundreds of evaluation cycles, the action executor (`src/geofence/actions/executor.rs`) maintains an in-memory execution latch:
 
     static FIRED: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
@@ -7473,7 +7494,7 @@ Destructive countermeasures (`LockNetwork` and `EmergencyKeyRotation`) can sever
 
 ## 23.7 Location-Based Threat Alerting & Suricata SID Integration
 
-Perimeter violations are elevated into formal intrusion detection events ([src/geofence/alerts.rs](file:///home/hp/SGX/src/geofence/alerts.rs)) unified with the system's Suricata threat inventory.
+Perimeter violations are elevated into formal intrusion detection events (`src/geofence/alerts.rs`) unified with the system's Suricata threat inventory.
 
 ### 23.7.1 Dedicated Suricata Signature Identifiers (`10_000_900` & `10_000_901`)
 
@@ -7481,7 +7502,7 @@ Geofence threat alerts are assigned reserved Suricata Signature IDs (SIDs):
 - **SID `10_000_900`**: Zone Entry Violation (`SGX GEOFENCE <name> ENTRY (<fix_summary>)`).
 - **SID `10_000_901`**: Zone Exit / Perimeter Breach (`SGX GEOFENCE <name> EXIT (<fix_summary>)`).
 
-The alert payload conforms to the system-wide [ThreatAlert](file:///home/hp/SGX/src/threat/threat_alert.rs) schema:
+The alert payload conforms to the system-wide `src/threat/threat_alert.rs` schema:
 - `alert_id`: Unique 16-character hexadecimal identifier derived from `Sha256(sid || zone_id || transition || timestamp_nanos)[..8]`.
 - `src_ip`: `"geofence:local"`.
 - `dst_ip`: `<zone_id>` (e.g. `urn:uuid:...`).
@@ -7490,22 +7511,22 @@ The alert payload conforms to the system-wide [ThreatAlert](file:///home/hp/SGX/
 - `severity`: Dynamically mapped from zone configuration (`Info`, `Low`, `Medium`, `High`, or `Critical`).
 - `event_type`: `"alert"`.
 
-### 23.7.2 Alert Inventory Ingestion & AI Threat Bridge Forwarding
+### 23.7.2 Alert Inventory Ingestion & Threat Bridge Forwarding
 
-When [emit_transition_alert](file:///home/hp/SGX/src/geofence/alerts.rs#L22-L46) fires:
+When `src/geofence/alerts.rs#L22-L46` fires:
 1. The alert is ingested into `AlertInventory` loaded from `/var/lib/sgx-guardian/geofence/alerts.jsonl`.
 2. The inventory is committed to disk atomically via `save_atomic`.
-3. The alert is immediately dispatched to the local AI Threat Analysis Bridge via [forward_to_ai](file:///home/hp/SGX/src/threat/ai_bridge.rs#L38-L45), allowing local AI models to correlate spatial perimeter infractions with concurrent network intrusions, unauthorized SSH logins, or abnormal SCADA telemetry.
+3. The alert is immediately dispatched to the local Threat Analysis Bridge via `src/threat/ai_bridge.rs#L38-L45`, allowing the local correlation engine to correlate spatial perimeter infractions with concurrent network intrusions, unauthorized SSH logins, or abnormal SCADA telemetry.
 
 ### 23.7.3 Rolling Transition Event Ledger (`events.jsonl`)
 
-Every state transition is permanently recorded in the append-only event log `/var/lib/sgx-guardian/geofence/events.jsonl` ([GeofenceEvent](file:///home/hp/SGX/src/geofence/model.rs#L165-L191)). To prevent unbounded storage growth on flash media, [persistence::append_event](file:///home/hp/SGX/src/geofence/persistence.rs#L173-L191) enforces a rolling ring buffer capped at `MAX_EVENTS = 10_000` entries, automatically pruning the oldest records upon reaching capacity.
+Every state transition is permanently recorded in the append-only event log `/var/lib/sgx-guardian/geofence/events.jsonl` (`src/geofence/model.rs#L165-L191`). To prevent unbounded storage growth on flash media, `src/geofence/persistence.rs#L173-L191` enforces a rolling ring buffer capped at `MAX_EVENTS = 10_000` entries, automatically pruning the oldest records upon reaching capacity.
 
 ---
 
 ## 23.8 REST API Reference & Operator Management Console
 
-The geofence REST API ([src/api/handlers/geofence.rs](file:///home/hp/SGX/src/api/handlers/geofence.rs)) exposes complete administrative control to local operators, remote orchestrators, and frontend client applications.
+The geofence REST API (`src/api/handlers/geofence.rs`) exposes complete administrative control to local operators, remote orchestrators, and frontend client applications.
 
 ### 23.8.1 Location & Status Endpoints
 
@@ -7564,16 +7585,16 @@ Feature 23 is validated by a dedicated integration and unit test suite comprisin
 
 | Test ID | Verification Scope | Target Test File & Function | Pass Criteria |
 | :--- | :--- | :--- | :--- |
-| **GEO-001** | Coordinate Bounds & Validation | [tests/cov_wave8_geofence_zones_persistence_test.rs](file:///home/hp/SGX/tests/cov_wave8_geofence_zones_persistence_test.rs): `coordinate_validation_covers_finite_ranges_and_boundaries` | Rejects non-finite values (`NaN`, `Inf`) and latitudes outside `[-90, 90]`. |
-| **GEO-002** | Zone Schema Validation | [tests/cov_wave8_geofence_zones_persistence_test.rs](file:///home/hp/SGX/tests/cov_wave8_geofence_zones_persistence_test.rs): `zone_validation_rejects_each_invalid_shape` | Rejects empty names, invalid severities, negative radii, and out-of-range RF thresholds. |
-| **GEO-003** | Spherical Haversine Distance Precision | [src/geofence/zones.rs](file:///home/hp/SGX/src/geofence/zones.rs): `haversine_matches_known_distance` | Accurately calculates geodesic distance between NY and LA within expected 3,935–3,950 km bounds. |
-| **GEO-004** | RF Fingerprint Matching & Scoring | [tests/cov_wave8_geofence_zones_persistence_test.rs](file:///home/hp/SGX/tests/cov_wave8_geofence_zones_persistence_test.rs): `zone_evaluation_covers_coordinate_rf_disabled_and_mismatched_fixes` | Validates BSSID set overlap; confirms inside state when match score meets or exceeds threshold. |
-| **GEO-005** | Multi-Sample Hysteresis Filter | [src/geofence/eval.rs](file:///home/hp/SGX/src/geofence/eval.rs): `run_evaluation_cycle` test cases | State transition occurs only after consecutive cycles satisfy configured hysteresis count. |
-| **GEO-006** | Source Arbitration & Anti-Flapping | [src/geofence/sources/mod.rs](file:///home/hp/SGX/src/geofence/sources/mod.rs): `AutoSource` test suite | Verifies priority ordering (GNSS > RF > Reported) and confirms hold-down suppression. |
-| **GEO-007** | Atomic Registry Sealing & Proofs | [tests/cov_wave8_geofence_zones_persistence_test.rs](file:///home/hp/SGX/tests/cov_wave8_geofence_zones_persistence_test.rs): `registry_sealing_is_stable_and_detects_missing_or_tampered_proofs` | Detects unauthorized sequence mutations and invalidates tampered SHA-256 proofs. |
-| **GEO-008** | Automated Countermeasures & Gating | [tests/geofence_actions_unit_test.rs](file:///home/hp/SGX/tests/geofence_actions_unit_test.rs): Full test suite | Verifies one-shot latching, confidence boundary rejection, and destructive action downgrades. |
-| **GEO-009** | Suricata Alert Synthesis & SIDs | [tests/geofence_alerts_unit_test.rs](file:///home/hp/SGX/tests/geofence_alerts_unit_test.rs): Full test suite | Verifies SID `10_000_900` on entry, SID `10_000_901` on exit, and distinct SHA-256 alert IDs. |
-| **GEO-010** | REST API Handlers & Simulation | [src/api/handlers/geofence.rs](file:///home/hp/SGX/src/api/handlers/geofence.rs): Integration test suite | Verifies zone CRUD, RF capture execution, location ingestion, and action test simulations. |
+| **GEO-001** | Coordinate Bounds & Validation | `tests/cov_wave8_geofence_zones_persistence_test.rs`: `coordinate_validation_covers_finite_ranges_and_boundaries` | Rejects non-finite values (`NaN`, `Inf`) and latitudes outside `[-90, 90]`. |
+| **GEO-002** | Zone Schema Validation | `tests/cov_wave8_geofence_zones_persistence_test.rs`: `zone_validation_rejects_each_invalid_shape` | Rejects empty names, invalid severities, negative radii, and out-of-range RF thresholds. |
+| **GEO-003** | Spherical Haversine Distance Precision | `src/geofence/zones.rs`: `haversine_matches_known_distance` | Accurately calculates geodesic distance between NY and LA within expected 3,935–3,950 km bounds. |
+| **GEO-004** | RF Fingerprint Matching & Scoring | `tests/cov_wave8_geofence_zones_persistence_test.rs`: `zone_evaluation_covers_coordinate_rf_disabled_and_mismatched_fixes` | Validates BSSID set overlap; confirms inside state when match score meets or exceeds threshold. |
+| **GEO-005** | Multi-Sample Hysteresis Filter | `src/geofence/eval.rs`: `run_evaluation_cycle` test cases | State transition occurs only after consecutive cycles satisfy configured hysteresis count. |
+| **GEO-006** | Source Arbitration & Anti-Flapping | `src/geofence/sources/mod.rs`: `AutoSource` test suite | Verifies priority ordering (GNSS > RF > Reported) and confirms hold-down suppression. |
+| **GEO-007** | Atomic Registry Sealing & Proofs | `tests/cov_wave8_geofence_zones_persistence_test.rs`: `registry_sealing_is_stable_and_detects_missing_or_tampered_proofs` | Detects unauthorized sequence mutations and invalidates tampered SHA-256 proofs. |
+| **GEO-008** | Automated Countermeasures & Gating | `tests/geofence_actions_unit_test.rs`: Full test suite | Verifies one-shot latching, confidence boundary rejection, and destructive action downgrades. |
+| **GEO-009** | Suricata Alert Synthesis & SIDs | `tests/geofence_alerts_unit_test.rs`: Full test suite | Verifies SID `10_000_900` on entry, SID `10_000_901` on exit, and distinct SHA-256 alert IDs. |
+| **GEO-010** | REST API Handlers & Simulation | `src/api/handlers/geofence.rs`: Integration test suite | Verifies zone CRUD, RF capture execution, location ingestion, and action test simulations. |
 
 ---
 
@@ -7582,39 +7603,39 @@ Feature 23 is validated by a dedicated integration and unit test suite comprisin
 The complete implementation of Feature 23 is organized across the following core source files:
 
 ### Core Geofence Subsystem: `src/geofence/`
-- **[src/geofence/mod.rs](file:///home/hp/SGX/src/geofence/mod.rs)**: Subsystem entrypoint, `GeofenceConfig` parser, and background task supervisor (`spawn`).
-- **[src/geofence/model.rs](file:///home/hp/SGX/src/geofence/model.rs)**: Domain models (`GeofenceZone`, `ZoneKind`, `Fix`, `RfSignature`, `GeofenceRegistry`, `GeofenceEvent`, `ZoneStatus`).
-- **[src/geofence/zones.rs](file:///home/hp/SGX/src/geofence/zones.rs)**: Zone CRUD operations, Haversine trigonometric distance formula (`haversine_m`), and cryptographic proof sealing (`seal_registry`, `verify_registry`).
-- **[src/geofence/eval.rs](file:///home/hp/SGX/src/geofence/eval.rs)**: Continuous asynchronous spatial evaluation loop, temporal hysteresis state machine (`ZoneRuntimeState`), and transition emitter.
-- **[src/geofence/persistence.rs](file:///home/hp/SGX/src/geofence/persistence.rs)**: Atomic disk storage primitives (`write_atomic`), ring-buffered event logging (`events.jsonl`), and location persistence.
-- **[src/geofence/alerts.rs](file:///home/hp/SGX/src/geofence/alerts.rs)**: Threat alert generation with Suricata signature IDs (`10_000_900` / `10_000_901`), `AlertInventory` integration, and AI Threat Bridge forwarding.
-- **[src/geofence/errors.rs](file:///home/hp/SGX/src/geofence/errors.rs)**: Typed domain errors (`GeofenceError`, `GeofenceResult`).
+- **`src/geofence/mod.rs`**: Subsystem entrypoint, `GeofenceConfig` parser, and background task supervisor (`spawn`).
+- **`src/geofence/model.rs`**: Domain models (`GeofenceZone`, `ZoneKind`, `Fix`, `RfSignature`, `GeofenceRegistry`, `GeofenceEvent`, `ZoneStatus`).
+- **`src/geofence/zones.rs`**: Zone CRUD operations, Haversine trigonometric distance formula (`haversine_m`), and cryptographic proof sealing (`seal_registry`, `verify_registry`).
+- **`src/geofence/eval.rs`**: Continuous asynchronous spatial evaluation loop, temporal hysteresis state machine (`ZoneRuntimeState`), and transition emitter.
+- **`src/geofence/persistence.rs`**: Atomic disk storage primitives (`write_atomic`), ring-buffered event logging (`events.jsonl`), and location persistence.
+- **`src/geofence/alerts.rs`**: Threat alert generation with Suricata signature IDs (`10_000_900` / `10_000_901`), `AlertInventory` integration, and Threat Bridge forwarding.
+- **`src/geofence/errors.rs`**: Typed domain errors (`GeofenceError`, `GeofenceResult`).
 
 ### Location Sources Subsystem: `src/geofence/sources/`
-- **[src/geofence/sources/mod.rs](file:///home/hp/SGX/src/geofence/sources/mod.rs)**: `LocationSource` trait definition, `SourceKind` enumeration, and autonomous arbiter (`AutoSource`).
-- **[src/geofence/sources/manual.rs](file:///home/hp/SGX/src/geofence/sources/manual.rs)**: Fixed administrative coordinate source provider (`ManualSource`).
-- **[src/geofence/sources/reported.rs](file:///home/hp/SGX/src/geofence/sources/reported.rs)**: External client/browser coordinate report ingestion provider (`ReportedSource`).
-- **[src/geofence/sources/rf.rs](file:///home/hp/SGX/src/geofence/sources/rf.rs)**: Active 802.11 Wi-Fi BSSID scanner, interface discovery, management interface isolation, and asynchronous PHY mutex (`RfSource`).
-- **[src/geofence/sources/gnss.rs](file:///home/hp/SGX/src/geofence/sources/gnss.rs)**: Serial hardware GNSS/GPS positioning receiver interface (`GnssSource`).
+- **`src/geofence/sources/mod.rs`**: `LocationSource` trait definition, `SourceKind` enumeration, and autonomous arbiter (`AutoSource`).
+- **`src/geofence/sources/manual.rs`**: Fixed administrative coordinate source provider (`ManualSource`).
+- **`src/geofence/sources/reported.rs`**: External client/browser coordinate report ingestion provider (`ReportedSource`).
+- **`src/geofence/sources/rf.rs`**: Active 802.11 Wi-Fi BSSID scanner, interface discovery, management interface isolation, and asynchronous PHY mutex (`RfSource`).
+- **`src/geofence/sources/gnss.rs`**: Serial hardware GNSS/GPS positioning receiver interface (`GnssSource`).
 
 ### Autonomous Actions & Countermeasures: `src/geofence/actions/`
-- **[src/geofence/actions/mod.rs](file:///home/hp/SGX/src/geofence/actions/mod.rs)**: Action enumeration (`GeofenceAction`), automation policy container (`ZoneAutomation`), and validation logic.
-- **[src/geofence/actions/executor.rs](file:///home/hp/SGX/src/geofence/actions/executor.rs)**: Action dispatch engine, one-shot latching (`FIRED`), destructive action safeguards, dry-run simulation, and hardware network lock writer (`lock_network`).
+- **`src/geofence/actions/mod.rs`**: Action enumeration (`GeofenceAction`), automation policy container (`ZoneAutomation`), and validation logic.
+- **`src/geofence/actions/executor.rs`**: Action dispatch engine, one-shot latching (`FIRED`), destructive action safeguards, dry-run simulation, and hardware network lock writer (`lock_network`).
 
 ### REST API Handlers: `src/api/handlers/`
-- **[src/api/handlers/geofence.rs](file:///home/hp/SGX/src/api/handlers/geofence.rs)**: REST API endpoints for status, location reporting, zone CRUD, RF capture, events, alerts, and action simulation.
+- **`src/api/handlers/geofence.rs`**: REST API endpoints for status, location reporting, zone CRUD, RF capture, events, alerts, and action simulation.
 
 ### Frontend API & UI Components: `frontend/`
-- **[frontend/src/api/geofence.ts](file:///home/hp/SGX/frontend/src/api/geofence.ts)**: TypeScript API client bindings, request/response models, and Axios-wrapped HTTP methods.
-- **[frontend/src/app/components/geofenceDisplay.ts](file:///home/hp/SGX/frontend/src/app/components/geofenceDisplay.ts)**: Display label normalizers, source formatters, and threat detail extractors.
-- **[frontend/src/app/components/topology/EnterpriseTopology.tsx](file:///home/hp/SGX/frontend/src/app/components/topology/EnterpriseTopology.tsx)**: Enterprise network topology map embedding `GeofencePanel` and `ZoneForm`.
-- **[frontend/src/app/components/circle-topology/CircleLiveTopology.tsx](file:///home/hp/SGX/frontend/src/app/components/circle-topology/CircleLiveTopology.tsx)**: Live Circle mesh map embedding `ZoneDialog` with coordinate picking and node DID binding.
-- **[frontend/src/app/screens/settings/ST07Geofencing.tsx](file:///home/hp/SGX/frontend/src/app/screens/settings/ST07Geofencing.tsx)**: Administrative settings screen redirecting operators to the interactive topology canvas.
+- **`frontend/src/api/geofence.ts`**: TypeScript API client bindings, request/response models, and Axios-wrapped HTTP methods.
+- **`frontend/src/app/components/geofenceDisplay.ts`**: Display label normalizers, source formatters, and threat detail extractors.
+- **`frontend/src/app/components/topology/EnterpriseTopology.tsx`**: Enterprise network topology map embedding `GeofencePanel` and `ZoneForm`.
+- **`frontend/src/app/components/circle-topology/CircleLiveTopology.tsx`**: Live Circle mesh map embedding `ZoneDialog` with coordinate picking and node DID binding.
+- **`frontend/src/app/screens/settings/ST07Geofencing.tsx`**: Administrative settings screen redirecting operators to the interactive topology canvas.
 
 ### Test Suites: `tests/`
-- **[tests/cov_wave8_geofence_zones_persistence_test.rs](file:///home/hp/SGX/tests/cov_wave8_geofence_zones_persistence_test.rs)**: Comprehensive integration suite covering validation, Haversine precision, RF scoring, atomic persistence, and cryptographic proofs.
-- **[tests/geofence_alerts_unit_test.rs](file:///home/hp/SGX/tests/geofence_alerts_unit_test.rs)**: Unit test suite verifying Suricata threat alert generation, SIDs, and severity parsing.
-- **[tests/geofence_actions_unit_test.rs](file:///home/hp/SGX/tests/geofence_actions_unit_test.rs)**: Unit test suite validating action policies, boundary confidence checks, and execution safety guards.
+- **`tests/cov_wave8_geofence_zones_persistence_test.rs`**: Comprehensive integration suite covering validation, Haversine precision, RF scoring, atomic persistence, and cryptographic proofs.
+- **`tests/geofence_alerts_unit_test.rs`**: Unit test suite verifying Suricata threat alert generation, SIDs, and severity parsing.
+- **`tests/geofence_actions_unit_test.rs`**: Unit test suite validating action policies, boundary confidence checks, and execution safety guards.
 
 ---
 
@@ -7628,11 +7649,11 @@ In mission-critical defense, tactical communications, and industrial edge comput
 2. **Revocation Rollback Attacks**: Restoring an obsolete system image could inadvertently restore revoked certificates, out-of-date policy rules, or compromised peer public keys, reopening previously closed attack vectors.
 3. **Partial-State Bricking**: If a system crashes mid-restore, leaving configuration files half-written or firewall rule sets out of sync with networking daemons, the node can enter an unrecoverable offline lock-out state.
 
-To solve these challenges, SG-X Guardian introduces the **Encrypted Device Backup & Disaster Recovery Subsystem** ([src/backup/](file:///home/hp/SGX/src/backup/)). Grounded in zero-trust disaster recovery principles, the subsystem decouples operational configuration state from immutable silicon identity:
+To solve these challenges, SG-X Guardian introduces the **Encrypted Device Backup & Disaster Recovery Subsystem** (`src/backup/`). Grounded in zero-trust disaster recovery principles, the subsystem decouples operational configuration state from immutable silicon identity:
 
 - **Sovereign Silicon Key Isolation**: The system strictly prohibits the export of private hardware keys. The hardware root-of-trust (anchored in NXP SE050 / TPM chips) remains immutably rooted in physical silicon. The backup archive encapsulates configuration, firewall state, active policies, verified credentials, revocation lists, and storage vault files, while capturing public silicon identity metadata (`IdentityMeta`) for verification.
-- **High-Work-Factor Cryptographic Envelope**: Backup bundles (`.sgxbak`) are encrypted using Argon2id key derivation (64 MiB memory cost, 3 iterations), 64 KiB streaming chunked AES-256-GCM authenticated encryption, and an outer HMAC-SHA256 integrity envelope that rejects tampered bundles prior to decryption.
-- **ACID Transactional Journaling & Automatic Rollback**: Restorations are executed as atomic, journal-tracked transactions ([RestoreJournal](file:///home/hp/SGX/src/backup/restore/journal.rs#L30-L40)). The engine captures a full pre-restore snapshot, stages replacement files, swaps components in a strict dependency order (applying security policies strictly last), verifies post-restore invariants, and triggers instant rollback on failure.
+- **High-Work-Factor Cryptographic Envelope**: Backup bundles (`.sgxbak`) are encrypted using Argon2id key derivation (`Argon2::default()`: ~19 MiB memory cost, 2 iterations), 64 KiB streaming chunked AES-256-GCM authenticated encryption, and an outer HMAC-SHA256 integrity envelope that rejects tampered bundles prior to decryption.
+- **ACID Transactional Journaling & Automatic Rollback**: Restorations are executed as atomic, journal-tracked transactions (`src/backup/restore/journal.rs#L30-L40`). The engine captures a full pre-restore snapshot, stages replacement files, swaps components in a strict dependency order (applying security policies strictly last), verifies post-restore invariants, and triggers instant rollback on failure.
 - **Dual Restore Modes**: Supports both `SameDevice` restoration (verifying exact matching of the hardware DID) and `NewDeviceMigration` (allowing configuration and credentials to be migrated to replacement hardware while binding to the new hardware's physical silicon DID).
 - **Post-Commit Operator Undo**: Even after a successful restore has been committed, operators retain the ability to cleanly revert the node to its pre-restore state via `POST /api/v1/restore/undo`.
 
@@ -7640,7 +7661,7 @@ To solve these challenges, SG-X Guardian introduces the **Encrypted Device Backu
 
 ## 24.2 Hardware Key Security & Sovereign Silicon Root Isolation
 
-The cornerstone of the SG-X Guardian backup architecture is that **private identity keys never leave the device silicon** ([src/backup/components.rs](file:///home/hp/SGX/src/backup/components.rs)).
+The cornerstone of the SG-X Guardian backup architecture is that **private identity keys never leave the device silicon** (`src/backup/components.rs`).
 
 ### 24.2.1 Secure Element (SE050 / TPM) Non-Exportable Key Enforcement
 
@@ -7652,7 +7673,7 @@ The Secure Element firmware enforces hardware-level non-exportability policies: 
 
 ### 24.2.2 Sensitive File Path Blacklisting & Memory Scrubber
 
-To protect against inadvertent key leakage during filesystem tree traversal, the component gathering engine executes strict path blacklisting ([is_sensitive_backup_path](file:///home/hp/SGX/src/backup/components.rs#L540-L568)) and validation assertions ([assert_no_private_identity_paths](file:///home/hp/SGX/src/backup/components.rs#L477-L487)):
+To protect against inadvertent key leakage during filesystem tree traversal, the component gathering engine executes strict path blacklisting (`src/backup/components.rs#L540-L568`) and validation assertions (`src/backup/components.rs#L477-L487`):
 
     fn is_sensitive_backup_path(path: &Path) -> bool {
         let lower_name = name.to_ascii_lowercase();
@@ -7677,31 +7698,31 @@ To protect against inadvertent key leakage during filesystem tree traversal, the
             || lower_path.contains("se050_scp_keys")
     }
 
-If any gathered path matches this blacklist (outside of local agent mTLS private keys), `assert_no_private_identity_paths` aborts backup creation with [BackupError::InvalidRequest](file:///home/hp/SGX/src/backup/errors.rs#L7-L8).
+If any gathered path matches this blacklist (outside of local agent mTLS private keys), `assert_no_private_identity_paths` aborts backup creation with `src/backup/errors.rs#L7-L8`.
 
-In addition, memory hygiene is strictly enforced in the cryptographic pipeline ([src/backup/crypto.rs#L48](file:///home/hp/SGX/src/backup/crypto.rs#L48)). The 64 bytes of derived key material generated from the operator passphrase are explicitly scrubbed from memory with `key_material.fill(0)` immediately following cipher key initialization, eliminating exposure in memory core dumps.
+In addition, memory hygiene is strictly enforced in the cryptographic pipeline (`src/backup/crypto.rs#L48`). The 64 bytes of derived key material generated from the operator passphrase are explicitly scrubbed from memory with `key_material.fill(0)` immediately following cipher key initialization, eliminating exposure in memory core dumps.
 
 ### 24.2.3 Same-Device vs. Cross-Device Portability Architecture
 
-Backup bundles feature an explicit portability toggle (`portable: bool`) stored in the manifest ([Manifest](file:///home/hp/SGX/src/backup/model.rs#L56-L67)):
-- **Same-Device Enforcement (`portable = false`)**: The backup bundle is locked to the originating hardware node. The preflight validator verifies that `manifest.source_did == state.device_did`. Any attempt to restore this bundle on different hardware is rejected with [BackupError::RestoreUnavailable](file:///home/hp/SGX/src/backup/errors.rs#L15-L16).
-- **Portable Cross-Device Migration (`portable = true`)**: The backup bundle allows configuration migration to replacement hardware (`RestoreMode::NewDeviceMigration`). Operational configuration, network meshes, firewall rules, and credentials are restored, but the replacement hardware's own silicon DID is preserved. Identity metadata is flagged as `Derived` or `VerifyOnly`, and the new hardware re-enrols itself into the Circle of Trust.
+Backup bundles feature an explicit portability toggle (`portable: bool`) stored in the manifest (`src/backup/model.rs#L56-L67`):
+- **Same-Device Enforcement (`portable = false`)**: The backup bundle is locked to the originating hardware node. The preflight validator verifies that `manifest.source_did == state.device_did`. Any attempt to restore this bundle on different hardware is rejected with `src/backup/errors.rs#L15-L16`.
+- **Portable Cross-Device Migration (`portable = true`)**: The backup bundle allows configuration migration to replacement hardware (`RestoreMode::NewDeviceMigration`). Operational configuration, network meshes, firewall rules, and credentials are restored, but the replacement hardware's own silicon DID is preserved. Identity metadata is flagged as `Derived` or `VerifyOnly`, and the new hardware re-enrolls itself into the Circle of Trust.
 
 ---
 
 ## 24.3 Cryptographic Envelope & Streaming Chunk Encryption Engine
 
-SG-X Guardian backup archives (`.sgxbak`) employ an authenticated, streaming cryptographic container ([src/backup/crypto.rs](file:///home/hp/SGX/src/backup/crypto.rs)) engineered to resist offline dictionary attacks, bit-flipping tampering, and chunk truncation.
+SG-X Guardian backup archives (`.sgxbak`) employ an authenticated, streaming cryptographic container (`src/backup/crypto.rs`) engineered to resist offline dictionary attacks, bit-flipping tampering, and chunk truncation.
 
 ### 24.3.1 Argon2id Key Derivation Function (`Argon2id/default`)
 
-Key derivation from the operator passphrase utilizes the modern **Argon2id** password hashing standard, configured with high memory and time parameters:
-- **Memory Cost (`m_cost`)**: `65,536 KiB` (64 MiB RAM requirement).
-- **Time Cost (`t_cost`)**: `3` iterations.
+Key derivation from the operator passphrase utilizes the modern **Argon2id** password hashing standard via `Argon2::default()` (the `argon2` crate 0.5.x default `Params`):
+- **Memory Cost (`m_cost`)**: `19,456 KiB` (~19 MiB RAM requirement).
+- **Time Cost (`t_cost`)**: `2` iterations.
 - **Parallelism (`p_cost`)**: `1` lane.
 - **Salt**: 16 cryptographically random bytes generated via `rand::rngs::OsRng`.
 
-Argon2id outputs 64 bytes of pseudo-random key material:
+Argon2id itself only produces 32 bytes of pseudo-random key material. That 32-byte output is expanded to 64 bytes via `SHA-512` (`src/backup/crypto.rs#L219-L235`), and the 64-byte digest is then split:
 - Bytes `0..32`: AES-256-GCM encryption key (`enc_key`).
 - Bytes `32..64`: HMAC-SHA256 authentication key (`mac_key`).
 
@@ -7709,7 +7730,7 @@ Argon2id outputs 64 bytes of pseudo-random key material:
 
 Plaintext data is processed in streaming chunks of `CHUNK_BYTES = 64 * 1024` (64 KiB), avoiding memory exhaustion when creating multi-gigabyte vault backups.
 
-To prevent chunk reordering, replay, or truncation attacks, the 12-byte initialization vector (nonce) is dynamically synthesized for every chunk ([make_nonce](file:///home/hp/SGX/src/backup/crypto.rs#L210-L219)):
+To prevent chunk reordering, replay, or truncation attacks, the 12-byte initialization vector (nonce) is dynamically synthesized for every chunk (`src/backup/crypto.rs#L210-L219`):
 - **Bytes 0..7 (7 bytes)**: Random `nonce_prefix` generated via `OsRng`.
 - **Bytes 7..11 (4 bytes)**: Big-endian unsigned 32-bit chunk index (`index.to_be_bytes()`).
 - **Byte 11 (1 byte)**: Final chunk delimiter flag (`0x01` if last chunk, `0x00` otherwise).
@@ -7744,17 +7765,17 @@ The physical structure of an `.sgxbak` archive adheres to the following binary s
 
 During archive generation, a running HMAC-SHA256 context (`mac_ctx`) is continuously updated with the magic bytes, header length, header JSON, and all chunk length prefixes and ciphertexts. The final 32-byte HMAC tag is appended to the archive.
 
-During decryption ([decrypt_bundle_bytes](file:///home/hp/SGX/src/backup/crypto.rs#L129-L208)), the HMAC tag is extracted and verified using constant-time comparison (`ring::hmac::verify`). If an attacker tampers with a single byte in the file, decryption is halted immediately before attempting expensive chunk parsing.
+During decryption (`src/backup/crypto.rs#L129-L208`), the HMAC tag is extracted and verified using constant-time comparison (`ring::hmac::verify`). If an attacker tampers with a single byte in the file, decryption is halted immediately before attempting expensive chunk parsing.
 
 ---
 
 ## 24.4 Multi-Component Manifest & System State Aggregation
 
-The backup generator ([src/backup/create.rs](file:///home/hp/SGX/src/backup/create.rs)) aggregates the operating state of the gateway into a structured manifest ([Manifest](file:///home/hp/SGX/src/backup/model.rs#L56-L67)).
+The backup generator (`src/backup/create.rs`) aggregates the operating state of the gateway into a structured manifest (`src/backup/model.rs#L56-L67`).
 
 ### 24.4.1 Eleven Core System Components (`Component` Schema)
 
-The subsystem partitions system state into eleven discrete components ([Component](file:///home/hp/SGX/src/backup/model.rs#L8-L20)):
+The subsystem partitions system state into eleven discrete components (`src/backup/model.rs#L8-L20`):
 
 | Component ID | String Key | Backed Up Assets & Files |
 | :--- | :--- | :--- |
@@ -7772,7 +7793,7 @@ The subsystem partitions system state into eleven discrete components ([Componen
 
 ### 24.4.2 Identity Metadata Snapshot (`IdentityMeta` & DKP Public Hashes)
 
-To enable identity verification without exposing private keys, [identity_meta](file:///home/hp/SGX/src/backup/components.rs#L109-L117) captures public cryptographic fingerprints:
+To enable identity verification without exposing private keys, `src/backup/components.rs#L109-L117` captures public cryptographic fingerprints:
 
     pub struct IdentityMeta {
         pub did: String,
@@ -7785,7 +7806,7 @@ To enable identity verification without exposing private keys, [identity_meta](f
 
 ### 24.4.3 Custom Binary Framing Protocol (`encode_plaintext`)
 
-All gathered files are packed into a deterministic binary stream ([encode_plaintext](file:///home/hp/SGX/src/backup/create.rs#L142-L156)):
+All gathered files are packed into a deterministic binary stream (`src/backup/create.rs#L142-L156`):
 - For each file:
   1. `path_len`: 4 bytes big-endian `u32`.
   2. `archive_path`: UTF-8 relative archive path bytes.
@@ -7800,11 +7821,11 @@ The SHA-256 hash of this entire binary sequence is computed and recorded in `man
 
 ## 24.5 Pre-Restore Validation & Preflight Compatibility Engine
 
-Restoring a backup on a live node is a high-risk operation that could disrupt active routing or violate security boundaries. To eliminate risk, SG-X Guardian enforces a comprehensive preflight validation phase via `POST /api/v1/restore/validate` ([src/backup/restore.rs](file:///home/hp/SGX/src/backup/restore.rs#L64-L109)).
+Restoring a backup on a live node is a high-risk operation that could disrupt active routing or violate security boundaries. To eliminate risk, SG-X Guardian enforces a comprehensive preflight validation phase via `POST /api/v1/restore/validate` (`src/backup/restore.rs#L64-L109`).
 
 ### 24.5.1 Schema, Version & Plaintext SHA-256 Digest Verification
 
-Preflight execution validates core integrity constraints ([validate_manifest](file:///home/hp/SGX/src/backup/validate.rs#L82-L144)):
+Preflight execution validates core integrity constraints (`src/backup/validate.rs#L82-L144`):
 1. **Schema Check**: Confirms `manifest.schema_version == 1` and all `component.schema_version == 1`.
 2. **Identifier Sanity**: Verifies non-empty `backup_id` and `source_did`.
 3. **Decryption & De-framing**: Unpacks all files from the binary stream.
@@ -7817,9 +7838,9 @@ The preflight engine compares `manifest.source_did` against the host's active `s
 - If identical: Assigns `RestoreMode::SameDevice`.
 - If divergent: Assigns `RestoreMode::NewDeviceMigration` and issues formal warnings:
 
-      "target DID differs from the backup DID; identity_meta is metadata-only and new hardware must re-enrol"
+      "target DID differs from the backup DID; identity_meta is metadata-only and new hardware must re-enroll"
 
-The restore preflight report ([RestorePreflightReport](file:///home/hp/SGX/src/backup/restore.rs#L43-L50)) maps out the exact planned action for every component:
+The restore preflight report (`src/backup/restore.rs#L43-L50`) maps out the exact planned action for every component:
 - `VerifyOnly`: Check public metadata without writing to disk (`IdentityMeta` on same-device).
 - `Replace`: Overwrite destination configuration cleanly (`Config`, `Nftables`, `State`, `Tls`, `Vault`).
 - `Merge`: Additively merge records (`Credentials`, `Crl`).
@@ -7828,7 +7849,7 @@ The restore preflight report ([RestorePreflightReport](file:///home/hp/SGX/src/b
 
 ### 24.5.3 Policy Sequence & Rollback Protection Gating
 
-To prevent malicious downgrade attacks (restoring an older policy to re-enable disabled ports or weak cipher suites), [validate_policy_entries](file:///home/hp/SGX/src/backup/restore.rs#L340-L380) compares the active policy version against the backup policy:
+To prevent malicious downgrade attacks (restoring an older policy to re-enable disabled ports or weak cipher suites), `src/backup/restore.rs#L340-L380` compares the active policy version against the backup policy:
 - If `backup_policy.sequence < active_policy.sequence`, the policy component is **automatically skipped** during restore unless the operator explicitly sets `allow_policy_rollback: true` in the request options.
 - The preflight report issues an explicit warning notifying the administrator that policy rollback is prohibited.
 
@@ -7836,7 +7857,7 @@ To prevent malicious downgrade attacks (restoring an older policy to re-enable d
 
 ## 24.6 ACID Journaled Restore Execution & Zero-Downtime Rollback
 
-Restore operations are executed as ACID transactions governed by an on-disk journal ([RestoreJournal](file:///home/hp/SGX/src/backup/restore/journal.rs#L30-L40)).
+Restore operations are executed as ACID transactions governed by an on-disk journal (`src/backup/restore/journal.rs#L30-L40`).
 
 ### 24.6.1 Transactional Journal State Machine (`RestorePhase` Lifecycle)
 
@@ -7874,44 +7895,44 @@ Applying security policies last is a vital resilience defense: it ensures that a
 
 ### 24.6.3 CRL Revocation Monotonicity & Invariant Verification
 
-Before beginning the swap phase, the engine samples the active Certificate Revocation List count ([count_crl_entries](file:///home/hp/SGX/src/backup/restore.rs#L440-L450)):
+Before beginning the swap phase, the engine samples the active Certificate Revocation List count (`src/backup/restore.rs#L440-L450`):
 
     pre_crl_count = count_crl_entries(&state).await?;
 
-During the `Verifying` phase ([verify_after_apply](file:///home/hp/SGX/src/backup/restore.rs#L425-L438)), the engine re-counts active CRL entries:
+During the `Verifying` phase (`src/backup/restore.rs#L425-L438`), the engine re-counts active CRL entries:
 - CRL entries from the backup are additively merged with the active CRL.
 - If the post-restore CRL count is less than `pre_crl_count`, the verification check fails immediately, triggering a full rollback. This guarantees that once a certificate or DID is revoked, restoring an old backup cannot un-revoke it.
 
 ### 24.6.4 Automatic Crash Recovery & Post-Commit Undo Capability (`undo_restore`)
 
-1. **Daemon Startup Recovery ([recover_if_interrupted](file:///home/hp/SGX/src/backup/restore/journal.rs#L96-L131))**: If the gateway suffers unexpected power loss or hardware failure during the `Swapping` phase, the daemon checks `journal.json` upon reboot. If an uncommitted, non-terminal transaction is detected, it is marked `RolledBack`, preventing partial-state corruption from going unnoticed.
-2. **Stale Transaction Reaper ([recover_stale_journal](file:///home/hp/SGX/src/backup/restore/journal.rs#L133-L153))**: Any transaction that remains in an active phase for more than 15 minutes (`STALE_RESTORE_WINDOW_MINUTES`) is automatically declared stale and transitioned to `RolledBack`.
-3. **Operator Undo ([undo_restore](file:///home/hp/SGX/src/backup/restore.rs#L244-L275))**: Even after a restore has successfully committed, the pre-restore snapshot is preserved. An administrator can issue `POST /api/v1/restore/undo` with `confirm: true`. The engine reads the snapshot journal, restores all original files, sets the phase to `RolledBack`, and logs a critical audit event (`AuditCategory::Vault`, `AuditAction::Rollback`).
+1. **Daemon Startup Recovery (`src/backup/restore/journal.rs#L96-L131`)**: If the gateway suffers unexpected power loss or hardware failure during the `Swapping` phase, the daemon checks `journal.json` upon reboot. If an uncommitted, non-terminal transaction is detected, it is marked `RolledBack`, preventing partial-state corruption from going unnoticed.
+2. **Stale Transaction Reaper (`src/backup/restore/journal.rs#L133-L153`)**: Any transaction that remains in an active phase for more than 15 minutes (`STALE_RESTORE_WINDOW_MINUTES`) is automatically declared stale and transitioned to `RolledBack`.
+3. **Operator Undo (`src/backup/restore.rs#L244-L275`)**: Even after a restore has successfully committed, the pre-restore snapshot is preserved. An administrator can issue `POST /api/v1/restore/undo` with `confirm: true`. The engine reads the snapshot journal, restores all original files, sets the phase to `RolledBack`, and logs a critical audit event (`AuditCategory::Vault`, `AuditAction::Rollback`).
 
 ---
 
 ## 24.7 Backup Bundle Import, Export & Historic Ledger Management
 
-The backup management subsystem provides complete lifecycle administration for encrypted archives ([src/backup/import.rs](file:///home/hp/SGX/src/backup/import.rs), [src/backup/create.rs](file:///home/hp/SGX/src/backup/create.rs)).
+The backup management subsystem provides complete lifecycle administration for encrypted archives (`src/backup/import.rs`, `src/backup/create.rs`).
 
 ### 24.7.1 Multipart Staged Import Pipeline & Safe ID Sanitization
 
 External backup files are uploaded via standard multipart HTTP POST requests (`POST /api/v1/backup/import`):
 1. **Isolated Staging**: Uploaded streams are staged in `/var/lib/sgx-guardian/backup/import/{uuid}.sgxbak`.
 2. **Size Enforcement**: Stream size is strictly validated against `max_bundle_bytes` (`SGX_BACKUP_MAX_BUNDLE_BYTES`, default 1 GiB). Uploads exceeding this threshold are aborted with `ApiError::PayloadTooLarge`.
-3. **Identifier Sanitization ([safe_id](file:///home/hp/SGX/src/backup/mod.rs#L63-L67))**: Backup IDs are filtered to contain only alphanumeric characters, dashes, and underscores (`[a-zA-Z0-9-_]`), eliminating directory traversal (`../`) and shell injection attacks.
-4. **Duplicate Rejection**: The engine checks both `history.json` and the physical filesystem. If a backup with the same ID already exists, the import is rejected with [BackupError::Duplicate](file:///home/hp/SGX/src/backup/errors.rs#L9-L10).
-5. **Non-Overwriting Commit ([publish_without_overwrite](file:///home/hp/SGX/src/backup/import.rs#L104-L123))**: Uses atomic filesystem rename or file-copy with POSIX open flags (`O_EXCL`) to ensure existing bundles cannot be clobbered.
+3. **Identifier Sanitization (`src/backup/mod.rs#L63-L67`)**: Backup IDs are filtered to contain only alphanumeric characters, dashes, and underscores (`[a-zA-Z0-9-_]`), eliminating directory traversal (`../`) and shell injection attacks.
+4. **Duplicate Rejection**: The engine checks both `history.json` and the physical filesystem. If a backup with the same ID already exists, the import is rejected with `src/backup/errors.rs#L9-L10`.
+5. **Non-Overwriting Commit (`src/backup/import.rs#L104-L123`)**: Uses atomic filesystem rename or file-copy with POSIX open flags (`O_EXCL`) to ensure existing bundles cannot be clobbered.
 
 ### 24.7.2 Historic Audit Ledger (`history.json`) & Size Quotas
 
-Every local or imported backup is recorded in the permanent audit ledger `/var/lib/sgx-guardian/backup/history.json` ([BackupHistory](file:///home/hp/SGX/src/backup/model.rs#L81-L84)):
+Every local or imported backup is recorded in the permanent audit ledger `/var/lib/sgx-guardian/backup/history.json` (`src/backup/model.rs#L81-L84`):
 - Records backup ID, ISO-8601 creation timestamp, source node ID, source DID, portability status, component inventory array, bundle filesystem path, and exact bundle size in bytes.
 - Atomic updates: `save_history` writes updates to a temporary sibling file (`history.json.tmp`), calls `sync_all()`, and renames atomically.
 
 ### 24.7.3 Atomic Storage Permission Hardening (`0o700` Directories & `0o600` Files)
 
-All directories and files managed by the backup subsystem are hardened with strict POSIX permissions enforced at the filesystem driver level ([src/backup/init.rs](file:///home/hp/SGX/src/backup/init.rs)):
+All directories and files managed by the backup subsystem are hardened with strict POSIX permissions enforced at the filesystem driver level (`src/backup/init.rs`):
 - **Directories (`0o700`)**: Accessible exclusively by the `sgx` system daemon user (`rwx------`). On initialization, `initialize_storage` validates directory permissions; if any directory permissions are broader than `0o700`, daemon startup fails closed.
 - **Files (`0o600`)**: Backup bundles, journals, snapshots, and staged files are created with mode `0o600` (`rw-------`).
 
@@ -7919,18 +7940,18 @@ All directories and files managed by the backup subsystem are hardened with stri
 
 ## 24.8 REST API Reference & Operator Management Console
 
-The backup and restore REST API endpoints are served by the primary Axum router under `/api/v1/backup` and `/api/v1/restore` ([src/api/handlers/backup.rs](file:///home/hp/SGX/src/api/handlers/backup.rs), [src/api/handlers/restore.rs](file:///home/hp/SGX/src/api/handlers/restore.rs)).
+The backup and restore REST API endpoints are served by the primary Axum router under `/api/v1/backup` and `/api/v1/restore` (`src/api/handlers/backup.rs`, `src/api/handlers/restore.rs`).
 
 ### 24.8.1 Backup Lifecycle Endpoints (`/api/v1/backup/...`)
 
 - **`POST /api/v1/backup/create`**: Generates a new encrypted backup bundle.
   - Request: `{ "passphrase": "<string>", "portable": true }`
-  - Response: [BackupRecord](file:///home/hp/SGX/src/backup/model.rs#L70-L79) (`200 OK`).
+  - Response: `src/backup/model.rs#L70-L79` (`200 OK`).
   - Audit Event: Logged with `AuditCategory::Vault`, `AuditSeverity::Info`, `AuditAction::Created`.
 - **`GET /api/v1/backup/history`**: Lists all available backups recorded in `history.json`.
   - Response: `{ "records": [ BackupRecord, ... ] }`.
 - **`POST /api/v1/backup/import`**: Ingests an external `.sgxbak` archive via `multipart/form-data` containing `file` and `passphrase` fields.
-  - Response: [BackupImportReport](file:///home/hp/SGX/src/backup/import.rs#L14-L25).
+  - Response: `src/backup/import.rs#L14-L25`.
 - **`GET /api/v1/backup/download/{id}`**: Streams the binary `.sgxbak` bundle with `Content-Type: application/octet-stream` and attachment disposition header.
 - **`DELETE /api/v1/backup/{id}`**: Deletes the physical `.sgxbak` file and removes its entry from `history.json`.
   - Audit Event: Logged with `AuditCategory::Vault`, `AuditSeverity::Warning`, `AuditAction::Succeeded`.
@@ -7940,22 +7961,22 @@ The backup and restore REST API endpoints are served by the primary Axum router 
 
 - **`POST /api/v1/restore/validate`**: Executes full preflight validation on a backup bundle.
   - Request: `{ "id": "<backup-id>", "passphrase": "<string>", "components": [ ... ], "allow_policy_rollback": false }`
-  - Response: [RestorePreflightReport](file:///home/hp/SGX/src/backup/restore.rs#L43-L50) containing mode (`SameDevice` vs `NewDeviceMigration`), component execution plan, and policy warnings.
+  - Response: `src/backup/restore.rs#L43-L50` containing mode (`SameDevice` vs `NewDeviceMigration`), component execution plan, and policy warnings.
 - **`POST /api/v1/restore/apply`**: Executes the journaled restore transaction.
   - Access Control: Requires authenticated session with `owner` or `admin` role.
   - Request: `{ "id": "<backup-id>", "passphrase": "<string>", "confirm": true, ... }`
-  - Response: [RestoreReport](file:///home/hp/SGX/src/backup/model.rs#L100-L104) with `status: "committed"` and `restart_required: true`.
+  - Response: `src/backup/model.rs#L100-L104` with `status: "committed"` and `restart_required: true`.
   - Audit Event: Logged with `AuditCategory::Vault`, `AuditSeverity::Critical`, `AuditAction::Applied`.
 - **`POST /api/v1/restore/undo`**: Reverts the node to its pre-restore state from the preserved snapshot.
   - Access Control: Requires `owner` or `admin` role.
   - Request: `{ "confirm": true }`
-  - Response: [RestoreReport](file:///home/hp/SGX/src/backup/model.rs#L100-L104) with `status: "undone"`.
+  - Response: `src/backup/model.rs#L100-L104` with `status: "undone"`.
   - Audit Event: Logged with `AuditCategory::Vault`, `AuditSeverity::Critical`, `AuditAction::Rollback`.
 - **`GET /api/v1/restore/status`**: Retrieves active journal status (`idle` vs `journal_present`), active restore phase, and crash recovery details.
 
 ### 24.8.3 React UI Operator Console (`ST05BackupRestore.tsx`, `backupService.ts`)
 
-The operator experience is implemented in the administrative settings view [ST05BackupRestore.tsx](file:///home/hp/SGX/frontend/src/app/screens/settings/ST05BackupRestore.tsx):
+The operator experience is implemented in the administrative settings view `frontend/src/app/screens/settings/ST05BackupRestore.tsx`:
 - **Backup Creation Drawer**: Allows operators to set passphrases with visibility toggles and select portability mode (`portable: true` by default).
 - **Import Modal**: Drag-and-drop file uploader accepting `.sgxbak` bundles with concurrent passphrase decryption verification.
 - **Backup History Data Table**: Displays backup records with formatted timestamps, size calculations, component tags (`Policy`, `Config`, `Credentials`, `CRL`), source DIDs, and action menus (Download, Validate, Restore, Delete).
@@ -7974,7 +7995,7 @@ The following defense matrix details the resilience mechanisms engineered into F
 | **DEF-BAK-01** | Silicon Root Key Extraction Attack | Hardware SE050 / TPM slot non-exportability policy. Private keys are never read from silicon. | Hardware SE050 Firmware | Preserves physical silicon root-of-trust and non-repudiation across all backups. |
 | **DEF-BAK-02** | Accidental Key Leakage in Backups | Strict path blacklisting (`is_sensitive_backup_path`) and runtime assertion checks. | `src/backup/components.rs` | Aborts backup generation if private key paths are detected in gather tree. |
 | **DEF-BAK-03** | Memory Scraping & Core Dump Exposure | Derived Argon2id key material explicitly zeroized with `key_material.fill(0)` after setup. | `src/backup/crypto.rs` | Eliminates raw encryption and authentication keys from resident memory. |
-| **DEF-BAK-04** | Offline Passphrase Brute-Force Attacks | Argon2id KDF requiring 64 MiB RAM and 3 iterations, rendering GPU/ASIC attacks intractable. | `src/backup/crypto.rs` | Prevents dictionary attacks on lost or intercepted `.sgxbak` bundles. |
+| **DEF-BAK-04** | Offline Passphrase Brute-Force Attacks | Argon2id KDF (`Argon2::default()`: ~19 MiB RAM, 2 iterations), rendering GPU/ASIC attacks materially costlier than an unsalted hash. | `src/backup/crypto.rs` | Prevents dictionary attacks on lost or intercepted `.sgxbak` bundles. |
 | **DEF-BAK-05** | Ciphertext Bit-Flipping / Tampering | Outer HMAC-SHA256 envelope covering headers and all chunks; verified before decryption. | `src/backup/crypto.rs` | Rejects manipulated archives before allocating memory for decompression or parsing. |
 | **DEF-BAK-06** | Chunk Reordering / Truncation | 12-byte nonces combining 7-byte random prefix, 4-byte chunk index, and 1-byte final flag. | `src/backup/crypto.rs` | Guarantees chunk order integrity and detects missing chunks during decryption. |
 | **DEF-BAK-07** | Partial Restore / Mid-Flight Power Loss | ACID journaled transactions (`RestorePhase`) with pre-restore snapshots and startup recovery. | `src/backup/restore.rs` | Recovers cleanly from power loss; eliminates half-written or corrupted configuration states. |
@@ -7990,16 +8011,16 @@ Feature 24 is verified through an extensive test suite comprising the **BAK-Seri
 
 | Test ID | Verification Scope | Target Test File & Function | Pass Criteria |
 | :--- | :--- | :--- | :--- |
-| **BAK-001** | Component Schema & Strings | [tests/backup_modules_test.rs](file:///home/hp/SGX/tests/backup_modules_test.rs): `component_as_str_covers_all_variants` | Verifies all 11 component string keys, snake_case serialization, and rejection of unknown types. |
-| **BAK-002** | Sensitive Key Path Blacklisting | [src/backup/components.rs](file:///home/hp/SGX/src/backup/components.rs): `tests` module | Rejects `identity.key`, `guardian_private.key`, `ca.key`, and SE050 keys; allows whitelisted public keys. |
-| **BAK-003** | Memory Hygiene & Key Zeroing | [src/backup/crypto.rs](file:///home/hp/SGX/src/backup/crypto.rs): `derive_key_material` & `encrypt_to_writer` | Confirms derived key buffer is cleared to zero bytes after cipher initialization. |
-| **BAK-004** | Streaming AES-256-GCM Encryption | [tests/backup_modules_test.rs](file:///home/hp/SGX/tests/backup_modules_test.rs): `crypto_header_serializes_roundtrip`, `encrypt_to_writer_empty_plaintext` | Verifies chunk framing, tag generation, empty plaintext handling, and outer HMAC validation. |
-| **BAK-005** | Decryption Error Robustness | [tests/backup_modules_test.rs](file:///home/hp/SGX/tests/backup_modules_test.rs): `decrypt_truncated_magic_fails`, `decrypt_wrong_passphrase_fails`, `decrypt_tampered_ciphertext_fails` | Verifies fail-closed error handling for bad magic, wrong passphrases, and bit-flipped payloads. |
-| **BAK-006** | Manifest & Plaintext Hash Integrity | [tests/backup_modules_test.rs](file:///home/hp/SGX/tests/backup_modules_test.rs): `validate_manifest_accepts_valid_manifest`, `validate_manifest_rejects_hash_mismatch` | Detects mismatched SHA-256 digests and missing files between manifest and archive payload. |
-| **BAK-007** | Preflight Validation & Cross-DID Modes | [src/backup/restore.rs](file:///home/hp/SGX/src/backup/restore.rs): `tests` module | Correctly assigns `SameDevice` vs `NewDeviceMigration` and flags non-portable cross-DID imports. |
-| **BAK-008** | Transactional Journaling & Rollback | [src/backup/restore.rs](file:///home/hp/SGX/src/backup/restore.rs): `tests` module | Verifies phase transitions (`Prepared` -> `Snapshotted` -> `Swapped`) and auto-rollback on swap failure. |
-| **BAK-009** | Startup Recovery of Interrupted Restores | [src/backup/restore/journal.rs](file:///home/hp/SGX/src/backup/restore/journal.rs): `recover_if_interrupted_inner`, `recover_stale_journal` | Recovers uncommitted restore journals at daemon boot and marks transactions as `RolledBack`. |
-| **BAK-010** | Multipart Staged Import & REST Pipeline | [tests/cov_backup_handlers_test.rs](file:///home/hp/SGX/tests/cov_backup_handlers_test.rs): `import_round_trips_a_real_backup_created_elsewhere` | End-to-end integration test creating a real backup, importing via multipart HTTP, and validating history. |
+| **BAK-001** | Component Schema & Strings | `tests/backup_modules_test.rs`: `component_as_str_covers_all_variants` | Verifies all 11 component string keys, snake_case serialization, and rejection of unknown types. |
+| **BAK-002** | Sensitive Key Path Blacklisting | `src/backup/components.rs`: `tests` module | Rejects `identity.key`, `guardian_private.key`, `ca.key`, and SE050 keys; allows whitelisted public keys. |
+| **BAK-003** | Memory Hygiene & Key Zeroing | `src/backup/crypto.rs`: `derive_key_material` & `encrypt_to_writer` | Confirms derived key buffer is cleared to zero bytes after cipher initialization. |
+| **BAK-004** | Streaming AES-256-GCM Encryption | `tests/backup_modules_test.rs`: `crypto_header_serializes_roundtrip`, `encrypt_to_writer_empty_plaintext` | Verifies chunk framing, tag generation, empty plaintext handling, and outer HMAC validation. |
+| **BAK-005** | Decryption Error Robustness | `tests/backup_modules_test.rs`: `decrypt_truncated_magic_fails`, `decrypt_wrong_passphrase_fails`, `decrypt_tampered_ciphertext_fails` | Verifies fail-closed error handling for bad magic, wrong passphrases, and bit-flipped payloads. |
+| **BAK-006** | Manifest & Plaintext Hash Integrity | `tests/backup_modules_test.rs`: `validate_manifest_accepts_valid_manifest`, `validate_manifest_rejects_hash_mismatch` | Detects mismatched SHA-256 digests and missing files between manifest and archive payload. |
+| **BAK-007** | Preflight Validation & Cross-DID Modes | `src/backup/restore.rs`: `tests` module | Correctly assigns `SameDevice` vs `NewDeviceMigration` and flags non-portable cross-DID imports. |
+| **BAK-008** | Transactional Journaling & Rollback | `src/backup/restore.rs`: `tests` module | Verifies phase transitions (`Prepared` -> `Snapshotted` -> `Swapped`) and auto-rollback on swap failure. |
+| **BAK-009** | Startup Recovery of Interrupted Restores | `src/backup/restore/journal.rs`: `recover_if_interrupted_inner`, `recover_stale_journal` | Recovers uncommitted restore journals at daemon boot and marks transactions as `RolledBack`. |
+| **BAK-010** | Multipart Staged Import & REST Pipeline | `tests/cov_backup_handlers_test.rs`: `import_round_trips_a_real_backup_created_elsewhere` | End-to-end integration test creating a real backup, importing via multipart HTTP, and validating history. |
 
 ---
 
@@ -8008,34 +8029,34 @@ Feature 24 is verified through an extensive test suite comprising the **BAK-Seri
 The implementation of Feature 24 is organized across the following core source files:
 
 ### Core Backup Subsystem: `src/backup/`
-- **[src/backup/mod.rs](file:///home/hp/SGX/src/backup/mod.rs)**: Subsystem entrypoint, configuration loader (`BackupConfig`), path resolvers, and ID sanitization (`safe_id`).
-- **[src/backup/model.rs](file:///home/hp/SGX/src/backup/model.rs)**: Domain models (`Component`, `IdentityMeta`, `ComponentManifest`, `Manifest`, `BackupRecord`, `BackupHistory`, `ValidateReport`, `RestoreReport`).
-- **[src/backup/crypto.rs](file:///home/hp/SGX/src/backup/crypto.rs)**: Cryptographic engine implementing Argon2id KDF, streaming AES-256-GCM chunk framing, 12-byte nonces, and outer HMAC-SHA256 sealing.
-- **[src/backup/components.rs](file:///home/hp/SGX/src/backup/components.rs)**: Component gathering engine, sensitive key path blacklist (`is_sensitive_backup_path`), private key assertion guard (`assert_no_private_identity_paths`), and identity metadata extraction.
-- **[src/backup/create.rs](file:///home/hp/SGX/src/backup/create.rs)**: Backup creation pipeline, deterministic binary framing (`encode_plaintext`), history ledger persistence, and secure directory permissions (`0o700`).
-- **[src/backup/validate.rs](file:///home/hp/SGX/src/backup/validate.rs)**: Preflight validation engine, manifest verification, plaintext SHA-256 checksumming, and cross-DID compatibility detection.
-- **[src/backup/restore.rs](file:///home/hp/SGX/src/backup/restore.rs)**: ACID restore coordinator, dependency-ordered component swapping (`restore_order`), policy rollback gating, CRL invariant verification, and post-commit undo (`undo_restore`).
-- **[src/backup/restore/journal.rs](file:///home/hp/SGX/src/backup/restore/journal.rs)**: Transaction journal state machine (`RestorePhase`), crash recovery supervisor (`recover_if_interrupted`), and stale transaction reaper.
-- **[src/backup/import.rs](file:///home/hp/SGX/src/backup/import.rs)**: Staged bundle upload processor, portability validation, duplicate detection, and atomic bundle registration.
-- **[src/backup/init.rs](file:///home/hp/SGX/src/backup/init.rs)**: Storage initialization and POSIX permission verifier (`0o700` directories, `0o600` files).
-- **[src/backup/errors.rs](file:///home/hp/SGX/src/backup/errors.rs)**: Typed domain errors (`BackupError`).
+- **`src/backup/mod.rs`**: Subsystem entrypoint, configuration loader (`BackupConfig`), path resolvers, and ID sanitization (`safe_id`).
+- **`src/backup/model.rs`**: Domain models (`Component`, `IdentityMeta`, `ComponentManifest`, `Manifest`, `BackupRecord`, `BackupHistory`, `ValidateReport`, `RestoreReport`).
+- **`src/backup/crypto.rs`**: Cryptographic engine implementing Argon2id KDF, streaming AES-256-GCM chunk framing, 12-byte nonces, and outer HMAC-SHA256 sealing.
+- **`src/backup/components.rs`**: Component gathering engine, sensitive key path blacklist (`is_sensitive_backup_path`), private key assertion guard (`assert_no_private_identity_paths`), and identity metadata extraction.
+- **`src/backup/create.rs`**: Backup creation pipeline, deterministic binary framing (`encode_plaintext`), history ledger persistence, and secure directory permissions (`0o700`).
+- **`src/backup/validate.rs`**: Preflight validation engine, manifest verification, plaintext SHA-256 checksumming, and cross-DID compatibility detection.
+- **`src/backup/restore.rs`**: ACID restore coordinator, dependency-ordered component swapping (`restore_order`), policy rollback gating, CRL invariant verification, and post-commit undo (`undo_restore`).
+- **`src/backup/restore/journal.rs`**: Transaction journal state machine (`RestorePhase`), crash recovery supervisor (`recover_if_interrupted`), and stale transaction reaper.
+- **`src/backup/import.rs`**: Staged bundle upload processor, portability validation, duplicate detection, and atomic bundle registration.
+- **`src/backup/init.rs`**: Storage initialization and POSIX permission verifier (`0o700` directories, `0o600` files).
+- **`src/backup/errors.rs`**: Typed domain errors (`BackupError`).
 
 ### Storage Auto-Healing Subsystem: `src/storage/`
-- **[src/storage/backup.rs](file:///home/hp/SGX/src/storage/backup.rs)**: Lightweight storage backup manager and JSON syntax validation/auto-healing engine for smart home databases.
+- **`src/storage/backup.rs`**: Lightweight storage backup manager and JSON syntax validation/auto-healing engine for smart home databases.
 
 ### REST API Handlers: `src/api/handlers/`
-- **[src/api/handlers/backup.rs](file:///home/hp/SGX/src/api/handlers/backup.rs)**: REST handlers for backup creation, history listing, multipart import, bundle download, deletion, and validation.
-- **[src/api/handlers/restore.rs](file:///home/hp/SGX/src/api/handlers/restore.rs)**: REST handlers for restore validation preflight, restore application, post-commit undo, and journal status polling.
+- **`src/api/handlers/backup.rs`**: REST handlers for backup creation, history listing, multipart import, bundle download, deletion, and validation.
+- **`src/api/handlers/restore.rs`**: REST handlers for restore validation preflight, restore application, post-commit undo, and journal status polling.
 
 ### Frontend API & UI Screens: `frontend/`
-- **[frontend/src/app/services/backupService.ts](file:///home/hp/SGX/frontend/src/app/services/backupService.ts)**: TypeScript API service interfacing with `/api/v1/backup` and `/api/v1/restore` endpoints.
-- **[frontend/src/app/screens/settings/ST05BackupRestore.tsx](file:///home/hp/SGX/frontend/src/app/screens/settings/ST05BackupRestore.tsx)**: Administrative UI screen providing backup creation, history table, preflight validation review, restore execution, and one-click undo controls.
-- **[frontend/e2e/backup-import.spec.ts](file:///home/hp/SGX/frontend/e2e/backup-import.spec.ts)**: End-to-end Playwright test suite validating backup import and restore workflows in the web UI.
+- **`frontend/src/app/services/backupService.ts`**: TypeScript API service interfacing with `/api/v1/backup` and `/api/v1/restore` endpoints.
+- **`frontend/src/app/screens/settings/ST05BackupRestore.tsx`**: Administrative UI screen providing backup creation, history table, preflight validation review, restore execution, and one-click undo controls.
+- **`frontend/e2e/backup-import.spec.ts`**: End-to-end Playwright test suite validating backup import and restore workflows in the web UI.
 
 ### Test Suites: `tests/`
-- **[tests/backup_modules_test.rs](file:///home/hp/SGX/tests/backup_modules_test.rs)**: Unit test suite covering component schema, ID sanitization, cryptographic headers, AES-GCM streaming, and manifest integrity.
-- **[tests/cov_backup_handlers_test.rs](file:///home/hp/SGX/tests/cov_backup_handlers_test.rs)**: Integration test suite validating multipart archive import, authorization gates, and history persistence.
-- **[tests/storage_backup_unit_test.rs](file:///home/hp/SGX/tests/storage_backup_unit_test.rs)**: Unit test suite verifying smart home database backups and JSON auto-healing.
+- **`tests/backup_modules_test.rs`**: Unit test suite covering component schema, ID sanitization, cryptographic headers, AES-GCM streaming, and manifest integrity.
+- **`tests/cov_backup_handlers_test.rs`**: Integration test suite validating multipart archive import, authorization gates, and history persistence.
+- **`tests/storage_backup_unit_test.rs`**: Unit test suite verifying smart home database backups and JSON auto-healing.
 
 ---
 
@@ -8051,42 +8072,42 @@ However, standard push notification systems introduce serious privacy and securi
 3. **Unauthenticated Configuration Tampering**: If notification preferences are stored as unauthenticated text files or exposed via unprotected REST endpoints, an adversary possessing local or network-adjacent access could manipulate preferences to suppress critical intrusion alerts, blinding operators during active exploitation.
 4. **Broadcast Storms & Self-Echo Loops**: In bidirectional peer networks, broadcasting events indiscriminately causes client notification storms and self-echo loops, where an actor receives disruptive popup alerts for messages or calls they initiated themselves.
 
-To resolve these vulnerabilities while delivering microsecond-latency event propagation, Feature 25 implements a zero-trust, local-first, cryptographically verified notification subsystem ([src/notify/](file:///home/hp/SGX/src/notify/)):
+To resolve these vulnerabilities while delivering microsecond-latency event propagation, Feature 25 implements a zero-trust, local-first, cryptographically verified notification subsystem (`src/notify/`):
 - **Hardware-Rooted Preference Integrity**: Global notification preferences are sealed with W3C DataIntegrityProof signatures generated by the hardware Device Key Pair (DKP) residing in the node's Secure Element. Any tampering with preference values invalidates the cryptographic proof and halts processing.
-- **High-Throughput Tokio Broadcast Bus**: An in-memory asynchronous broadcast channel ([src/notify/bus.rs](file:///home/hp/SGX/src/notify/bus.rs)) decouples event producers (intrusion detectors, device scanners, circle bridges) from delivery consumers, sustaining high-volume bursts with zero publisher blocking.
-- **Durable Ring-Buffer Ledger & Cursor Replay**: An append-only JSON Lines ledger ([events.jsonl](file:///home/hp/SGX/src/notify/store.rs)) maintains a durable history of the most recent 2,000 events with atomic crash-safe flushing. Reconnecting clients utilize `Last-Event-ID` cursor replay to eliminate event drops across network interruptions.
-- **Role-Based Security Scoping**: The streaming pipeline ([src/api/handlers/notify.rs](file:///home/hp/SGX/src/api/handlers/notify.rs)) enforces strict role isolation. Standard Circle members are cryptographically restricted to communication events (`Circles` category), completely isolating system threat telemetry (`Alerts`) and device discovery data (`Devices`).
+- **High-Throughput Tokio Broadcast Bus**: An in-memory asynchronous broadcast channel (`src/notify/bus.rs`) decouples event producers (intrusion detectors, device scanners, circle bridges) from delivery consumers, sustaining high-volume bursts with zero publisher blocking.
+- **Durable Ring-Buffer Ledger & Cursor Replay**: An append-only JSON Lines ledger (`src/notify/store.rs`) maintains a durable history of the most recent 2,000 events with atomic crash-safe flushing. Reconnecting clients utilize `Last-Event-ID` cursor replay to eliminate event drops across network interruptions.
+- **Role-Based Security Scoping**: The streaming pipeline (`src/api/handlers/notify.rs`) enforces strict role isolation. Standard Circle members are cryptographically restricted to communication events (`Circles` category), completely isolating system threat telemetry (`Alerts`) and device discovery data (`Devices`).
 - **Multi-Channel Browser Delivery**: The frontend architecture integrates Server-Sent Events (SSE), an in-app toast stack with auto-dismiss timers, synthesized Web Audio cues requiring zero external media assets, and desktop Web Push notifications with midnight-wrapping Do Not Disturb (DND) windows.
 
 ---
 
 ## 25.2 Multi-Category Event Classification & Notification Bus Architecture
 
-The notification engine organizes all system events into a formal, typed taxonomy managed by [src/notify/model.rs](file:///home/hp/SGX/src/notify/model.rs).
+The notification engine organizes all system events into a formal, typed taxonomy managed by `src/notify/model.rs`.
 
 ### 25.2.1 Event Taxonomy (Alerts, Devices, Circles)
 
-Events are categorized into three distinct operational domains ([NotificationCategory](file:///home/hp/SGX/src/notify/model.rs#L3-L9)), comprising eleven concrete event types ([NotificationKind](file:///home/hp/SGX/src/notify/model.rs#L11-L25)):
+Events are categorized into three distinct operational domains (`src/notify/model.rs#L3-L9`), comprising eleven concrete event types (`src/notify/model.rs#L11-L25`):
 
 | Category (`NotificationCategory`) | Event Kind (`NotificationKind`) | JSON Identifier | Description & System Trigger | Default Severity |
 | :--- | :--- | :--- | :--- | :--- |
-| **Alerts** | [AlertHigh](file:///home/hp/SGX/src/notify/model.rs#L14) | `alert_high` | Intrusion detection engine flagged a `Critical` or `High` threat (e.g., active exploit attempt, brute force attack). | `critical` / `high` |
-| **Alerts** | [AlertMedium](file:///home/hp/SGX/src/notify/model.rs#L15) | `alert_medium` | Suspicious network activity flagged with `Medium` severity (e.g., port reconnaissance, anomaly detection). | `medium` |
-| **Alerts** | [AlertLow](file:///home/hp/SGX/src/notify/model.rs#L16) | `alert_low` | Low-severity security notice (e.g., policy non-compliance, unusual protocol negotiation). | `low` |
-| **Devices** | [DeviceDiscovered](file:///home/hp/SGX/src/notify/model.rs#L17) | `device_discovered` | Active ARP/mDNS discovery detected a new network interface appearing on the local subnet. | `info` |
-| **Devices** | [DevicePendingApproval](file:///home/hp/SGX/src/notify/model.rs#L18) | `device_pending_approval` | Unrecognized device quarantined in zero-trust isolation awaiting administrator authorization. | `medium` |
-| **Devices** | [GuardianOffline](file:///home/hp/SGX/src/notify/model.rs#L19) | `guardian_offline` | Peer SG-X Guardian node in the mesh failed to transmit expected heartbeat within the timeout window. | `high` |
-| **Devices** | [CircleMemberPendingApproval](file:///home/hp/SGX/src/notify/model.rs#L22) | `circle_member_pending_approval` | External DID identity requested admission to a restricted Circle; awaiting administrative approval. | `medium` |
-| **Circles** | [CircleNewMessage](file:///home/hp/SGX/src/notify/model.rs#L20) | `circle_new_message` | Encrypted direct peer message or group chat message delivered to the local member inbox. | `info` |
-| **Circles** | [CircleIncomingCall](file:///home/hp/SGX/src/notify/model.rs#L21) | `circle_incoming_call` | Real-time WebRTC audio/video call signaling session initiated by a remote Circle member. | `medium` |
-| **Circles** | [CircleMemberJoined](file:///home/hp/SGX/src/notify/model.rs#L23) | `circle_member_joined` | Verified peer completed cryptographic handshake and successfully enrolled into the Circle. | `info` |
-| **Circles** | [CircleFileShared](file:///home/hp/SGX/src/notify/model.rs#L24) | `circle_file_shared` | Encrypted document or media payload deposited into the shared Circle encrypted storage vault. | `info` |
+| **Alerts** | `src/notify/model.rs#L14` | `alert_high` | Intrusion detection engine flagged a `Critical` or `High` threat (e.g., active exploit attempt, brute force attack). | `critical` / `high` |
+| **Alerts** | `src/notify/model.rs#L15` | `alert_medium` | Suspicious network activity flagged with `Medium` severity (e.g., port reconnaissance, anomaly detection). | `medium` |
+| **Alerts** | `src/notify/model.rs#L16` | `alert_low` | Low-severity security notice (e.g., policy non-compliance, unusual protocol negotiation). | `low` |
+| **Devices** | `src/notify/model.rs#L17` | `device_discovered` | Active ARP/mDNS discovery detected a new network interface appearing on the local subnet. | `info` |
+| **Devices** | `src/notify/model.rs#L18` | `device_pending_approval` | Unrecognized device quarantined in zero-trust isolation awaiting administrator authorization. | `medium` |
+| **Devices** | `src/notify/model.rs#L19` | `guardian_offline` | Peer SG-X Guardian node in the mesh failed to transmit expected heartbeat within the timeout window. | `high` |
+| **Devices** | `src/notify/model.rs#L22` | `circle_member_pending_approval` | External DID identity requested admission to a restricted Circle; awaiting administrative approval. | `medium` |
+| **Circles** | `src/notify/model.rs#L20` | `circle_new_message` | Encrypted direct peer message or group chat message delivered to the local member inbox. | `info` |
+| **Circles** | `src/notify/model.rs#L21` | `circle_incoming_call` | Real-time WebRTC audio/video call signaling session initiated by a remote Circle member. | `medium` |
+| **Circles** | `src/notify/model.rs#L23` | `circle_member_joined` | Verified peer completed cryptographic handshake and successfully enrolled into the Circle. | `info` |
+| **Circles** | `src/notify/model.rs#L24` | `circle_file_shared` | Encrypted document or media payload deposited into the shared Circle encrypted storage vault. | `info` |
 
-The categorization logic is enforced by the deterministic [category()](file:///home/hp/SGX/src/notify/model.rs#L28-L40) mapping method. This mapping serves as the foundation for role-based scoping and user preference gating.
+The categorization logic is enforced by the deterministic `src/notify/model.rs#L28-L40` mapping method. This mapping serves as the foundation for role-based scoping and user preference gating.
 
 ### 25.2.2 Event Data Model & Payload Specification (`NotificationEvent`)
 
-Every event propagated across the notification pipeline conforms to the strict [NotificationEvent](file:///home/hp/SGX/src/notify/model.rs#L44-L60) schema:
+Every event propagated across the notification pipeline conforms to the strict `src/notify/model.rs#L44-L60` schema:
 
     pub struct NotificationEvent {
         pub id: String,
@@ -8102,7 +8123,7 @@ Every event propagated across the notification pipeline conforms to the strict [
 
 Payload Field Specifications:
 - **`id`**: Globally unique, strictly monotonic identifier generated by an atomic sequence counter (`AtomicU64`). Serialized as a numeric string (e.g., `"1042"`), enabling exact ordering and cursor-based range queries.
-- **`kind`**: Serialized in `snake_case` JSON (e.g., `"device_pending_approval"`), mapping directly to the typed [NotificationKind](file:///home/hp/SGX/src/notify/model.rs#L13-L25).
+- **`kind`**: Serialized in `snake_case` JSON (e.g., `"device_pending_approval"`), mapping directly to the typed `src/notify/model.rs#L13-L25`.
 - **`title`**: Concise human-readable notification headline (e.g., `"Threat alert on nodeA"` or `"Incoming call"`).
 - **`body`**: Detailed event narrative containing specific entity attributes (e.g., `"Suricata signature 2001219 from 192.0.2.1:1234 to 198.51.100.2:443 (Exploit)"`).
 - **`severity`**: Normalized severity tag (`"info"`, `"low"`, `"medium"`, `"high"`, `"critical"`).
@@ -8113,7 +8134,7 @@ Payload Field Specifications:
 
 ### 25.2.3 Asynchronous Tokio Broadcast Channel (`bus::publish`) & Actor DID Self-Suppression
 
-At the core of the notification pipeline is a process-global, asynchronous broadcast bus implemented in [src/notify/bus.rs](file:///home/hp/SGX/src/notify/bus.rs):
+At the core of the notification pipeline is a process-global, asynchronous broadcast bus implemented in `src/notify/bus.rs`:
 
     static NOTIFY_BUS: OnceLock<broadcast::Sender<NotificationEvent>> = OnceLock::new();
 
@@ -8138,7 +8159,7 @@ Key Operational Characteristics:
 
 ## 25.3 Cryptographically Signed Notification Preferences (W3C DataIntegrityProof)
 
-In zero-trust edge environments, notification settings must be immutable against unauthorized tampering. An attacker with compromised unprivileged software access must not be able to silently disable high-severity intrusion alerts or suppress offline peer warnings. Feature 25 enforces hardware-rooted cryptographic authentication for all preference states ([src/notify/prefs.rs](file:///home/hp/SGX/src/notify/prefs.rs)).
+In zero-trust edge environments, notification settings must be immutable against unauthorized tampering. An attacker with compromised unprivileged software access must not be able to silently disable high-severity intrusion alerts or suppress offline peer warnings. Feature 25 enforces hardware-rooted cryptographic authentication for all preference states (`src/notify/prefs.rs`).
 
 ### 25.3.1 Preference Granularity & Category Controls (`AlertPrefs`, `DevicePrefs`, `CirclePrefs`)
 
@@ -8153,20 +8174,20 @@ Preferences are structured into modular, boolean-gated sub-records governing spe
     }
 
 Field Matrix & Default Behaviors:
-- **`alerts` ([AlertPrefs](file:///home/hp/SGX/src/notify/prefs.rs#L13-L17))**:
+- **`alerts` (`src/notify/prefs.rs#L13-L17`)**:
   - `high: bool` (default: `true`): Governs `AlertHigh` notifications.
   - `medium: bool` (default: `true`): Governs `AlertMedium` notifications.
   - `low: bool` (default: `true`): Governs `AlertLow` notifications.
-- **`devices` ([DevicePrefs](file:///home/hp/SGX/src/notify/prefs.rs#L30-L34))**:
+- **`devices` (`src/notify/prefs.rs#L30-L34`)**:
   - `new_device: bool` (default: `true`): Governs `DeviceDiscovered` notifications.
   - `pending_approval: bool` (default: `true`): Governs `DevicePendingApproval` notifications.
   - `guardian_offline: bool` (default: `true`): Governs `GuardianOffline` notifications.
-- **`circles` ([CirclePrefs](file:///home/hp/SGX/src/notify/prefs.rs#L47-L51))**:
+- **`circles` (`src/notify/prefs.rs#L47-L51`)**:
   - `new_message: bool` (default: `true`): Governs `CircleNewMessage` and `CircleFileShared` notifications.
   - `incoming_call: bool` (default: `true`): Governs `CircleIncomingCall` notifications.
   - `member_joined: bool` (default: `true`): Governs `CircleMemberJoined` and `CircleMemberPendingApproval` notifications.
 
-The evaluation routine [allows()](file:///home/hp/SGX/src/notify/prefs.rs#L87-L102) maps incoming event kinds directly against these boolean gates. If a category or kind is disabled, the event is filtered out before transmission to consumers.
+The evaluation routine `src/notify/prefs.rs#L87-L102` maps incoming event kinds directly against these boolean gates. If a category or kind is disabled, the event is filtered out before transmission to consumers.
 
 ### 25.3.2 Canonical JSON Canonicalization (`sort_json_keys`) & Monotonic Sequencing
 
@@ -8188,45 +8209,45 @@ To produce a deterministic digital signature across heterogeneous JSON serializa
         }
     }
 
-During canonical serialization ([canonical_bytes_for_sign](file:///home/hp/SGX/src/notify/prefs.rs#L104-L109)), the `proof` field is cleared, the remaining document structure is converted to a `serde_json::Value`, recursively sorted through `BTreeMap` structures, and encoded into canonical UTF-8 bytes.
+During canonical serialization (`src/notify/prefs.rs#L104-L109`), the `proof` field is cleared, the remaining document structure is converted to a `serde_json::Value`, recursively sorted through `BTreeMap` structures, and encoded into canonical UTF-8 bytes.
 
 Furthermore, every preference update increments the `sequence: u64` counter. The verification engine checks that sequence numbers increase monotonically, preventing state rollback attacks where an adversary attempts to re-apply an older, signed preference document with weaker alert protections.
 
 ### 25.3.3 Device Hardware Key Proof Signing (`#dkp-vX`) & Cryptographic Verification
 
-When preferences are saved ([sign_for_node](file:///home/hp/SGX/src/notify/prefs.rs#L111-L119)), the node signs the canonical payload using its hardware-bound Device Key Pair (DKP):
+When preferences are saved (`src/notify/prefs.rs#L111-L119`), the node signs the canonical payload using its hardware-bound Device Key Pair (DKP):
 1. **Key Resolution**: Loads the node's DID record and retrieves the active hardware KeyManager reference for the node (`device_{node_id}.key`).
 2. **Verification Method Stamping**: Targets the node's primary DKP verification method: `did:guardian:<id>#dkp-v<version>`.
 3. **ECDSA P-256 Signature Generation**: Computes the SHA-256 digest of the canonical bytes and executes an ECDSA P-256 signature, embedding the standard base64 signature in `proof.proof_value`.
 
-The verification routine ([verify](file:///home/hp/SGX/src/notify/prefs.rs#L121-L165)) executes rigorous checks before any preferences are accepted:
+The verification routine (`src/notify/prefs.rs#L121-L165`) executes rigorous checks before any preferences are accepted:
 - Validates non-empty `verification_method` and `proof_value`.
-- Loads the node's published DID Document from disk ([doc_persistence::load_self()](file:///home/hp/SGX/src/did/doc_persistence.rs)).
+- Loads the node's published DID Document from disk (`src/did/doc_persistence.rs`).
 - Resolves the exact verification method declared in the proof and extracts the URL-safe base64 unpadded EC coordinates `x` and `y`.
 - Reconstructs the 65-byte uncompressed public key point (`0x04 || x || y`).
-- Computes `Sha256::digest(&canonical)` and executes cryptographic verification ([ecdsa_p256_verify_der_or_raw](file:///home/hp/SGX/src/did/doc_sign.rs)).
-- If a single boolean attribute or sequence value has been tampered with, verification fails immediately with [NotifyError::InvalidProof](file:///home/hp/SGX/src/notify/errors.rs), causing the node to reject the corrupted file.
+- Computes `Sha256::digest(&canonical)` and executes cryptographic verification (`src/did/doc_sign.rs`).
+- If a single boolean attribute or sequence value has been tampered with, verification fails immediately with `src/notify/errors.rs`, causing the node to reject the corrupted file.
 
 ---
 
 ## 25.4 High-Performance Persistent Ring-Buffer Store & State Synchronization
 
-While the Tokio broadcast channel provides microsecond-latency in-memory message passing, edge systems require persistence across reboots and network disconnections. The persistence subsystem is managed by [src/notify/store.rs](file:///home/hp/SGX/src/notify/store.rs) and the background worker in [src/notify/mod.rs](file:///home/hp/SGX/src/notify/mod.rs).
+While the Tokio broadcast channel provides microsecond-latency in-memory message passing, edge systems require persistence across reboots and network disconnections. The persistence subsystem is managed by `src/notify/store.rs` and the background worker in `src/notify/mod.rs`.
 
 ### 25.4.1 Append-Only JSON Lines Ledger (`events.jsonl`) & Atomic State Persistence (`prefs.json`)
 
 All persistent notifications are stored in a dedicated directory resolved via `NotifyConfig::from_env()`:
 - **Base Directory**: Defined by `SGX_GUARDIAN_NOTIFY_BASE`, defaulting to `/var/lib/sgx-guardian/notify`.
-- **Event Ledger**: `/var/lib/sgx-guardian/notify/events.jsonl`. An append-only log where each line represents a complete, serialized [NotificationEvent](file:///home/hp/SGX/src/notify/model.rs#L44-L60) JSON object.
+- **Event Ledger**: `/var/lib/sgx-guardian/notify/events.jsonl`. An append-only log where each line represents a complete, serialized `src/notify/model.rs#L44-L60` JSON object.
 - **Preferences Document**: `/var/lib/sgx-guardian/notify/prefs.json`. The cryptographically signed JSON preference object.
 
-During system bootstrap ([prime_store](file:///home/hp/SGX/src/notify/store.rs#L132-L141)), the directory tree is automatically created with strict permissions, and empty ledger files are initialized if not present.
+During system bootstrap (`src/notify/store.rs#L132-L141`), the directory tree is automatically created with strict permissions, and empty ledger files are initialized if not present.
 
 ### 25.4.2 In-Memory Ring Buffer & Configurable Max-Event FIFO Eviction (`DEFAULT_MAX_EVENTS = 2000`)
 
 To protect edge devices against disk exhaustion during extended operational deployments or massive threat scans, the ledger operates as a bounded ring buffer:
-- **Configurable Threshold**: Defaults to `DEFAULT_MAX_EVENTS = 2000`, configurable at runtime via the `SGX_NOTIFY_MAX_EVENTS` environment variable ([configured_max_events](file:///home/hp/SGX/src/notify/store.rs#L120-L126)).
-- **FIFO Truncation**: When new events arrive, the in-memory double-ended queue ([VecDeque](file:///home/hp/SGX/src/notify/store.rs#L17)) appends the record. If total events exceed `max_events`, the oldest events are systematically evicted from the front of the queue:
+- **Configurable Threshold**: Defaults to `DEFAULT_MAX_EVENTS = 2000`, configurable at runtime via the `SGX_NOTIFY_MAX_EVENTS` environment variable (`src/notify/store.rs#L120-L126`).
+- **FIFO Truncation**: When new events arrive, the in-memory double-ended queue (`src/notify/store.rs#L17`) appends the record. If total events exceed `max_events`, the oldest events are systematically evicted from the front of the queue:
 
         fn truncate(&mut self, max_events: usize) {
             while self.buf.len() > max_events.max(1) {
@@ -8240,7 +8261,7 @@ Concurrent mutations from background event collectors, REST mark-read endpoints,
 
     pub static NOTIFY_WRITE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
-To guarantee filesystem durability and crash consistency, all disk modifications execute atomic write-and-rename semantics ([save_atomic](file:///home/hp/SGX/src/notify/store.rs#L95-L111)):
+To guarantee filesystem durability and crash consistency, all disk modifications execute atomic write-and-rename semantics (`src/notify/store.rs#L95-L111`):
 1. Serializes events into a temporary staging file (`events.jsonl.tmp`).
 2. Calls POSIX `file.sync_all()` to flush dirty OS page caches to physical non-volatile storage.
 3. Performs an atomic `std::fs::rename()` over the active ledger file.
@@ -8253,7 +8274,7 @@ Read tracking is fully idempotent:
 
 ## 25.5 Real-Time Server-Sent Events (SSE) Streaming Pipeline & Replay Engine
 
-Real-time notification delivery is implemented via HTTP Server-Sent Events (SSE) over persistent connections ([src/api/handlers/notify.rs](file:///home/hp/SGX/src/api/handlers/notify.rs)). SSE was chosen over raw WebSockets because it operates natively over standard HTTPS, traverses corporate firewalls seamlessly, and natively supports cursor-based disconnection recovery.
+Real-time notification delivery is implemented via HTTP Server-Sent Events (SSE) over persistent connections (`src/api/handlers/notify.rs`). SSE was chosen over raw WebSockets because it operates natively over standard HTTPS, traverses corporate firewalls seamlessly, and natively supports cursor-based disconnection recovery.
 
 ### 25.5.1 HTTP SSE Endpoint (`/api/v1/notifications/stream`) & Keep-Alive Heartbeats
 
@@ -8266,13 +8287,13 @@ Clients establish a live subscription by initiating an HTTP GET request to `/api
 
 When mobile or browser clients experience intermittent network drops, notification delivery remains continuous without data loss:
 1. **Cursor Transmission**: Upon reconnecting, the client includes the `Last-Event-ID` HTTP header containing the highest event ID successfully processed before disconnection.
-2. **Backlog Replay**: The server parses `Last-Event-ID` as a `u64` and invokes [store.replay_after(cursor)](file:///home/hp/SGX/src/notify/store.rs#L58-L68), retrieving all events with numeric `id > cursor`.
+2. **Backlog Replay**: The server parses `Last-Event-ID` as a `u64` and invokes `src/notify/store.rs#L58-L68`, retrieving all events with numeric `id > cursor`.
 3. **Seamless Transition**: The server delivers the missed historical backlog in order before seamlessly bridging the client into the live broadcast stream.
 4. **Duplicate Prevention**: The helper function `is_duplicate(&event.id, last_sent)` verifies that no overlapping events are emitted to the client during the transition from replay to live broadcast.
 
 ### 25.5.3 Lagged Broadcast Receiver Recovery (`RecvError::Lagged`) & Stream Continuity
 
-If a client connection stalls due to high mobile latency or bandwidth saturation, Tokio's internal broadcast receiver may exhaust its 1,024-event buffer, returning `RecvError::Lagged(skipped)`. 
+If a client connection stalls due to high mobile latency or bandwidth saturation, Tokio's internal broadcast receiver may exhaust its 1,024-event buffer, returning `RecvError::Lagged(skipped)`.
 
 Rather than terminating the stream or dropping notifications, the SG-X Guardian streaming handler implements automatic on-demand recovery:
 - Intercepts `RecvError::Lagged(skipped)`.
@@ -8284,38 +8305,38 @@ Rather than terminating the stream or dropping notifications, the SG-X Guardian 
 
 ## 25.6 Multi-Channel Push Delivery Architecture (In-App Toasts, Audio Cues & Web Push)
 
-The client-side notification subsystem ([frontend/src/app/contexts/NotificationContext.tsx](file:///home/hp/SGX/frontend/src/app/contexts/NotificationContext.tsx)) translates server events into user presentations across multiple UI channels.
+The client-side notification subsystem (`frontend/src/app/contexts/NotificationContext.tsx`) translates server events into user presentations across multiple UI channels.
 
 ### 25.6.1 React `NotificationContext` State Management & Active Stream Ingestion
 
 The frontend notification provider coordinates real-time state:
-- **ReadableStream SSE Reader**: Implemented in [frontend/src/api/notifications.ts](file:///home/hp/SGX/frontend/src/api/notifications.ts#L124-L169), reading raw chunks from `/notifications/stream`, parsing `id:` and `data:` blocks, and dispatching normalized events.
-- **Local IndexedDB Caching**: All received notifications are mirrored into a local IndexedDB repository ([notificationRepository](file:///home/hp/SGX/frontend/src/app/contexts/NotificationContext.tsx#L9)), enabling offline search and instant UI rendering on startup before backend synchronization completes.
+- **ReadableStream SSE Reader**: Implemented in `frontend/src/api/notifications.ts#L124-L169`, reading raw chunks from `/notifications/stream`, parsing `id:` and `data:` blocks, and dispatching normalized events.
+- **Local IndexedDB Caching**: All received notifications are mirrored into a local IndexedDB repository (`frontend/src/app/contexts/NotificationContext.tsx#L9`), enabling offline search and instant UI rendering on startup before backend synchronization completes.
 - **Automatic Reconnect**: If the SSE stream terminates unexpectedly, an exponential backoff loop reconnects automatically after 4,000 ms (`RECONNECT_DELAY_MS`), passing the cached `lastEventId` from `localStorage` to resume playback.
 
 ### 25.6.2 Interactive Floating Toast Notifications (`NotificationToastStack.tsx`) & Quick Actions
 
 To prevent notification fatigue while ensuring critical communication is never missed, the UI enforces strict presentation gating:
-- **Communication Gating ([communicationPopupEnabled](file:///home/hp/SGX/frontend/src/app/contexts/NotificationContext.tsx#L73-L77))**: Only interactive Circle communication events (`CircleNewMessage`, `CircleIncomingCall`, `CircleFileShared`) generate floating on-screen toasts. Security alerts and device discovery events are recorded in the notification history and badge counters without interrupting active user workflows.
-- **Toast Stack Management ([NotificationToastStack.tsx](file:///home/hp/SGX/frontend/src/app/components/notifications/NotificationToastStack.tsx))**: Renders a floating stack of up to 4 concurrent notification cards with 5,000 ms auto-dismiss timers.
+- **Communication Gating (`frontend/src/app/contexts/NotificationContext.tsx#L73-L77`)**: Only interactive Circle communication events (`CircleNewMessage`, `CircleIncomingCall`, `CircleFileShared`) generate floating on-screen toasts. Security alerts and device discovery events are recorded in the notification history and badge counters without interrupting active user workflows.
+- **Toast Stack Management (`frontend/src/app/components/notifications/NotificationToastStack.tsx`)**: Renders a floating stack of up to 4 concurrent notification cards with 5,000 ms auto-dismiss timers.
 - **Deep-Linking**: Clicking a toast immediately dismisses the card and navigates directly to the relevant conversation, WebRTC call session, or shared vault repository.
 
 ### 25.6.3 Desktop Web Push API Integration (`Notification.requestPermission`) & Synthesized Audio Dispatch
 
 Edge operators often manage SG-X Guardian in background browser tabs. Feature 25 implements rich desktop push delivery:
-- **Opt-In Web Notifications API**: Requests browser permission via an explicit user confirmation dialog ([NotificationDeliverySettings.tsx](file:///home/hp/SGX/frontend/src/app/components/settings/NotificationDeliverySettings.tsx#L85-L96)). When the browser tab is hidden (`document.hidden`), incoming events trigger native OS desktop notifications.
-- **Zero-Dependency Synthesized Audio ([playNotificationSound](file:///home/hp/SGX/frontend/src/app/lib/notificationLocalPrefs.ts#L87-L100))**: Rather than bundling proprietary audio asset files, the frontend synthesizes an elegant notification tone in real time using the browser's Web Audio `AudioContext`. An oscillator generates an 880 Hz sine wave with smooth exponential gain attack and release ramps, providing an instantaneous audio cue.
-- **Do Not Disturb (DND) Time Windows**: Supports operator-defined quiet windows (e.g., `22:00` to `07:00`). The helper function [isWithinDnd](file:///home/hp/SGX/frontend/src/app/lib/notificationLocalPrefs.ts#L69-L82) calculates minutes-of-day including midnight wrap-around spans, automatically silencing audio cues and desktop popups during quiet hours while continuing to log events in the inbox.
+- **Opt-In Web Notifications API**: Requests browser permission via an explicit user confirmation dialog (`frontend/src/app/components/settings/NotificationDeliverySettings.tsx#L85-L96`). When the browser tab is hidden (`document.hidden`), incoming events trigger native OS desktop notifications.
+- **Zero-Dependency Synthesized Audio (`frontend/src/app/lib/notificationLocalPrefs.ts#L87-L100`)**: Rather than bundling proprietary audio asset files, the frontend synthesizes an elegant notification tone in real time using the browser's Web Audio `AudioContext`. An oscillator generates an 880 Hz sine wave with smooth exponential gain attack and release ramps, providing an instantaneous audio cue.
+- **Do Not Disturb (DND) Time Windows**: Supports operator-defined quiet windows (e.g., `22:00` to `07:00`). The helper function `frontend/src/app/lib/notificationLocalPrefs.ts#L69-L82` calculates minutes-of-day including midnight wrap-around spans, automatically silencing audio cues and desktop popups during quiet hours while continuing to log events in the inbox.
 
 ---
 
 ## 25.7 Role-Based Notification Filtering & Member Privacy Scoping
 
-A critical security innovation of Feature 25 is strict role-based notification scoping ([src/api/handlers/notify.rs](file:///home/hp/SGX/src/api/handlers/notify.rs)), enforcing the principle of least privilege in multi-tenant edge environments.
+A critical security innovation of Feature 25 is strict role-based notification scoping (`src/api/handlers/notify.rs`), enforcing the principle of least privilege in multi-tenant edge environments.
 
 ### 25.7.1 Admin vs. Member Session Gating (`is_member_session`)
 
-When a client establishes an SSE stream or queries notification endpoints, the handler evaluates the caller's authenticated session claims ([AuthenticatedSession](file:///home/hp/SGX/src/api/auth/middleware.rs)):
+When a client establishes an SSE stream or queries notification endpoints, the handler evaluates the caller's authenticated session claims (`src/api/auth/middleware.rs`):
 
     fn is_member_session(session: &Option<Extension<AuthenticatedSession>>) -> bool {
         session
@@ -8327,7 +8348,7 @@ If `claims.role == "member"`, the session is treated as a standard Circle partic
 
 ### 25.7.2 Member Notification Allowlist Enforcement (`member_notification_allowed`)
 
-Circle members are strictly prohibited from viewing system infrastructure telemetry. The filtering gate [member_notification_allowed()](file:///home/hp/SGX/src/api/handlers/notify.rs#L309-L311) restricts member sessions exclusively to the `Circles` category:
+Circle members are strictly prohibited from viewing system infrastructure telemetry. The filtering gate `src/api/handlers/notify.rs#L309-L311` restricts member sessions exclusively to the `Circles` category:
 
     fn member_notification_allowed(event: &notify::model::NotificationEvent) -> bool {
         event.kind.category() == notify::model::NotificationCategory::Circles
@@ -8337,11 +8358,11 @@ Comprehensive Enforcement Across All Endpoints:
 1. **Live SSE Stream (`/stream`)**: Any event belonging to the `Alerts` or `Devices` category is discarded before being written to the member's SSE buffer.
 2. **Event History (`/notifications`)**: History queries executed by a member session automatically apply `.retain(member_notification_allowed)`, stripping all security and device records.
 3. **Unread Counter (`/unread-count`)**: Member counts calculate unread status exclusively over allowable circle events.
-4. **Mark-Read Authorization Barrier**: If a member session attempts to mark an alert or device event as read via `POST /notifications/{id}/read`, the server rejects the request with HTTP `403 Forbidden` and emits an audit event ([audit_member_resource_denied](file:///home/hp/SGX/src/api/auth/authorization.rs)).
+4. **Mark-Read Authorization Barrier**: If a member session attempts to mark an alert or device event as read via `POST /notifications/{id}/read`, the server rejects the request with HTTP `403 Forbidden` and emits an audit event (`src/api/auth/authorization.rs`).
 
 ### 25.7.3 Severity-Based Suppression (Filtering `Info` Alerts) & Notification Tone Muting
 
-To prevent alert flooding, the intrusion alert publisher ([publish_alert](file:///home/hp/SGX/src/notify/mod.rs#L88-L111)) inspects threat severities:
+To prevent alert flooding, the intrusion alert publisher (`src/notify/mod.rs#L88-L111`) inspects threat severities:
 - `Severity::Critical` and `Severity::High` map to `NotificationKind::AlertHigh`.
 - `Severity::Medium` maps to `NotificationKind::AlertMedium`.
 - `Severity::Low` maps to `NotificationKind::AlertLow`.
@@ -8351,7 +8372,7 @@ To prevent alert flooding, the intrusion alert publisher ([publish_alert](file:/
 
 ## 25.8 REST API Reference & Interactive Management Console
 
-The notification subsystem exposes a comprehensive set of REST endpoints mounted under `/api/v1/notifications` ([src/api/routes.rs](file:///home/hp/SGX/src/api/routes.rs#L260-L283)).
+The notification subsystem exposes a comprehensive set of REST endpoints mounted under `/api/v1/notifications` (`src/api/routes.rs#L260-L283`).
 
 ### 25.8.1 Streaming & Event Retrieval Endpoints (`/stream`, `/history`, `/unread-count`)
 
@@ -8369,7 +8390,7 @@ The notification subsystem exposes a comprehensive set of REST endpoints mounted
 - **Method & Route**: `GET /api/v1/notifications`
 - **Query Parameters**:
   - `limit` (optional, integer): Maximum events to return (default: 100).
-- **Response**: HTTP 200 JSON array of [NotificationEvent](file:///home/hp/SGX/src/notify/model.rs#L44-L60) objects ordered from newest to oldest.
+- **Response**: HTTP 200 JSON array of `src/notify/model.rs#L44-L60` objects ordered from newest to oldest.
 
 #### 3. Retrieve Unread Notification Count
 - **Method & Route**: `GET /api/v1/notifications/unread-count`
@@ -8393,11 +8414,11 @@ The notification subsystem exposes a comprehensive set of REST endpoints mounted
 
 #### 6. Retrieve Notification Preferences
 - **Method & Route**: `GET /api/v1/notifications/prefs`
-- **Response**: HTTP 200 JSON returning signed [NotificationPrefs](file:///home/hp/SGX/src/notify/prefs.rs#L64-L76).
+- **Response**: HTTP 200 JSON returning signed `src/notify/prefs.rs#L64-L76`.
 
 #### 7. Update Notification Preferences
 - **Method & Route**: `PUT /api/v1/notifications/prefs`
-- **Request Body**: JSON patch matching [NotificationPrefsPatch](file:///home/hp/SGX/src/api/handlers/notify.rs#L41-L47):
+- **Request Body**: JSON patch matching `src/api/handlers/notify.rs#L41-L47`:
 
         {
           "alerts": { "low": false },
@@ -8410,10 +8431,10 @@ The notification subsystem exposes a comprehensive set of REST endpoints mounted
 ### 25.8.4 UI Management Components (`ST11Notifications.tsx`, `NotificationBell.tsx`, `NT01Notifications.tsx`, `NotificationDeliverySettings.tsx`)
 
 The frontend delivers an intuitive, accessible management interface:
-- **Global Preferences Screen ([ST11Notifications.tsx](file:///home/hp/SGX/frontend/src/app/screens/settings/ST11Notifications.tsx))**: Administrative screen organized into distinct cards for Alerts, Devices, and Circles with smooth Radix UI toggle switches.
-- **Local Delivery Settings ([NotificationDeliverySettings.tsx](file:///home/hp/SGX/frontend/src/app/components/settings/NotificationDeliverySettings.tsx))**: Manages client-specific delivery rules (master on/off, audio beep, vibration, DND time pickers).
-- **Notification Inbox Screen ([NT01Notifications.tsx](file:///home/hp/SGX/frontend/src/app/screens/notifications/NT01Notifications.tsx))**: Complete notifications portal featuring tabbed filters (`All`, `Unread`, `Read`), real-time connection status badges, bulk "Mark all read" buttons, and paginated item rows with category-coded Lucide icons.
-- **Header Notification Bell ([NotificationBell.tsx](file:///home/hp/SGX/frontend/src/app/components/notifications/NotificationBell.tsx))**: Top navigation bar badge displaying a live pulsing unread badge and quick-access dropdown popover.
+- **Global Preferences Screen (`frontend/src/app/screens/settings/ST11Notifications.tsx`)**: Administrative screen organized into distinct cards for Alerts, Devices, and Circles with smooth Radix UI toggle switches.
+- **Local Delivery Settings (`frontend/src/app/components/settings/NotificationDeliverySettings.tsx`)**: Manages client-specific delivery rules (master on/off, audio beep, vibration, DND time pickers).
+- **Notification Inbox Screen (`frontend/src/app/screens/notifications/NT01Notifications.tsx`)**: Complete notifications portal featuring tabbed filters (`All`, `Unread`, `Read`), real-time connection status badges, bulk "Mark all read" buttons, and paginated item rows with category-coded Lucide icons.
+- **Header Notification Bell (`frontend/src/app/components/notifications/NotificationBell.tsx`)**: Top navigation bar badge displaying a live pulsing unread badge and quick-access dropdown popover.
 
 ---
 
@@ -8423,16 +8444,16 @@ The following defense matrix details the resilience mechanisms engineered into F
 
 | Defense ID | Threat Vector | Mitigation Mechanism | Implementation Location |
 | :--- | :--- | :--- | :--- |
-| **DEF-NOT-01** | **Unauthorized Preference Manipulation** | Preferences are cryptographically sealed with W3C DataIntegrityProof signatures generated by the hardware Device Key Pair (DKP). Unsigned or modified files fail verification. | [src/notify/prefs.rs: verify()](file:///home/hp/SGX/src/notify/prefs.rs#L121-L165) |
-| **DEF-NOT-02** | **Multi-Tenant Telemetry Eavesdropping** | Server-side role scoping strictly blocks standard Circle members from viewing system `Alerts` or `Devices` telemetry across streams, history, and unread counters. | [src/api/handlers/notify.rs: member_notification_allowed](file:///home/hp/SGX/src/api/handlers/notify.rs#L309-L311) |
-| **DEF-NOT-03** | **Preference State Rollback Attack** | Monotonically incrementing `sequence: u64` counter prevents adversaries from rolling back preferences to older signed versions with weakened alerting rules. | [src/api/handlers/notify.rs: put_prefs](file:///home/hp/SGX/src/api/handlers/notify.rs#L249-L252) |
-| **DEF-NOT-04** | **Broadcast Saturation & Worker Stalling** | Tokio broadcast channel decouples event emission from persistence and network writing; publishers complete in microsecond non-blocking operations. | [src/notify/bus.rs: publish()](file:///home/hp/SGX/src/notify/bus.rs#L15-L17) |
-| **DEF-NOT-05** | **Disk Corruption & Power Failure** | Ledger updates execute via atomic temporary file creation, POSIX `sync_all()` cache flushing, and atomic file replacement under a process-wide write mutex. | [src/notify/store.rs: save_atomic](file:///home/hp/SGX/src/notify/store.rs#L95-L111) |
-| **DEF-NOT-06** | **Broadcast Self-Echo Notification Storms** | Outgoing notifications stamp the originator's identity in `actor_did`. Frontend clients compare against active session DIDs and suppress self-generated alerts. | [frontend/src/app/contexts/NotificationContext.tsx: isOwnEvent](file:///home/hp/SGX/frontend/src/app/contexts/NotificationContext.tsx#L106-L109) |
-| **DEF-NOT-07** | **Shared Browser Local Setting Leakage** | Client-side IndexedDB preferences are namespaced by caller DID (`scopedKey`), preventing role settings from leaking across shared browser sessions. | [frontend/src/app/lib/notificationLocalPrefs.ts: scopedKey](file:///home/hp/SGX/frontend/src/app/lib/notificationLocalPrefs.ts#L38-L40) |
-| **DEF-NOT-08** | **Intrusion Alert Flooding & Fatigue** | Threat alert publisher filters out benign `Severity::Info` alerts at origin, ensuring operator notification queues remain focused on actionable security events. | [src/notify/mod.rs: publish_alert](file:///home/hp/SGX/src/notify/mod.rs#L89-L94) |
-| **DEF-NOT-09** | **Mobile Reconnection Event Loss** | Resilient `Last-Event-ID` cursor replay combined with `RecvError::Lagged` automatic recovery guarantees continuous event delivery across network drops. | [src/api/handlers/notify.rs: stream](file:///home/hp/SGX/src/api/handlers/notify.rs#L82-L137) |
-| **DEF-NOT-10** | **Cloud Push Eavesdropping** | Operates entirely via local HTTPS Server-Sent Events directly from the Guardian node, eliminating reliance on third-party cloud push brokers. | [frontend/src/api/notifications.ts: streamNotificationEvents](file:///home/hp/SGX/frontend/src/api/notifications.ts#L124-L169) |
+| **DEF-NOT-01** | **Unauthorized Preference Manipulation** | Preferences are cryptographically sealed with W3C DataIntegrityProof signatures generated by the hardware Device Key Pair (DKP). Unsigned or modified files fail verification. | `src/notify/prefs.rs#L121-L165` |
+| **DEF-NOT-02** | **Multi-Tenant Telemetry Eavesdropping** | Server-side role scoping strictly blocks standard Circle members from viewing system `Alerts` or `Devices` telemetry across streams, history, and unread counters. | `src/api/handlers/notify.rs#L309-L311` |
+| **DEF-NOT-03** | **Preference State Rollback Attack** | Monotonically incrementing `sequence: u64` counter prevents adversaries from rolling back preferences to older signed versions with weakened alerting rules. | `src/api/handlers/notify.rs#L249-L252` |
+| **DEF-NOT-04** | **Broadcast Saturation & Worker Stalling** | Tokio broadcast channel decouples event emission from persistence and network writing; publishers complete in microsecond non-blocking operations. | `src/notify/bus.rs#L15-L17` |
+| **DEF-NOT-05** | **Disk Corruption & Power Failure** | Ledger updates execute via atomic temporary file creation, POSIX `sync_all()` cache flushing, and atomic file replacement under a process-wide write mutex. | `src/notify/store.rs#L95-L111` |
+| **DEF-NOT-06** | **Broadcast Self-Echo Notification Storms** | Outgoing notifications stamp the originator's identity in `actor_did`. Frontend clients compare against active session DIDs and suppress self-generated alerts. | `frontend/src/app/contexts/NotificationContext.tsx#L106-L109` |
+| **DEF-NOT-07** | **Shared Browser Local Setting Leakage** | Client-side IndexedDB preferences are namespaced by caller DID (`scopedKey`), preventing role settings from leaking across shared browser sessions. | `frontend/src/app/lib/notificationLocalPrefs.ts#L38-L40` |
+| **DEF-NOT-08** | **Intrusion Alert Flooding & Fatigue** | Threat alert publisher filters out benign `Severity::Info` alerts at origin, ensuring operator notification queues remain focused on actionable security events. | `src/notify/mod.rs#L89-L94` |
+| **DEF-NOT-09** | **Mobile Reconnection Event Loss** | Resilient `Last-Event-ID` cursor replay combined with `RecvError::Lagged` automatic recovery guarantees continuous event delivery across network drops. | `src/api/handlers/notify.rs#L82-L137` |
+| **DEF-NOT-10** | **Cloud Push Eavesdropping** | Operates entirely via local HTTPS Server-Sent Events directly from the Guardian node, eliminating reliance on third-party cloud push brokers. | `frontend/src/api/notifications.ts#L124-L169` |
 
 ---
 
@@ -8442,16 +8463,16 @@ Feature 25 is verified through an extensive automated test suite comprising the 
 
 | Test ID | Target Capability | Verification Location & Test Function | Verification Scope & Expected Results |
 | :--- | :--- | :--- | :--- |
-| **NOT-001** | **Broadcast Fanout & Non-Blocking Delivery** | [src/notify/tests/mod.rs](file:///home/hp/SGX/src/notify/tests/mod.rs): `publish_is_non_blocking_without_subscribers`, `subscribe_receives_published_events` | Verifies non-blocking publishing when subscribers are absent, and verifies microsecond delivery of cloned events across active subscriber channels. |
-| **NOT-002** | **Circle Helper Event Emission & Actor Tagging** | [src/notify/tests/mod.rs](file:///home/hp/SGX/src/notify/tests/mod.rs): `publish_circle_helpers_broadcast_the_right_kind` | Validates event generation for messages, calls, member joins, and file sharing; verifies correct `NotificationKind` assignment and `actor_did` stamping. |
-| **NOT-003** | **Threat Alert Severity Mapping & Info Suppression** | [src/notify/tests/mod.rs](file:///home/hp/SGX/src/notify/tests/mod.rs): `alert_publisher_maps_actionable_severities_and_suppresses_info` | Confirms Critical/High map to `AlertHigh`, Medium maps to `AlertMedium`, Low maps to `AlertLow`, and verifies that `Severity::Info` alerts are suppressed from notification queues. |
-| **NOT-004** | **Device Lifecycle Event Propagation** | [src/notify/tests/mod.rs](file:///home/hp/SGX/src/notify/tests/mod.rs): `device_publishers_emit_expected_kinds_labels_and_references` | Verifies emission of `DeviceDiscovered`, `DevicePendingApproval`, and `GuardianOffline` events with correct fallback formatting for hostname, vendor, and device ID. |
-| **NOT-005** | **DKP Hardware Signature & Tamper Detection** | [src/notify/tests/mod.rs](file:///home/hp/SGX/src/notify/tests/mod.rs): `signed_prefs_round_trip_and_tamper_rejected` | Signs default preferences with node's hardware key, verifies W3C proof against self DID document, introduces simulated disk tampering, and asserts signature rejection. |
-| **NOT-006** | **FIFO Ring-Buffer Eviction & Atomic Persistence** | [src/notify/tests/mod.rs](file:///home/hp/SGX/src/notify/tests/mod.rs): `store_eviction_round_trip_and_replay_after` | Tests `SGX_NOTIFY_MAX_EVENTS` truncation boundary, verifying oldest records are pruned and atomic write-rename preserves ledger integrity. |
-| **NOT-007** | **Monotonic Sequencing & Cursor Replay** | [src/notify/tests/mod.rs](file:///home/hp/SGX/src/notify/tests/mod.rs): `async_history_replay_and_read_helpers_round_trip_files` | Verifies `replay_after` correctly filters events with `id > cursor`, tests mark-read state persistence, and verifies unread tally recalculations. |
-| **NOT-008** | **Background Persistence Worker** | [src/notify/tests/mod.rs](file:///home/hp/SGX/src/notify/tests/mod.rs): `spawn_persists_published_events_to_disk` | Validates `notify::spawn()` listener task, ensuring events published to the in-memory bus are asynchronously persisted to `events.jsonl` via `spawn_blocking`. |
-| **NOT-009** | **Storage Edge Cases & ID Synchronization** | [tests/cov_wave4_notify_integration_scoring_test.rs](file:///home/hp/SGX/tests/cov_wave4_notify_integration_scoring_test.rs): `notification_store_handles_missing_blank_malformed_and_prime_paths` | Tests empty, whitespace-only, and malformed JSONL files, verifying graceful handling and monotonic `next_event_id()` progression across process restarts. |
-| **NOT-010** | **Client Delivery Logic & DND Window Evaluation** | [frontend/src/app/lib/notificationLocalPrefs.test.ts](file:///home/hp/SGX/frontend/src/app/lib/notificationLocalPrefs.test.ts) | Verifies client-side permission checks, sound suppression during quiet hours, and midnight-wrapping Do Not Disturb window calculations (`22:00` to `07:00`). |
+| **NOT-001** | **Broadcast Fanout & Non-Blocking Delivery** | `src/notify/tests/mod.rs`: `publish_is_non_blocking_without_subscribers`, `subscribe_receives_published_events` | Verifies non-blocking publishing when subscribers are absent, and verifies microsecond delivery of cloned events across active subscriber channels. |
+| **NOT-002** | **Circle Helper Event Emission & Actor Tagging** | `src/notify/tests/mod.rs`: `publish_circle_helpers_broadcast_the_right_kind` | Validates event generation for messages, calls, member joins, and file sharing; verifies correct `NotificationKind` assignment and `actor_did` stamping. |
+| **NOT-003** | **Threat Alert Severity Mapping & Info Suppression** | `src/notify/tests/mod.rs`: `alert_publisher_maps_actionable_severities_and_suppresses_info` | Confirms Critical/High map to `AlertHigh`, Medium maps to `AlertMedium`, Low maps to `AlertLow`, and verifies that `Severity::Info` alerts are suppressed from notification queues. |
+| **NOT-004** | **Device Lifecycle Event Propagation** | `src/notify/tests/mod.rs`: `device_publishers_emit_expected_kinds_labels_and_references` | Verifies emission of `DeviceDiscovered`, `DevicePendingApproval`, and `GuardianOffline` events with correct fallback formatting for hostname, vendor, and device ID. |
+| **NOT-005** | **DKP Hardware Signature & Tamper Detection** | `src/notify/tests/mod.rs`: `signed_prefs_round_trip_and_tamper_rejected` | Signs default preferences with node's hardware key, verifies W3C proof against self DID document, introduces simulated disk tampering, and asserts signature rejection. |
+| **NOT-006** | **FIFO Ring-Buffer Eviction & Atomic Persistence** | `src/notify/tests/mod.rs`: `store_eviction_round_trip_and_replay_after` | Tests `SGX_NOTIFY_MAX_EVENTS` truncation boundary, verifying oldest records are pruned and atomic write-rename preserves ledger integrity. |
+| **NOT-007** | **Monotonic Sequencing & Cursor Replay** | `src/notify/tests/mod.rs`: `async_history_replay_and_read_helpers_round_trip_files` | Verifies `replay_after` correctly filters events with `id > cursor`, tests mark-read state persistence, and verifies unread tally recalculations. |
+| **NOT-008** | **Background Persistence Worker** | `src/notify/tests/mod.rs`: `spawn_persists_published_events_to_disk` | Validates `notify::spawn()` listener task, ensuring events published to the in-memory bus are asynchronously persisted to `events.jsonl` via `spawn_blocking`. |
+| **NOT-009** | **Storage Edge Cases & ID Synchronization** | `tests/cov_wave4_notify_integration_scoring_test.rs`: `notification_store_handles_missing_blank_malformed_and_prime_paths` | Tests empty, whitespace-only, and malformed JSONL files, verifying graceful handling and monotonic `next_event_id()` progression across process restarts. |
+| **NOT-010** | **Client Delivery Logic & DND Window Evaluation** | `frontend/src/app/lib/notificationLocalPrefs.test.ts` | Verifies client-side permission checks, sound suppression during quiet hours, and midnight-wrapping Do Not Disturb window calculations (`22:00` to `07:00`). |
 
 ---
 
@@ -8460,30 +8481,30 @@ Feature 25 is verified through an extensive automated test suite comprising the 
 The implementation of Feature 25 is organized across the following core source files:
 
 ### Core Notification Subsystem: `src/notify/`
-- **[src/notify/mod.rs](file:///home/hp/SGX/src/notify/mod.rs)**: Subsystem coordinator, background persistence daemon (`spawn`), threat alert dispatcher (`publish_alert`), device event broadcasters, and async state helpers.
-- **[src/notify/model.rs](file:///home/hp/SGX/src/notify/model.rs)**: Core domain models, category mapping (`NotificationCategory`), typed kinds (`NotificationKind`), and event schema (`NotificationEvent`).
-- **[src/notify/prefs.rs](file:///home/hp/SGX/src/notify/prefs.rs)**: Cryptographic preference engine, category switches (`AlertPrefs`, `DevicePrefs`, `CirclePrefs`), canonical JSON key sorter (`sort_json_keys`), and W3C `DataIntegrityProof` signing and verification.
-- **[src/notify/store.rs](file:///home/hp/SGX/src/notify/store.rs)**: Ring-buffer storage engine, FIFO queue eviction, atomic JSON Lines persistence (`events.jsonl`), monotonic event ID generator, and cursor replay engine (`replay_after`).
-- **[src/notify/bus.rs](file:///home/hp/SGX/src/notify/bus.rs)**: Global asynchronous broadcast channel (`broadcast::Sender<NotificationEvent>`) providing microsecond non-blocking event fanout.
-- **[src/notify/errors.rs](file:///home/hp/SGX/src/notify/errors.rs)**: Typed domain errors (`NotifyError`).
+- **`src/notify/mod.rs`**: Subsystem coordinator, background persistence daemon (`spawn`), threat alert dispatcher (`publish_alert`), device event broadcasters, and async state helpers.
+- **`src/notify/model.rs`**: Core domain models, category mapping (`NotificationCategory`), typed kinds (`NotificationKind`), and event schema (`NotificationEvent`).
+- **`src/notify/prefs.rs`**: Cryptographic preference engine, category switches (`AlertPrefs`, `DevicePrefs`, `CirclePrefs`), canonical JSON key sorter (`sort_json_keys`), and W3C `DataIntegrityProof` signing and verification.
+- **`src/notify/store.rs`**: Ring-buffer storage engine, FIFO queue eviction, atomic JSON Lines persistence (`events.jsonl`), monotonic event ID generator, and cursor replay engine (`replay_after`).
+- **`src/notify/bus.rs`**: Global asynchronous broadcast channel (`broadcast::Sender<NotificationEvent>`) providing microsecond non-blocking event fanout.
+- **`src/notify/errors.rs`**: Typed domain errors (`NotifyError`).
 
 ### REST API Handlers & Routing: `src/api/`
-- **[src/api/handlers/notify.rs](file:///home/hp/SGX/src/api/handlers/notify.rs)**: Axum HTTP handlers for SSE event streaming (`/stream`), event history (`/notifications`), unread tally (`/unread-count`), mark-read operations, role-based member scoping (`member_notification_allowed`), and preference patching (`/prefs`).
-- **[src/api/routes.rs](file:///home/hp/SGX/src/api/routes.rs)**: API router mounting `/api/v1/notifications/*` route endpoints into the primary Axum application state.
+- **`src/api/handlers/notify.rs`**: Axum HTTP handlers for SSE event streaming (`/stream`), event history (`/notifications`), unread tally (`/unread-count`), mark-read operations, role-based member scoping (`member_notification_allowed`), and preference patching (`/prefs`).
+- **`src/api/routes.rs`**: API router mounting `/api/v1/notifications/*` route endpoints into the primary Axum application state.
 
 ### Frontend API, State & Components: `frontend/`
-- **[frontend/src/api/notifications.ts](file:///home/hp/SGX/frontend/src/api/notifications.ts)**: Client API client, `ReadableStream` SSE event parser, event normalization, and REST endpoints wrapper.
-- **[frontend/src/app/contexts/NotificationContext.tsx](file:///home/hp/SGX/frontend/src/app/contexts/NotificationContext.tsx)**: React state provider managing live SSE streams, reconnect timers, IndexedDB synchronization, toast dispatching, and self-echo suppression (`actorDid`).
-- **[frontend/src/app/lib/notificationLocalPrefs.ts](file:///home/hp/SGX/frontend/src/app/lib/notificationLocalPrefs.ts)**: Local browser preferences (master toggle, sound, vibration), Web Audio 880 Hz synthesizer (`playNotificationSound`), and midnight-wrapping DND calculator (`isWithinDnd`).
-- **[frontend/src/app/screens/settings/ST11Notifications.tsx](file:///home/hp/SGX/frontend/src/app/screens/settings/ST11Notifications.tsx)**: Administrative settings screen for granular category toggles (Alerts, Devices, Circles).
-- **[frontend/src/app/components/settings/NotificationDeliverySettings.tsx](file:///home/hp/SGX/frontend/src/app/components/settings/NotificationDeliverySettings.tsx)**: Client delivery settings component for managing desktop push permissions, audio toggles, and quiet hours.
-- **[frontend/src/app/screens/notifications/NT01Notifications.tsx](file:///home/hp/SGX/frontend/src/app/screens/notifications/NT01Notifications.tsx)**: Full notification inbox screen with unread filters, bulk read actions, and paginated event rows.
-- **[frontend/src/app/components/notifications/NotificationBell.tsx](file:///home/hp/SGX/frontend/src/app/components/notifications/NotificationBell.tsx)**: Top-bar notification bell component with real-time unread badge and dropdown popover drawer.
-- **[frontend/src/app/components/notifications/NotificationToastStack.tsx](file:///home/hp/SGX/frontend/src/app/components/notifications/NotificationToastStack.tsx)**: Floating interactive toast stack with 5-second auto-dismiss and deep-link routing.
+- **`frontend/src/api/notifications.ts`**: Client API client, `ReadableStream` SSE event parser, event normalization, and REST endpoints wrapper.
+- **`frontend/src/app/contexts/NotificationContext.tsx`**: React state provider managing live SSE streams, reconnect timers, IndexedDB synchronization, toast dispatching, and self-echo suppression (`actorDid`).
+- **`frontend/src/app/lib/notificationLocalPrefs.ts`**: Local browser preferences (master toggle, sound, vibration), Web Audio 880 Hz synthesizer (`playNotificationSound`), and midnight-wrapping DND calculator (`isWithinDnd`).
+- **`frontend/src/app/screens/settings/ST11Notifications.tsx`**: Administrative settings screen for granular category toggles (Alerts, Devices, Circles).
+- **`frontend/src/app/components/settings/NotificationDeliverySettings.tsx`**: Client delivery settings component for managing desktop push permissions, audio toggles, and quiet hours.
+- **`frontend/src/app/screens/notifications/NT01Notifications.tsx`**: Full notification inbox screen with unread filters, bulk read actions, and paginated event rows.
+- **`frontend/src/app/components/notifications/NotificationBell.tsx`**: Top-bar notification bell component with real-time unread badge and dropdown popover drawer.
+- **`frontend/src/app/components/notifications/NotificationToastStack.tsx`**: Floating interactive toast stack with 5-second auto-dismiss and deep-link routing.
 
 ### Test Suites: `tests/` & `src/notify/tests/`
-- **[src/notify/tests/mod.rs](file:///home/hp/SGX/src/notify/tests/mod.rs)**: Comprehensive subsystem test suite covering bus fanout, circle event helpers, alert severity mapping, DKP preference signing, FIFO store eviction, cursor replay, and background persistence.
-- **[tests/cov_wave4_notify_integration_scoring_test.rs](file:///home/hp/SGX/tests/cov_wave4_notify_integration_scoring_test.rs)**: Integration coverage suite testing store edge cases, missing file priming, malformed JSONL recovery, and monotonic ID generation.
+- **`src/notify/tests/mod.rs`**: Comprehensive subsystem test suite covering bus fanout, circle event helpers, alert severity mapping, DKP preference signing, FIFO store eviction, cursor replay, and background persistence.
+- **`tests/cov_wave4_notify_integration_scoring_test.rs`**: Integration coverage suite testing store edge cases, missing file priming, malformed JSONL recovery, and monotonic ID generation.
 
 ---
 
@@ -8499,37 +8520,37 @@ However, arbitrary automation frameworks introduce severe system risks:
 3. **Cascading Reaction Loops & Alert Storms**: Rapid bursts of security alerts (e.g., during distributed port scanning) can overwhelm the system, causing unbounded action loops, CPU exhaustion, and storage denial-of-service.
 4. **Unauthorized Registry Tampering**: In an unauthenticated rule engine, an attacker with unprivileged filesystem access could inject silent rules to disable alarms, permit rogue hardware, or trigger catastrophic credential revocations.
 
-To eliminate these vulnerabilities while providing powerful, reactive edge autonomy, Feature 26 implements a deterministic, zero-trust **Event-Condition-Action (ECA)** rule engine ([src/rules/](file:///home/hp/SGX/src/rules/)):
-- **Decoupled Asynchronous Event Ingestion**: An in-memory broadcast channel ([src/rules/bus.rs](file:///home/hp/SGX/src/rules/bus.rs)) ingests security events off the primary packet-processing path, guaranteeing zero latency impact on threat detection or network operations.
-- **Pure, Side-Effect-Free Condition Evaluation**: The condition evaluator ([src/rules/eval.rs](file:///home/hp/SGX/src/rules/eval.rs)) is mathematically pure and deterministic. It performs zero I/O, no network calls, and no filesystem access, enabling exhaustive offline verification.
-- **Strict Fixed-Action Catalog**: Actions are restricted to a closed enum ([RuleAction](file:///home/hp/SGX/src/rules/model.rs#L45-L53)) that invokes internal Rust subsystem functions directly. No external shell commands, interpreters, or scripts can be executed.
-- **Inherited Blocker Self-Protection**: Network-blocking actions delegate directly to the kernel threat blocker ([Blocker](file:///home/hp/SGX/src/threat/blocker.rs)), which strictly enforces exemption whitelists for default gateways, live management LANs, loopbacks, and Nebula mesh tunnels.
+To eliminate these vulnerabilities while providing powerful, reactive edge autonomy, Feature 26 implements a deterministic, zero-trust **Event-Condition-Action (ECA)** rule engine (`src/rules/`):
+- **Decoupled Asynchronous Event Ingestion**: An in-memory broadcast channel (`src/rules/bus.rs`) ingests security events off the primary packet-processing path, guaranteeing zero latency impact on threat detection or network operations.
+- **Pure, Side-Effect-Free Condition Evaluation**: The condition evaluator (`src/rules/eval.rs`) is mathematically pure and deterministic. It performs zero I/O, no network calls, and no filesystem access, enabling exhaustive offline verification.
+- **Strict Fixed-Action Catalog**: Actions are restricted to a closed enum (`src/rules/model.rs#L45-L53`) that invokes internal Rust subsystem functions directly. No external shell commands, interpreters, or scripts can be executed.
+- **Inherited Blocker Self-Protection**: Network-blocking actions delegate directly to the kernel threat blocker (`src/threat/blocker.rs`), which strictly enforces exemption whitelists for default gateways, live management LANs, loopbacks, and Nebula mesh tunnels.
 - **Multi-Layer Defensive Safeguards**: The engine operates **safe by default** in dry-run mode (`SGX_RULES_DRYRUN=1`), enforces explicit destructive action opt-ins (`allow_destructive: true`), throttles repeat triggers via target cooldowns (`cooldown_secs`), and enforces hourly execution rate caps (`max_actions_per_hour`).
-- **Hardware-Rooted Signed Registry**: All configured rules are persisted in an atomic JSON document ([rules.json](file:///home/hp/SGX/src/rules/store.rs)) sealed with a W3C DataIntegrityProof signature generated by the node's hardware Device Key Pair (DKP). Any tampering triggers fail-closed deactivation.
+- **Hardware-Rooted Signed Registry**: All configured rules are persisted in an atomic JSON document (`src/rules/store.rs`) sealed with a W3C DataIntegrityProof signature generated by the node's hardware Device Key Pair (DKP). Any tampering triggers fail-closed deactivation.
 
 ---
 
 ## 26.2 Event Ingestion Pipeline & Multi-Source Trigger Taxonomy
 
-The rule engine connects directly to the Guardian event bus, translating diverse internal subsystem signals into standardized event records ([src/rules/model.rs](file:///home/hp/SGX/src/rules/model.rs)).
+The rule engine connects directly to the Guardian event bus, translating diverse internal subsystem signals into standardized event records (`src/rules/model.rs`).
 
 ### 26.2.1 Real-Time Trigger Matrix (`RuleTrigger` Enum)
 
-The automation engine defines seven discrete trigger categories ([RuleTrigger](file:///home/hp/SGX/src/rules/model.rs#L12-L22)), allowing operators to bind automated responses across disparate operational layers:
+The automation engine defines seven discrete trigger categories (`src/rules/model.rs#L12-L22`), allowing operators to bind automated responses across disparate operational layers:
 
 | Trigger Enum (`RuleTrigger`) | Originating Subsystem | Firing Condition & Event Context |
 | :--- | :--- | :--- |
-| **`ThreatAlert`** | Intrusion Detection ([src/threat/](file:///home/hp/SGX/src/threat/)) | Suricata EVE or AI threat analyzer detects network exploitation, malicious traffic signatures, or port scans. |
-| **`DeviceDiscovered`** | Network Discovery ([src/discovery/](file:///home/hp/SGX/src/discovery/)) | Active ARP/mDNS network scanning detects a newly appearing physical interface, MAC address, or IP address. |
-| **`DeviceUnauthorized`** | Zero-Trust Quarantine ([src/devices/](file:///home/hp/SGX/src/devices/)) | An unrecognized or unapproved device attempts to communicate on the local subnet without prior administrator authorization. |
-| **`GeofenceEntry`** | Spatial Boundary Engine ([src/geofence/](file:///home/hp/SGX/src/geofence/)) | A tracked device or mobile node crosses coordinates into a defined geographic security zone. |
-| **`GeofenceExit`** | Spatial Boundary Engine ([src/geofence/](file:///home/hp/SGX/src/geofence/)) | A tracked device or mobile asset departs an authorized boundary perimeter. |
-| **`AttestationFailed`** | Hardware Attestation ([src/attestation_service.rs](file:///home/hp/SGX/src/attestation_service.rs)) | A peer Guardian node fails mutual TPM 2.0 PCR quote verification or cryptographic identity handshake. |
-| **`CrlRevocation`** | Decentralized CRL Mesh ([src/crl/](file:///home/hp/SGX/src/crl/)) | A Certificate Revocation List gossip update revokes a node or member DID identity within the Circle of Trust. |
+| **`ThreatAlert`** | Intrusion Detection (`src/threat/`) | Suricata EVE or the threat analyzer detects network exploitation, malicious traffic signatures, or port scans. |
+| **`DeviceDiscovered`** | Network Discovery (`src/discovery/`) | Active ARP/mDNS network scanning detects a newly appearing physical interface, MAC address, or IP address. |
+| **`DeviceUnauthorized`** | Zero-Trust Quarantine (`src/devices/`) | An unrecognized or unapproved device attempts to communicate on the local subnet without prior administrator authorization. |
+| **`GeofenceEntry`** | Spatial Boundary Engine (`src/geofence/`) | A tracked device or mobile node crosses coordinates into a defined geographic security zone. |
+| **`GeofenceExit`** | Spatial Boundary Engine (`src/geofence/`) | A tracked device or mobile asset departs an authorized boundary perimeter. |
+| **`AttestationFailed`** | Hardware Attestation (`src/attestation_service.rs`) | A peer Guardian node fails mutual TPM 2.0 PCR quote verification or cryptographic identity handshake. |
+| **`CrlRevocation`** | Decentralized CRL Mesh (`src/crl/`) | A Certificate Revocation List gossip update revokes a node or member DID identity within the Circle of Trust. |
 
 ### 26.2.2 Unified Event Data Model (`RuleEvent`) & Target Key Resolution
 
-To enable unified condition evaluation across heterogeneous triggers, all incoming signals are converted into a typed [RuleEvent](file:///home/hp/SGX/src/rules/model.rs#L264-L310) enum:
+To enable unified condition evaluation across heterogeneous triggers, all incoming signals are converted into a typed `src/rules/model.rs#L264-L310` enum:
 
     pub enum RuleEvent {
         ThreatAlert { node_id: String, alert: ThreatAlert },
@@ -8541,7 +8562,7 @@ To enable unified condition evaluation across heterogeneous triggers, all incomi
         CrlRevocation { node_id: String, revoked_did: String, reason: String, severity: String },
     }
 
-Target Key Resolution ([target_key()](file:///home/hp/SGX/src/rules/model.rs#L354-L376)):
+Target Key Resolution (`src/rules/model.rs#L354-L376`):
 To enforce per-target cooldowns, each event dynamically computes its unique operational target identifier:
 - `ThreatAlert`: Resolves to the offending source IP address (`alert.src_ip`).
 - `DeviceDiscovered` / `DeviceUnauthorized`: Resolves to the unique `device_id`, falling back to `ip` if unassigned.
@@ -8551,7 +8572,7 @@ To enforce per-target cooldowns, each event dynamically computes its unique oper
 
 ### 26.2.3 Asynchronous Non-Blocking Event Dispatch (`bus::publish`)
 
-Event dispatching is implemented in [src/rules/bus.rs](file:///home/hp/SGX/src/rules/bus.rs) using a dedicated Tokio broadcast channel with a 1,024-event buffer:
+Event dispatching is implemented in `src/rules/bus.rs` using a dedicated Tokio broadcast channel with a 1,024-event buffer:
 
     static RULES_BUS: OnceLock<broadcast::Sender<RuleEvent>> = OnceLock::new();
 
@@ -8565,11 +8586,11 @@ Crucially, `rules::publish()` is called concurrently alongside primary logging p
 
 ## 26.3 Pure & Side-Effect-Free Condition Evaluation Engine
 
-The rule engine follows a strict design discipline: **condition evaluation is a pure mathematical function** ([src/rules/eval.rs](file:///home/hp/SGX/src/rules/eval.rs)).
+The rule engine follows a strict design discipline: **condition evaluation is a pure mathematical function** (`src/rules/eval.rs`).
 
 ### 26.3.1 Leaf Predicates (`SeverityAtLeast`, `CategoryIs`, `SignatureIdIn`, `SrcIpInCidr`, `PortIn`, `DeviceStatusIs`, `ZoneIs`)
 
-Conditions are represented as a recursive abstract syntax tree ([Condition](file:///home/hp/SGX/src/rules/model.rs#L24-L36)). Leaf predicates extract and validate specific attributes from the candidate [RuleEvent](file:///home/hp/SGX/src/rules/model.rs#L264-L310):
+Conditions are represented as a recursive abstract syntax tree (`src/rules/model.rs#L24-L36`). Leaf predicates extract and validate specific attributes from the candidate `src/rules/model.rs#L264-L310`:
 
 - **`SeverityAtLeast(String)`**: Evaluates whether the event's severity meets or exceeds a target threshold based on normalized ranks:
   - `info` (0) < `low` (1) < `medium` (2) < `high` (3) < `critical` (4).
@@ -8589,7 +8610,7 @@ Leaf predicates can be nested to construct compound logical expressions:
 
 ### 26.3.3 Zero-IO Deterministic Evaluation Guarantee
 
-The primary evaluation entrypoint [evaluate()](file:///home/hp/SGX/src/rules/eval.rs#L4-L6) requires zero disk, network, or hardware interactions:
+The primary evaluation entrypoint `src/rules/eval.rs#L4-L6` requires zero disk, network, or hardware interactions:
 
     pub fn evaluate(rule: &Rule, event: &RuleEvent) -> bool {
         rule.enabled && rule.trigger == event.trigger() && condition_matches(&rule.condition, event)
@@ -8601,7 +8622,7 @@ Because the evaluator has no external dependencies or side effects, it can be te
 
 ## 26.4 Fixed-Action Catalog & Strict Execution Boundary
 
-To prevent Remote Code Execution (RCE) vulnerabilities and eliminate administrative script injection, actions are defined exclusively through a fixed catalog ([src/rules/model.rs](file:///home/hp/SGX/src/rules/model.rs#L44-L53)):
+To prevent Remote Code Execution (RCE) vulnerabilities and eliminate administrative script injection, actions are defined exclusively through a fixed catalog (`src/rules/model.rs#L44-L53`):
 
     pub enum RuleAction {
         RaiseAlert { severity: String },
@@ -8617,16 +8638,16 @@ Every action maps directly to an internal, type-safe Rust subsystem call. Users 
 
 ### 26.4.1 Non-Destructive Action Handlers (`RaiseAlert`, `Notify`, `BlockIp`, `RunScan`)
 
-Non-destructive actions mitigate threats without altering node operational identity or destroying mesh configurations ([src/rules/exec/actions.rs](file:///home/hp/SGX/src/rules/exec/actions.rs)):
-- **`RaiseAlert { severity }`**: Generates a synthetic security alert ([ThreatAlert](file:///home/hp/SGX/src/threat/threat_alert.rs)) and writes it atomically to the local threat inventory (`threat/alerts.jsonl`). It appears immediately on operator dashboards.
-- **`Notify { severity }`**: Dispatches a high-priority notification to the system audit log and the real-time notification bus seam ([src/notify/](file:///home/hp/SGX/src/notify/)).
-- **`BlockIp { ttl_secs }`**: Invokes the kernel threat blocker ([Blocker::block_ip_for_rule](file:///home/hp/SGX/src/threat/blocker.rs)) to insert a temporary or permanent drop rule in the `nftables` firewall.
-- **`RunScan { intensity }`**: Invokes the local network scanner ([NmapRunner::run_with_intensity](file:///home/hp/SGX/src/discovery/nmap.rs)) with specified scan intensity (`"stealth"`, `"standard"`, `"aggressive"`), targeting the subnet where suspicious activity was detected.
+Non-destructive actions mitigate threats without altering node operational identity or destroying mesh configurations (`src/rules/exec/actions.rs`):
+- **`RaiseAlert { severity }`**: Generates a synthetic security alert (`src/threat/threat_alert.rs`) and writes it atomically to the local threat inventory (`threat/alerts.jsonl`). It appears immediately on operator dashboards.
+- **`Notify { severity }`**: Dispatches a high-priority notification to the system audit log and the real-time notification bus seam (`src/notify/`).
+- **`BlockIp { ttl_secs }`**: Invokes the kernel threat blocker (`src/threat/blocker.rs`) to insert a temporary or permanent drop rule in the `nftables` firewall.
+- **`RunScan { intensity }`**: Invokes the local network scanner (`src/discovery/nmap_runner.rs`) with specified scan intensity (`"stealth"`, `"standard"`, `"aggressive"`), targeting the subnet where suspicious activity was detected.
 
 ### 26.4.2 Destructive Action Handlers (`RevokeDid`, `LockTransport`, `EmergencyKeyRotation`)
 
 Destructive actions enact severe security lockdown procedures that alter cryptographic state or restrict network interfaces:
-- **`RevokeDid`**: Issues an emergency Certificate Revocation List entry ([issue_revocation](file:///home/hp/SGX/src/crl/issue.rs)), revoking the offending peer's DID identity across the entire decentralized Circle of Trust.
+- **`RevokeDid`**: Issues an emergency Certificate Revocation List entry (`src/crl/issue.rs`), revoking the offending peer's DID identity across the entire decentralized Circle of Trust.
 - **`LockTransport`**: Writes a physical transport lockfile (`/var/lib/sgx-guardian/cot/{node_id}.lock`), restricting communication strictly to an authorized hardware interface (`SGX_RULES_LOCK_INTERFACE`).
 - **`EmergencyKeyRotation`**: Invokes the local Policy Authority CLI (`sgx-pa-cli emergency-rotate`) to immediately revoke and rotate the hardware Device Key Pair (DKP) in the Secure Element.
 
@@ -8640,17 +8661,17 @@ Unlike legacy SIEM systems that permit arbitrary shell execution (e.g., `exec /b
 
 The most critical operational danger in automated firewall response is self-lockout: an adversary forging packets spoofed from the gateway IP could trick a naive rule engine into blacklisting the node's own uplink.
 
-Feature 26 completely eliminates this risk by delegating all IP blocking actions directly to the kernel threat blocker ([Blocker](file:///home/hp/SGX/src/threat/blocker.rs)), inheriting its multi-tier self-protection engine:
+Feature 26 completely eliminates this risk by delegating all IP blocking actions directly to the kernel threat blocker (`src/threat/blocker.rs`), inheriting its multi-tier self-protection engine:
 
 ### 26.5.1 Automated Subnet & Gateway Exemption Checks
 
-When a `BlockIp` action executes ([block_ip](file:///home/hp/SGX/src/rules/exec/actions.rs#L152-L192)), the blocker queries live system routing tables and interface configurations before executing any firewall command:
+When a `BlockIp` action executes (`src/rules/exec/actions.rs#L152-L192`), the blocker queries live system routing tables and interface configurations before executing any firewall command:
 1. **Default Gateway Protection**: Evaluates `ip route | awk '/default/'` to resolve the uplink gateway IP. The gateway address is unconditionally exempt from blocking.
 2. **Local Interface Subnets**: Queries all active network interfaces (e.g., `eth0`, `eth1`, `wlan0`). All local interface host IPs and direct subnet broadcast ranges are unconditionally exempt.
 
 ### 26.5.2 Protected Range Enforcement (Management LAN, Loopback, Nebula Mesh)
 
-In addition to dynamic interface discovery, static self-protection rules ([Blocker::should_block](file:///home/hp/SGX/src/threat/blocker.rs)) prohibit blocking:
+In addition to dynamic interface discovery, static self-protection rules (`src/threat/blocker.rs`) prohibit blocking:
 - **Loopback Traffic**: `127.0.0.0/8` and `::1`.
 - **Management Subnets**: The primary administrative LAN CIDR (e.g., `192.168.50.0/24`).
 - **Encrypted Overlay Mesh**: The Nebula VPN overlay range (`192.168.100.0/24`).
@@ -8667,20 +8688,20 @@ If a custom rule triggers against an exempt IP address (such as the default gate
 
 ## 26.6 Multi-Layer Execution Safeguards & Defenses
 
-To maintain stability under adversarial conditions, the execution engine enforces four distinct safeguard layers ([src/rules/exec/guards.rs](file:///home/hp/SGX/src/rules/exec/guards.rs)).
+To maintain stability under adversarial conditions, the execution engine enforces four distinct safeguard layers (`src/rules/exec/guards.rs`).
 
 ### 26.6.1 Safe-by-Default Dry-Run Mode (`SGX_RULES_DRYRUN=1`)
 
-By default, the rules engine starts with dry-run mode active ([RulesConfig::from_env](file:///home/hp/SGX/src/rules/mod.rs#L33-L60)):
+By default, the rules engine starts with dry-run mode active (`src/rules/mod.rs#L33-L60`):
 - **Default Value**: `SGX_RULES_DRYRUN=1` (or `true`).
-- **Behavior**: When dry-run is active, rules evaluate normally, but destructive actions are not applied to the kernel or hardware. Instead, the engine generates an audit entry ([dry_run_report](file:///home/hp/SGX/src/rules/exec/actions.rs#L42-L48)) marking the outcome as `"dry-run"` with message `"would-run; SGX_RULES_DRYRUN is enabled"`.
+- **Behavior**: When dry-run is active, rules evaluate normally, but destructive actions are not applied to the kernel or hardware. Instead, the engine generates an audit entry (`src/rules/exec/actions.rs#L42-L48`) marking the outcome as `"dry-run"` with message `"would-run; SGX_RULES_DRYRUN is enabled"`.
 - Operators can safely test new complex automation rules in production environments without risking service disruption.
 
 ### 26.6.2 Destructive Action Gate & Downgrade Pipeline (`allow_destructive`)
 
 Every rule schema includes an explicit boolean safeguard flag: `allow_destructive: bool` (default: `false`).
 - If a rule defines destructive actions (`RevokeDid`, `LockTransport`, or `EmergencyKeyRotation`) but `allow_destructive` remains `false`, the engine refuses to execute the destructive operation.
-- Instead, the action is automatically downgraded ([downgraded_report](file:///home/hp/SGX/src/rules/exec/actions.rs#L50-L57)): the destructive call is cancelled, the outcome is recorded as `"downgraded"`, and the engine generates a high-severity alert notifying operators that a destructive policy condition matched.
+- Instead, the action is automatically downgraded (`src/rules/exec/actions.rs#L50-L57`): the destructive call is cancelled, the outcome is recorded as `"downgraded"`, and the engine generates a high-severity alert notifying operators that a destructive policy condition matched.
 
 ### 26.6.3 Dynamic Target Cooldown Suppression (`cooldown_secs`)
 
@@ -8700,7 +8721,7 @@ To protect against distributed denial-of-service alert storms where thousands of
 
 ## 26.7 Fail-Safe Task Isolation & Execution History Ledger
 
-The execution workflow is engineered for fault tolerance and auditability ([src/rules/exec/mod.rs](file:///home/hp/SGX/src/rules/exec/mod.rs)).
+The execution workflow is engineered for fault tolerance and auditability (`src/rules/exec/mod.rs`).
 
 ### 26.7.1 Asynchronous Task Spawning & Daemon Crash Immunity
 
@@ -8717,7 +8738,7 @@ If an individual action fails (e.g., an invalid scan intensity parameter, a netw
 
 Every execution attempt is permanently recorded in an append-only JSON Lines ledger:
 - **File Location**: `/var/lib/sgx-guardian/rules/executions.jsonl`.
-- **Execution Record ([RuleExecution](file:///home/hp/SGX/src/rules/model.rs#L254-L262))**:
+- **Execution Record (`src/rules/model.rs#L254-L262`)**:
   - `id`: Unique UUIDv4 string.
   - `rule_id`: Identifier of the rule that fired.
   - `rule_name`: Human-readable rule title.
@@ -8740,7 +8761,7 @@ Every execution resolves to a clear, unambiguous outcome tag:
 
 ## 26.8 Cryptographically Signed Rule Registry & Lifecycle Management
 
-Custom automation rules govern the autonomous defensive behavior of the Guardian node. Consequently, rule storage is secured by the same hardware-rooted integrity mechanisms used for system identity ([src/rules/store.rs](file:///home/hp/SGX/src/rules/store.rs)).
+Custom automation rules govern the autonomous defensive behavior of the Guardian node. Consequently, rule storage is secured by the same hardware-rooted integrity mechanisms used for system identity (`src/rules/store.rs`).
 
 ### 26.8.1 Registry Schema (`RuleRegistry`) & Canonical Serialization (`sort_value`)
 
@@ -8752,28 +8773,28 @@ All custom rules are maintained in a central registry struct:
         pub proof: Proof,
     }
 
-Before signing or verifying, the registry is serialized into canonical JSON bytes ([canonical_bytes_for_sign](file:///home/hp/SGX/src/rules/model.rs#L246-L250)). The proof field is stripped, and all object keys are recursively sorted into BTreeMaps ([sort_value](file:///home/hp/SGX/src/rules/model.rs)), producing identical byte representations across all platforms.
+Before signing or verifying, the registry is serialized into canonical JSON bytes (`src/rules/model.rs#L246-L250`). The proof field is stripped, and all object keys are recursively sorted into BTreeMaps (`src/rules/model.rs`), producing identical byte representations across all platforms.
 
 ### 26.8.2 Hardware Key Pair Proof Signing (`#dkp-v1`) & Tamper Detection
 
 Whenever rules are created, edited, toggled, or deleted:
 1. The `sequence: u64` counter is monotonically incremented.
-2. The node loads its hardware Device Key Pair (DKP) via [load_runtime_key_manager](file:///home/hp/SGX/src/vc/issue.rs).
-3. Signs the canonical SHA-256 digest using ECDSA P-256 ([doc_sign::sign_in_place_generic](file:///home/hp/SGX/src/did/doc_sign.rs)).
+2. The node loads its hardware Device Key Pair (DKP) via `src/vc/issue.rs`.
+3. Signs the canonical SHA-256 digest using ECDSA P-256 (`src/did/doc_sign.rs`).
 4. Embeds the signature and verification method (`did:guardian:...#dkp-v1`) into `registry.proof`.
 5. Writes the payload atomically to `/var/lib/sgx-guardian/rules/rules.json` using POSIX atomic rename.
 
 ### 26.8.3 Fail-Closed Security Policy: Total Rule Deactivation on Signature Invalidity
 
-When the Guardian daemon boots or ingests an event, it verifies the registry signature against the hardware public key ([verify_registry](file:///home/hp/SGX/src/rules/store.rs#L165-L177)):
+When the Guardian daemon boots or ingests an event, it verifies the registry signature against the hardware public key (`src/rules/store.rs#L165-L177`):
 - If an adversary manipulates `rules.json` on disk (e.g., adding an unapproved rule or enabling `allow_destructive`), the SHA-256 digest mismatches the signature.
-- Verification fails immediately with [RulesError::InvalidProof](file:///home/hp/SGX/src/rules/errors.rs).
+- Verification fails immediately with `src/rules/errors.rs`.
 - **Fail-Closed Policy**: The engine logs a `Critical` security audit alert and **refuses to load any rules**. Zero rules are executed, preventing untrusted automation from executing.
 
 ### 26.8.4 Rule Lifecycle State Transitions (Draft, Active, Disabled, Deleted)
 
 Rules transition through a formal lifecycle managed via atomic store functions:
-- **Draft**: Client constructs a [RuleDraft](file:///home/hp/SGX/src/rules/model.rs#L202-L214) via UI or API. Server applies safe defaults (`enabled=true`, `allow_destructive=false`, `cooldown=300s`, `rate_cap=20`).
+- **Draft**: Client constructs a `src/rules/model.rs#L202-L214` via UI or API. Server applies safe defaults (`enabled=true`, `allow_destructive=false`, `cooldown=300s`, `rate_cap=20`).
 - **Active**: Rule is signed into the registry and evaluated against every incoming event matching its trigger.
 - **Disabled**: Rule can be temporarily deactivated via `POST /rules/{id}/enable` (`{"enabled": false}`). Disabled rules remain in storage but are bypassed by the evaluator.
 - **Deleted**: Rule is permanently pruned from the registry via `DELETE /rules/{id}`. The updated registry is re-signed and flushed to disk.
@@ -8782,17 +8803,17 @@ Rules transition through a formal lifecycle managed via atomic store functions:
 
 ## 26.9 REST API Reference & Operator Management Console
 
-The automation engine exposes full administrative control over HTTPS at port `:8443` under `/api/v1/rules/*` ([src/api/routes.rs](file:///home/hp/SGX/src/api/routes.rs#L299-L317)).
+The automation engine exposes full administrative control over HTTPS at port `:8443` under `/api/v1/rules/*` (`src/api/routes.rs#L299-L317`).
 
 ### 26.9.1 Rule CRUD Endpoints (`GET /rules`, `POST /rules`, `GET/PATCH/DELETE /rules/{id}`)
 
 #### 1. List All Configured Rules
 - **Method & Route**: `GET /api/v1/rules`
-- **Response**: HTTP 200 JSON array of [Rule](file:///home/hp/SGX/src/rules/model.rs#L98-L119) objects.
+- **Response**: HTTP 200 JSON array of `src/rules/model.rs#L98-L119` objects.
 
 #### 2. Create New Custom Rule
 - **Method & Route**: `POST /api/v1/rules`
-- **Request Body**: JSON object adhering to [RuleDraft](file:///home/hp/SGX/src/rules/model.rs#L202-L214):
+- **Request Body**: JSON object adhering to `src/rules/model.rs#L202-L214`:
 
         {
           "name": "Block SSH Brute Force",
@@ -8820,7 +8841,7 @@ The automation engine exposes full administrative control over HTTPS at port `:8
 
 #### 4. Update Rule Configuration
 - **Method & Route**: `PATCH /api/v1/rules/{id}`
-- **Request Body**: JSON object adhering to [RulePatch](file:///home/hp/SGX/src/rules/model.rs#L216-L227) (all fields optional).
+- **Request Body**: JSON object adhering to `src/rules/model.rs#L216-L227` (all fields optional).
 - **Response**: HTTP 200 JSON returning updated `Rule`.
 
 #### 5. Delete Custom Rule
@@ -8836,9 +8857,9 @@ The automation engine exposes full administrative control over HTTPS at port `:8
 
 #### 7. Test Rule Against Sample Event (Dry-Run)
 - **Method & Route**: `POST /api/v1/rules/{id}/test`
-- **Request Body** (optional): Sample [RuleEvent](file:///home/hp/SGX/src/rules/model.rs#L264-L310) JSON object. If omitted, uses a synthetic default threat alert.
+- **Request Body** (optional): Sample `src/rules/model.rs#L264-L310` JSON object. If omitted, uses a synthetic default threat alert.
 - **Behavior**: Evaluates rule conditions and computes planned actions **without side effects** (no blocks applied, no executions logged).
-- **Response**: HTTP 200 JSON returning [RuleTestResponse](file:///home/hp/SGX/src/api/handlers/rules.rs#L30-L37):
+- **Response**: HTTP 200 JSON returning `src/api/handlers/rules.rs#L30-L37`:
 
         {
           "rule_id": "urn:uuid:...",
@@ -8858,11 +8879,11 @@ The automation engine exposes full administrative control over HTTPS at port `:8
 - **Method & Route**: `GET /api/v1/rules/executions`
 - **Query Parameters**:
   - `limit` (optional, integer): Maximum entries to return (default: 500, max: 10,000).
-- **Response**: HTTP 200 JSON array of [RuleExecution](file:///home/hp/SGX/src/rules/model.rs#L254-L262) records ordered from newest to oldest.
+- **Response**: HTTP 200 JSON array of `src/rules/model.rs#L254-L262` records ordered from newest to oldest.
 
 ### 26.9.4 React UI Management Console (`ST12AlertRules.tsx`, `ruleService.ts`)
 
-The operator interface is implemented in [ST12AlertRules.tsx](file:///home/hp/SGX/frontend/src/app/screens/settings/ST12AlertRules.tsx) and backed by [ruleService.ts](file:///home/hp/SGX/frontend/src/app/services/ruleService.ts):
+The operator interface is implemented in `frontend/src/app/screens/settings/ST12AlertRules.tsx` and backed by `frontend/src/app/services/ruleService.ts`:
 - **Visual Rule Builder**: Intuitive modal editor allowing operators to select triggers from dropdowns, assemble nested boolean condition trees (AND, OR, NOT) with leaf predicate pickers, and configure action lists.
 - **Destructive Action Confirmation**: If a user selects a destructive action (`RevokeDid`, `LockTransport`, `EmergencyKeyRotation`), the UI highlights the card in amber and requires an explicit confirmation toggle before enabling `allow_destructive`.
 - **Preflight Dry-Run Modal**: Operators can click "Test Rule" to simulate rule firing against live or synthetic events, previewing planned actions and condition matching before saving.
@@ -8876,16 +8897,16 @@ The following defense matrix details the resilience mechanisms engineered into F
 
 | Defense ID | Threat Vector | Mitigation Mechanism | Implementation Location |
 | :--- | :--- | :--- | :--- |
-| **DEF-RUL-01** | **Remote Code Execution (RCE) via Scripts** | Fixed action catalog strictly disallows shell commands, script execution, or process spawning; actions call internal Rust APIs exclusively. | [src/rules/model.rs: RuleAction](file:///home/hp/SGX/src/rules/model.rs#L45-L53) |
-| **DEF-RUL-02** | **Operator Gateway / Subnet Lockout** | IP blocking actions inherit kernel `Blocker` exemptions, guaranteeing that default gateways, local subnets, and overlay mesh IPs can never be blocked. | [src/rules/exec/actions.rs: block_ip](file:///home/hp/SGX/src/rules/exec/actions.rs#L166-L191) |
-| **DEF-RUL-03** | **Unauthorized Rule Injection & Tampering** | The entire rule registry is cryptographically signed with the hardware Device Key Pair (DKP); any unsigned modification triggers fail-closed deactivation. | [src/rules/store.rs: verify_registry](file:///home/hp/SGX/src/rules/store.rs#L165-L177) |
-| **DEF-RUL-04** | **Accidental Production Disruption** | The engine operates safe-by-default in dry-run mode (`SGX_RULES_DRYRUN=1`); actions are simulated and audited without altering system state. | [src/rules/mod.rs: RulesConfig::from_env](file:///home/hp/SGX/src/rules/mod.rs#L36-L38) |
-| **DEF-RUL-05** | **Unauthorized Destructive Action Execution** | Destructive actions require explicit `allow_destructive: true` opt-in per rule; otherwise, actions are automatically downgraded to alerts. | [src/rules/exec/actions.rs: downgraded_report](file:///home/hp/SGX/src/rules/exec/actions.rs#L50-L57) |
-| **DEF-RUL-06** | **Burst Alert Storm & Reaction Loops** | Rolling 1-hour rate limit (`max_actions_per_hour = 20`) caps action throughput, preventing CPU/network exhaustion during distributed attacks. | [src/rules/exec/guards.rs: check_and_record](file:///home/hp/SGX/src/rules/exec/guards.rs#L79-L84) |
-| **DEF-RUL-07** | **Rapid Flapping & Redundant Re-Execution** | Dynamic target cooldown (`cooldown_secs = 300`) suppresses redundant action execution against the same target IP, device, or DID. | [src/rules/exec/guards.rs: check_and_record](file:///home/hp/SGX/src/rules/exec/guards.rs#L60-L67) |
-| **DEF-RUL-08** | **Packet Processing Pipeline Blocking** | Events are published over an asynchronous Tokio broadcast channel; publishers return immediately without waiting for rule evaluation or disk writes. | [src/rules/bus.rs: publish](file:///home/hp/SGX/src/rules/bus.rs#L15-L17) |
-| **DEF-RUL-09** | **Action Crash Cascades & Worker Failure** | Each rule execution is spawned into an isolated asynchronous task; failure of one action never terminates sibling actions or crashes the daemon. | [src/rules/exec/mod.rs: process_event](file:///home/hp/SGX/src/rules/exec/mod.rs#L43-L50) |
-| **DEF-RUL-10** | **Unbounded Disk Growth from Execution Logs** | Execution history is stored in a bounded ring-buffer ledger (`SGX_RULES_MAX_EXECUTIONS = 2000`) with automatic FIFO truncation. | [src/rules/exec/mod.rs: append_execution_at](file:///home/hp/SGX/src/rules/exec/mod.rs#L47) |
+| **DEF-RUL-01** | **Remote Code Execution (RCE) via Scripts** | Fixed action catalog strictly disallows shell commands, script execution, or process spawning; actions call internal Rust APIs exclusively. | `src/rules/model.rs#L45-L53` |
+| **DEF-RUL-02** | **Operator Gateway / Subnet Lockout** | IP blocking actions inherit kernel `Blocker` exemptions, guaranteeing that default gateways, local subnets, and overlay mesh IPs can never be blocked. | `src/rules/exec/actions.rs#L166-L191` |
+| **DEF-RUL-03** | **Unauthorized Rule Injection & Tampering** | The entire rule registry is cryptographically signed with the hardware Device Key Pair (DKP); any unsigned modification triggers fail-closed deactivation. | `src/rules/store.rs#L165-L177` |
+| **DEF-RUL-04** | **Accidental Production Disruption** | The engine operates safe-by-default in dry-run mode (`SGX_RULES_DRYRUN=1`); actions are simulated and audited without altering system state. | `src/rules/mod.rs#L36-L38` |
+| **DEF-RUL-05** | **Unauthorized Destructive Action Execution** | Destructive actions require explicit `allow_destructive: true` opt-in per rule; otherwise, actions are automatically downgraded to alerts. | `src/rules/exec/actions.rs#L50-L57` |
+| **DEF-RUL-06** | **Burst Alert Storm & Reaction Loops** | Rolling 1-hour rate limit (`max_actions_per_hour = 20`) caps action throughput, preventing CPU/network exhaustion during distributed attacks. | `src/rules/exec/guards.rs#L79-L84` |
+| **DEF-RUL-07** | **Rapid Flapping & Redundant Re-Execution** | Dynamic target cooldown (`cooldown_secs = 300`) suppresses redundant action execution against the same target IP, device, or DID. | `src/rules/exec/guards.rs#L60-L67` |
+| **DEF-RUL-08** | **Packet Processing Pipeline Blocking** | Events are published over an asynchronous Tokio broadcast channel; publishers return immediately without waiting for rule evaluation or disk writes. | `src/rules/bus.rs#L15-L17` |
+| **DEF-RUL-09** | **Action Crash Cascades & Worker Failure** | Each rule execution is spawned into an isolated asynchronous task; failure of one action never terminates sibling actions or crashes the daemon. | `src/rules/exec/mod.rs#L43-L50` |
+| **DEF-RUL-10** | **Unbounded Disk Growth from Execution Logs** | Execution history is stored in a bounded ring-buffer ledger (`SGX_RULES_MAX_EXECUTIONS = 2000`) with automatic FIFO truncation. | `src/rules/exec/mod.rs#L47` |
 
 ---
 
@@ -8895,15 +8916,15 @@ Feature 26 is verified through an extensive automated and on-board test suite co
 
 | Test ID | Target Capability | Verification Location & Test Function | Verification Scope & Expected Results |
 | :--- | :--- | :--- | :--- |
-| **RULES-001** | **Pure Condition Evaluation & Logic Matrix** | [tests/rules_eval_test.rs](file:///home/hp/SGX/tests/rules_eval_test.rs): `rule_evaluator_matrix_is_pure_and_deterministic` | Verifies pure evaluation without I/O; tests severity rank comparisons, signature ID matching, port filtering, and nested All/Any/Not logic. |
-| **RULES-002** | **Rule Lifecycle & Hardware Signed Registry** | [tests/rules_store_test.rs](file:///home/hp/SGX/tests/rules_store_test.rs): `signed_registry_round_trips_and_tamper_is_rejected` | Tests rule creation, patching, disabling, and deletion; verifies W3C proof generation via DKP, sequence monotonicity, and atomic file replacement. |
-| **RULES-003** | **Non-Blocking Ingestion & Disabled Inertness** | [docs/Alert_Rules_Automation_Engine_Verification_Log.md](file:///home/hp/SGX/docs/Alert_Rules_Automation_Engine_Verification_Log.md): `Requirement 3` | Injects 30 rapid alert bursts to verify `/health` responsiveness; confirms disabled rules do not evaluate or execute actions. |
-| **RULES-004** | **Action Handlers & Fixed Catalog Enforcement** | [docs/Alert_Rules_Automation_Engine_Verification_Log.md](file:///home/hp/SGX/docs/Alert_Rules_Automation_Engine_Verification_Log.md): `Requirement 4` | Verifies non-destructive handlers (`RaiseAlert`, `Notify`, `RunScan`); verifies that attempting to inject arbitrary actions (e.g., `RunShell`) yields HTTP 4xx rejection. |
-| **RULES-005** | **Blocker Self-Protection & Lockout Prevention** | [docs/Alert_Rules_Automation_Engine_Verification_Log.md](file:///home/hp/SGX/docs/Alert_Rules_Automation_Engine_Verification_Log.md): `Requirement 5` | Targets default gateway, management LAN, and Nebula mesh with `BlockIp`; asserts refusal, audit logging, and zero connectivity loss. |
-| **RULES-006** | **Safeguards: Dry-Run, Gate, Cooldown & Rate Cap** | [docs/Alert_Rules_Automation_Engine_Verification_Log.md](file:///home/hp/SGX/docs/Alert_Rules_Automation_Engine_Verification_Log.md): `Requirement 6` | Validates dry-run simulation mode (`SGX_RULES_DRYRUN=1`), confirms destructive downgrade to critical alert, validates target cooldown, and enforces 20/hr rate cap. |
-| **RULES-007** | **Task Isolation & Execution History Ledger** | [tests/rules_exec_test.rs](file:///home/hp/SGX/tests/rules_exec_test.rs): `dry_run_does_not_execute_actions` | Verifies execution logging in `executions.jsonl`, enforces FIFO quota truncation, and validates sibling action execution when one action fails. |
-| **RULES-008** | **REST API Interface & Preflight Test Endpoint** | [docs/Alert_Rules_Automation_Engine_Verification_Log.md](file:///home/hp/SGX/docs/Alert_Rules_Automation_Engine_Verification_Log.md): `API 1–4` | Verifies rule CRUD endpoints, `/enable` toggle endpoint, `/executions` ledger query, and side-effect-free `/test` dry-run simulator. |
-| **RULES-009** | **Fail-Closed Tamper Rejection** | [tests/rules_store_test.rs](file:///home/hp/SGX/tests/rules_store_test.rs): `patch_and_delete_preserve_signed_registry` | Modifies raw `rules.json` without valid signature; verifies startup signature failure, 0 rules loaded, and complete refusal to fire unverified rules. |
+| **RULES-001** | **Pure Condition Evaluation & Logic Matrix** | `tests/rules_eval_test.rs`: `rule_evaluator_matrix_is_pure_and_deterministic` | Verifies pure evaluation without I/O; tests severity rank comparisons, signature ID matching, port filtering, and nested All/Any/Not logic. |
+| **RULES-002** | **Rule Lifecycle & Hardware Signed Registry** | `tests/rules_store_test.rs`: `signed_registry_round_trips_and_tamper_is_rejected` | Tests rule creation, patching, disabling, and deletion; verifies W3C proof generation via DKP, sequence monotonicity, and atomic file replacement. |
+| **RULES-003** | **Non-Blocking Ingestion & Disabled Inertness** | `docs/Alert_Rules_Automation_Engine_Verification_Log.md`: `Requirement 3` | Injects 30 rapid alert bursts to verify `/health` responsiveness; confirms disabled rules do not evaluate or execute actions. |
+| **RULES-004** | **Action Handlers & Fixed Catalog Enforcement** | `docs/Alert_Rules_Automation_Engine_Verification_Log.md`: `Requirement 4` | Verifies non-destructive handlers (`RaiseAlert`, `Notify`, `RunScan`); verifies that attempting to inject arbitrary actions (e.g., `RunShell`) yields HTTP 4xx rejection. |
+| **RULES-005** | **Blocker Self-Protection & Lockout Prevention** | `docs/Alert_Rules_Automation_Engine_Verification_Log.md`: `Requirement 5` | Targets default gateway, management LAN, and Nebula mesh with `BlockIp`; asserts refusal, audit logging, and zero connectivity loss. |
+| **RULES-006** | **Safeguards: Dry-Run, Gate, Cooldown & Rate Cap** | `docs/Alert_Rules_Automation_Engine_Verification_Log.md`: `Requirement 6` | Validates dry-run simulation mode (`SGX_RULES_DRYRUN=1`), confirms destructive downgrade to critical alert, validates target cooldown, and enforces 20/hr rate cap. |
+| **RULES-007** | **Task Isolation & Execution History Ledger** | `tests/rules_exec_test.rs`: `dry_run_does_not_execute_actions` | Verifies execution logging in `executions.jsonl`, enforces FIFO quota truncation, and validates sibling action execution when one action fails. |
+| **RULES-008** | **REST API Interface & Preflight Test Endpoint** | `docs/Alert_Rules_Automation_Engine_Verification_Log.md`: `API 1–4` | Verifies rule CRUD endpoints, `/enable` toggle endpoint, `/executions` ledger query, and side-effect-free `/test` dry-run simulator. |
+| **RULES-009** | **Fail-Closed Tamper Rejection** | `tests/rules_store_test.rs`: `patch_and_delete_preserve_signed_registry` | Modifies raw `rules.json` without valid signature; verifies startup signature failure, 0 rules loaded, and complete refusal to fire unverified rules. |
 
 ---
 
@@ -8912,33 +8933,33 @@ Feature 26 is verified through an extensive automated and on-board test suite co
 The implementation of Feature 26 is organized across the following core source files:
 
 ### Core Rules Engine Subsystem: `src/rules/`
-- **[src/rules/mod.rs](file:///home/hp/SGX/src/rules/mod.rs)**: Subsystem coordinator, background event listener daemon (`spawn`), runtime configuration loader (`RulesConfig`), and event publisher (`publish`).
-- **[src/rules/model.rs](file:///home/hp/SGX/src/rules/model.rs)**: Core domain models, trigger taxonomy (`RuleTrigger`), recursive condition AST (`Condition`), fixed action catalog (`RuleAction`), rule definition (`Rule`), and registry schema (`RuleRegistry`).
-- **[src/rules/eval.rs](file:///home/hp/SGX/src/rules/eval.rs)**: Pure, side-effect-free condition evaluation engine implementing leaf predicates and recursive boolean combinators (`All`, `Any`, `Not`).
-- **[src/rules/bus.rs](file:///home/hp/SGX/src/rules/bus.rs)**: Process-global Tokio broadcast channel (`broadcast::Sender<RuleEvent>`) providing microsecond non-blocking event fanout.
-- **[src/rules/store.rs](file:///home/hp/SGX/src/rules/store.rs)**: Signed rule registry persistence engine, DKP key proof signing, signature verification (`verify_registry`), and CRUD operations guarded by `RULES_WRITE_LOCK`.
-- **[src/rules/persistence.rs](file:///home/hp/SGX/src/rules/persistence.rs)**: Filesystem path resolver (`RulesPaths`), atomic write-and-rename utilities (`write_atomic`), and environment variable definitions.
-- **[src/rules/errors.rs](file:///home/hp/SGX/src/rules/errors.rs)**: Typed domain errors (`RulesError`).
+- **`src/rules/mod.rs`**: Subsystem coordinator, background event listener daemon (`spawn`), runtime configuration loader (`RulesConfig`), and event publisher (`publish`).
+- **`src/rules/model.rs`**: Core domain models, trigger taxonomy (`RuleTrigger`), recursive condition AST (`Condition`), fixed action catalog (`RuleAction`), rule definition (`Rule`), and registry schema (`RuleRegistry`).
+- **`src/rules/eval.rs`**: Pure, side-effect-free condition evaluation engine implementing leaf predicates and recursive boolean combinators (`All`, `Any`, `Not`).
+- **`src/rules/bus.rs`**: Process-global Tokio broadcast channel (`broadcast::Sender<RuleEvent>`) providing microsecond non-blocking event fanout.
+- **`src/rules/store.rs`**: Signed rule registry persistence engine, DKP key proof signing, signature verification (`verify_registry`), and CRUD operations guarded by `RULES_WRITE_LOCK`.
+- **`src/rules/persistence.rs`**: Filesystem path resolver (`RulesPaths`), atomic write-and-rename utilities (`write_atomic`), and environment variable definitions.
+- **`src/rules/errors.rs`**: Typed domain errors (`RulesError`).
 
 ### Execution & Action Handlers: `src/rules/exec/`
-- **[src/rules/exec/mod.rs](file:///home/hp/SGX/src/rules/exec/mod.rs)**: Asynchronous execution orchestrator, task spawning (`tokio::spawn`), dry-run planner (`dry_run_plan`), and execution ledger manager.
-- **[src/rules/exec/guards.rs](file:///home/hp/SGX/src/rules/exec/guards.rs)**: Multi-layer safeguard engine enforcing target cooldowns (`check_and_record`) and rolling hourly rate limits.
-- **[src/rules/exec/actions.rs](file:///home/hp/SGX/src/rules/exec/actions.rs)**: Type-safe action handlers for alert generation (`RaiseAlert`), notification dispatch (`Notify`), firewall blocking (`BlockIp`), vulnerability scanning (`RunScan`), DID revocation (`RevokeDid`), transport lockdown (`LockTransport`), and key rotation (`EmergencyKeyRotation`).
+- **`src/rules/exec/mod.rs`**: Asynchronous execution orchestrator, task spawning (`tokio::spawn`), dry-run planner (`dry_run_plan`), and execution ledger manager.
+- **`src/rules/exec/guards.rs`**: Multi-layer safeguard engine enforcing target cooldowns (`check_and_record`) and rolling hourly rate limits.
+- **`src/rules/exec/actions.rs`**: Type-safe action handlers for alert generation (`RaiseAlert`), notification dispatch (`Notify`), firewall blocking (`BlockIp`), vulnerability scanning (`RunScan`), DID revocation (`RevokeDid`), transport lockdown (`LockTransport`), and key rotation (`EmergencyKeyRotation`).
 
 ### REST API Handlers & Routing: `src/api/`
-- **[src/api/handlers/rules.rs](file:///home/hp/SGX/src/api/handlers/rules.rs)**: Axum HTTP REST handlers for rule listing, creation, detail inspection, patching, state toggling, preflight dry-run testing, and execution ledger querying.
-- **[src/api/routes.rs](file:///home/hp/SGX/src/api/routes.rs)**: API router mounting `/api/v1/rules/*` endpoints into the Guardian application router.
+- **`src/api/handlers/rules.rs`**: Axum HTTP REST handlers for rule listing, creation, detail inspection, patching, state toggling, preflight dry-run testing, and execution ledger querying.
+- **`src/api/routes.rs`**: API router mounting `/api/v1/rules/*` endpoints into the Guardian application router.
 
 ### Frontend API, Services & Management UI: `frontend/`
-- **[frontend/src/app/services/ruleService.ts](file:///home/hp/SGX/frontend/src/app/services/ruleService.ts)**: TypeScript API client service wrapping all `/api/v1/rules/*` endpoints with strongly typed condition and action interfaces.
-- **[frontend/src/app/screens/settings/ST12AlertRules.tsx](file:///home/hp/SGX/frontend/src/app/screens/settings/ST12AlertRules.tsx)**: Full administrative rule management console featuring condition AST builders, destructive action safeguards, preflight dry-run simulator, and live execution audit table.
+- **`frontend/src/app/services/ruleService.ts`**: TypeScript API client service wrapping all `/api/v1/rules/*` endpoints with strongly typed condition and action interfaces.
+- **`frontend/src/app/screens/settings/ST12AlertRules.tsx`**: Full administrative rule management console featuring condition AST builders, destructive action safeguards, preflight dry-run simulator, and live execution audit table.
 
 ### Test Suites: `tests/`
-- **[tests/rules_eval_test.rs](file:///home/hp/SGX/tests/rules_eval_test.rs)**: Unit test suite validating pure condition evaluation, CIDR boundaries, and compound boolean logic.
-- **[tests/rules_exec_test.rs](file:///home/hp/SGX/tests/rules_exec_test.rs)**: Integration test suite verifying dry-run action suppression and destructive action downgrade gating.
-- **[tests/rules_model_test.rs](file:///home/hp/SGX/tests/rules_model_test.rs)**: Unit test suite covering trigger mappings, target key resolutions, and event serialization stability.
-- **[tests/rules_store_test.rs](file:///home/hp/SGX/tests/rules_store_test.rs)**: Unit test suite verifying DKP signature round-trips, registry mutations, and tamper rejection.
-- **[docs/Alert_Rules_Automation_Engine_Verification_Log.md](file:///home/hp/SGX/docs/Alert_Rules_Automation_Engine_Verification_Log.md)**: Hardware verification test log documenting the complete RULES-001 through RULES-009 validation specification.
+- **`tests/rules_eval_test.rs`**: Unit test suite validating pure condition evaluation, CIDR boundaries, and compound boolean logic.
+- **`tests/rules_exec_test.rs`**: Integration test suite verifying dry-run action suppression and destructive action downgrade gating.
+- **`tests/rules_model_test.rs`**: Unit test suite covering trigger mappings, target key resolutions, and event serialization stability.
+- **`tests/rules_store_test.rs`**: Unit test suite verifying DKP signature round-trips, registry mutations, and tamper rejection.
+- **`docs/Alert_Rules_Automation_Engine_Verification_Log.md`**: Hardware verification test log documenting the complete RULES-001 through RULES-009 validation specification.
 
 ---
 
@@ -8948,7 +8969,7 @@ The implementation of Feature 26 is organized across the following core source f
 
 In distributed, zero-trust edge networks, an SG-X Guardian node frequently operates in bandwidth-constrained, metered, or operationally critical environments. Whether deployed in tactical field units operating over satellite uplinks (e.g., Starlink, Iridium), edge gateways communicating over commercial LTE/5G cellular backhauls, or multi-homed routers managing secure overlay tunnels, unmonitored bandwidth consumption poses severe operational and financial risks. Rogue processes, malicious data exfiltration, protocol sync loops, firmware download storms, or unconstrained peer-to-peer gossip can rapidly deplete monthly data quotas, incur astronomical overage fees, degrade critical command-and-control telemetry, or induce network interface starvation.
 
-To address these challenges while adhering to zero-trust principles, Feature 27 implements a robust, lightweight, and tamper-resistant **Data Usage Monitoring, Quota Enforcement, and Bandwidth Accounting Subsystem** located in [src/dusage/](file:///home/hp/SGX/src/dusage/).
+To address these challenges while adhering to zero-trust principles, Feature 27 implements a robust, lightweight, and tamper-resistant **Data Usage Monitoring, Quota Enforcement, and Bandwidth Accounting Subsystem** located in `src/dusage/`.
 
 ### 27.1.1 Problem Statement & Resource Exhaustion Risks
 
@@ -9021,7 +9042,7 @@ The SG-X Guardian architecture solves these limitations by implementing a **hybr
 
 ### 27.1.3 Durability Across Network Modernization (eBPF-Ready Design)
 
-During architectural grounding, a vital design principle was established: **zero-coupling between accounting and underlying firewall implementation**. The Guardian development roadmap specifies migrating packet-filtering rules from user-space nftables to in-kernel **eBPF (Extended Berkeley Packet Filter)** bytecode programs in future sprints. 
+During architectural grounding, a vital design principle was established: **zero-coupling between accounting and underlying firewall implementation**. The Guardian development roadmap specifies migrating packet-filtering rules from user-space nftables to in-kernel **eBPF (Extended Berkeley Packet Filter)** bytecode programs in future sprints.
 
 If bandwidth accounting were tightly coupled to nftables syntax, that migration would break all bandwidth tracking. By establishing [/sys/class/net](file:///sys/class/net) as the authoritative, durable foundation for aggregate bandwidth, the monitoring engine remains completely unaffected by the transition from iptables/nftables to eBPF XDP/TC hooks.
 
@@ -9031,7 +9052,7 @@ If bandwidth accounting were tightly coupled to nftables syntax, that migration 
 
 ### 27.2.1 High-Performance Non-Blocking Sysfs Reader (`read_interface_counters`)
 
-The primary source of truth for all network traffic is the Linux kernel's sysfs statistics tree. The reader implementation in [src/dusage/counters.rs](file:///home/hp/SGX/src/dusage/counters.rs#L16-L65) executes completely asynchronously using Tokio filesystem APIs (`tokio::fs`):
+The primary source of truth for all network traffic is the Linux kernel's sysfs statistics tree. The reader implementation in `src/dusage/counters.rs#L16-L65` executes completely asynchronously using Tokio filesystem APIs (`tokio::fs`):
 
     /sys/class/net/<iface>/statistics/rx_bytes
     /sys/class/net/<iface>/statistics/tx_bytes
@@ -9055,7 +9076,7 @@ To determine the bandwidth used during the current period, the sampler engine ma
 
 A fatal flaw in naive monitoring engines occurs when a host reboots or an administrator flushes interface statistics: the raw kernel counters reset back to zero. If the previous baseline was 500 GB and the current counter is now 10 MB, naive unsigned subtraction underflows or standard arithmetic produces a negative number, resulting in spurious 18-exabyte spikes (`18,446,744,073,709,551,615` bytes) that falsely trigger alarms, lock out networks, and distort historical analytics.
 
-The Guardian sampler engine implements **resilient counter-reset detection** in [src/dusage/sampler.rs: interface_usage()](file:///home/hp/SGX/src/dusage/sampler.rs#L236-L298):
+The Guardian sampler engine implements **resilient counter-reset detection** in `src/dusage/sampler.rs#L236-L298`:
 
     let reset = rx_total < baseline.0 || tx_total < baseline.1;
     let (rx_bytes, tx_bytes) = if reset {
@@ -9074,7 +9095,7 @@ When `current_raw < baseline` is detected:
 1. The engine recognizes that a system reboot, driver reload, or counter flush has transpired.
 2. The baseline is immediately re-snapped to the current counter values (`*baseline = (rx_total, tx_total)`).
 3. The reported delta for that sample is safely set to zero (`(0, 0)`), preventing negative numbers or spurious wraps.
-4. An audit event is logged in [src/audit/](file:///home/hp/SGX/src/audit/), recording the re-baselining event with full interface provenance.
+4. An audit event is logged in `src/audit/`, recording the re-baselining event with full interface provenance.
 
 ### 27.2.4 Dynamic Interface Lifecycle (Additions, Removals, and Hotplug Preservation)
 
@@ -9107,7 +9128,7 @@ Crucially, named counters are **non-behavioral and non-intrusive**. In nftables,
 
         chain input {
             type filter hook input priority filter; policy drop;
-            
+
             # Application traffic rules with named counter attribution
             tcp dport 50063 counter name "gossip" accept
             tcp dport 50060 counter name "registry" accept
@@ -9119,7 +9140,7 @@ Crucially, named counters are **non-behavioral and non-intrusive**. In nftables,
 
 ### 27.3.2 Atomic JSON Schema Extraction (`nft -j list counters`)
 
-To read category counters asynchronously without parsing raw text or invoking fragile shell scripts, the reader in [src/dusage/counters.rs: read_nft_category_counters()](file:///home/hp/SGX/src/dusage/counters.rs#L67-L93) invokes the nftables binary with the `-j` (JSON output) flag:
+To read category counters asynchronously without parsing raw text or invoking fragile shell scripts, the reader in `src/dusage/counters.rs#L67-L93` invokes the nftables binary with the `-j` (JSON output) flag:
 
     nft -j list counters
 
@@ -9134,7 +9155,7 @@ The returned JSON payload is parsed by `parse_nft_counters_json()`, extracting s
       ]
     }
 
-The parser validates the JSON schema version, filters for objects belonging to the `sgx_guardian` table, extracts the `name` and `bytes` attributes, and returns a sorted collection of [RawCategoryCounter](file:///home/hp/SGX/src/dusage/model.rs#L67-L71) records.
+The parser validates the JSON schema version, filters for objects belonging to the `sgx_guardian` table, extracts the `name` and `bytes` attributes, and returns a sorted collection of `src/dusage/model.rs#L67-L71` records.
 
 ### 27.3.3 Port-Group Taxonomy (Gossip, Registry, Cert-Bootstrap, Nebula Mesh, API)
 
@@ -9148,7 +9169,7 @@ The Guardian subsystem categorizes network traffic into distinct operational cla
 
 ### 27.3.4 Category Baseline Tracking & Period Differencing
 
-Similar to network interfaces, nftables counters are cumulative across their lifetime in the running ruleset. The category accounting engine in [src/dusage/sampler.rs: category_usage()](file:///home/hp/SGX/src/dusage/sampler.rs#L300-L347) applies period baseline differencing:
+Similar to network interfaces, nftables counters are cumulative across their lifetime in the running ruleset. The category accounting engine in `src/dusage/sampler.rs#L300-L347` applies period baseline differencing:
 1. `category_baselines` in `DusageState` records the initial byte counter for each category at the start of the period.
 2. The period category usage is calculated as `raw_bytes.saturating_sub(baseline)`.
 3. If an administrator executes `nft reset counters` or flushes the table, the sampler detects `raw_bytes < baseline`, immediately re-baselines that category to `raw_bytes`, and reports zero for that sample, completely preventing counter wrap anomalies.
@@ -9159,7 +9180,7 @@ Similar to network interfaces, nftables counters are cumulative across their lif
 
 ### 27.4.1 Stateful Flow Accounting via `/proc/net/nf_conntrack`
 
-In addition to interface-level and category-level metrics, operators deploying Guardian nodes as local Wi-Fi Access Points (`uap0`) or Ethernet Gateways (`eth0`) need to know which client devices are consuming bandwidth. Feature 27 provides **per-device bandwidth attribution** in [src/dusage/devices.rs](file:///home/hp/SGX/src/dusage/devices.rs).
+In addition to interface-level and category-level metrics, operators deploying Guardian nodes as local Wi-Fi Access Points (`uap0`) or Ethernet Gateways (`eth0`) need to know which client devices are consuming bandwidth. Feature 27 provides **per-device bandwidth attribution** in `src/dusage/devices.rs`.
 
 When connection tracking accounting is enabled (`net.netfilter.nf_conntrack_acct=1`), the Linux kernel maintains exact byte and packet counters for every active network flow in [/proc/net/nf_conntrack](file:///proc/net/nf_conntrack) (configurable via `SGX_DUSAGE_CONNTRACK_PATH`). The reader reads this pseudo-file asynchronously via `tokio::fs::read_to_string` without invoking external binaries.
 
@@ -9177,7 +9198,7 @@ For local devices, the engine aggregates:
 - `device.tx_bytes += bytes1` (outbound traffic from the device to the internet or gateway).
 - `device.rx_bytes += bytes2` (inbound traffic received by the device from the remote endpoint).
 
-The output is structured as a collection of [DeviceUsage](file:///home/hp/SGX/src/dusage/model.rs#L21-L26) objects containing `{ ip, rx_bytes, tx_bytes }` sorted canonically by IP address.
+The output is structured as a collection of `src/dusage/model.rs#L21-L26` objects containing `{ ip, rx_bytes, tx_bytes }` sorted canonically by IP address.
 
 ### 27.4.3 Dual-Stack Support (IPv4 & IPv6 Address Parsing)
 
@@ -9188,7 +9209,7 @@ The flow parser natively handles both IPv4 (`192.168.50.X`) and IPv6 (`2001:db8:
 Per-device flow accounting requires kernel conntrack support. In minimal embedded operating system builds or environments where `nf_conntrack` is disabled to conserve memory, the subsystem operates in a **graceful degraded mode**:
 - Setting `SGX_DUSAGE_CONNTRACK_ENABLED=0` (or `false`, `off`, `no`) completely disables conntrack file reading, returning an empty device array without error.
 - If the conntrack file does not exist at the configured path, `read_device_usage()` returns `Ok(Vec::new())` rather than panicking or failing the sample.
-- If an I/O error occurs (such as file permission denial), it is typed as [DusageError::Io](file:///home/hp/SGX/src/dusage/errors.rs#L7) and handled safely by the caller.
+- If an I/O error occurs (such as file permission denial), it is typed as `src/dusage/errors.rs#L7` and handled safely by the caller.
 
 ---
 
@@ -9196,7 +9217,7 @@ Per-device flow accounting requires kernel conntrack support. In minimal embedde
 
 ### 27.5.1 Quota Data Model (`DusageQuota`) & Normalized Reset Periods (Daily, Weekly, Monthly)
 
-Data quotas are defined by the [DusageQuota](file:///home/hp/SGX/src/dusage/model.rs#L125-L149) domain model:
+Data quotas are defined by the `src/dusage/model.rs#L125-L149` domain model:
 
     pub struct DusageQuota {
         pub quota_bytes: u64,
@@ -9210,11 +9231,11 @@ The `period` string defines the reset cycle and is normalized to one of three su
 - **`weekly`**: Usage accumulates from Monday 00:00:00 UTC of the current calendar week until Sunday 23:59:59 UTC.
 - **`monthly`**: Usage accumulates from the 1st day 00:00:00 UTC of the calendar month until the final day 23:59:59 UTC.
 
-The normalization helper `normalize_period()` strips whitespace and converts the string to lowercase. Unrecognized period specifications (e.g., `"yearly"`, `"hourly"`, `"fortnightly"`) are rejected with [DusageError::InvalidPeriod](file:///home/hp/SGX/src/dusage/errors.rs#L9).
+The normalization helper `normalize_period()` strips whitespace and converts the string to lowercase. Unrecognized period specifications (e.g., `"yearly"`, `"hourly"`, `"fortnightly"`) are rejected with `src/dusage/errors.rs#L9`.
 
 ### 27.5.2 Client-Agnostic Server-Side Severity Bands (Green <=50%, Amber >50%, Red >80%)
 
-To eliminate discrepancies across diverse mobile, desktop, and embedded administrative clients, quota consumption percentages and severity color bands are **computed server-side** in [src/dusage/quota.rs](file:///home/hp/SGX/src/dusage/quota.rs#L63-L78):
+To eliminate discrepancies across diverse mobile, desktop, and embedded administrative clients, quota consumption percentages and severity color bands are **computed server-side** in `src/dusage/quota.rs#L63-L78`:
 
     pub fn used_pct(total_bytes: u64, quota_bytes: Option<u64>) -> Option<f64> {
         let quota = quota_bytes?;
@@ -9242,7 +9263,7 @@ To eliminate discrepancies across diverse mobile, desktop, and embedded administ
 
 In high-security deployments, an adversary with local shell or root filesystem access might attempt to modify `/var/lib/sgx-guardian/dusage/quota.json` to artificially expand data limits or mask unauthorized data exfiltration.
 
-To prevent this, every quota record and state record is sealed using a **cryptographic local integrity proof** ([Proof](file:///home/hp/SGX/src/did/document.rs)).
+To prevent this, every quota record and state record is sealed using a **cryptographic local integrity proof** (`src/did/document.rs`).
 1. **Canonical Stripping**: When sealing, the proof field is cleared, and the payload is serialized to canonical JSON bytes (`quota.without_proof()`).
 2. **SHA-256 Digest Generation**: The subsystem computes a SHA-256 digest over the canonical bytes using the `sha256-local-2026` cryptosuite:
 
@@ -9265,7 +9286,7 @@ When a node initializes for the first time or if `quota.json` is absent, the sys
 
 ### 27.6.1 Background Sampling Daemon (`sampler::run_loop` & Interval Clamping 5–3600s)
 
-The monitoring engine executes continuously in the background via [src/dusage/sampler.rs: run_loop()](file:///home/hp/SGX/src/dusage/sampler.rs#L14-L35). The daemon is spawned asynchronously during node startup without blocking the primary application runtime.
+The monitoring engine executes continuously in the background via `src/dusage/sampler.rs#L14-L35`. The daemon is spawned asynchronously during node startup without blocking the primary application runtime.
 
 Key loop operational characteristics include:
 - **Configurable Tick Rate**: The sampling frequency is controlled by `SGX_DUSAGE_SAMPLE_SECS` (default: 60 seconds). To prevent configuration errors, values are clamped between 5 seconds (minimum) and 3600 seconds (maximum).
@@ -9274,7 +9295,7 @@ Key loop operational characteristics include:
 
 ### 27.6.2 Boundary Detection (`period_has_rolled`) & Atomic Historical Archival
 
-On every sampling tick, `sample_once()` determines whether the active accounting period has expired by calling [src/dusage/quota.rs: period_has_rolled()](file:///home/hp/SGX/src/dusage/quota.rs#L53-L61):
+On every sampling tick, `sample_once()` determines whether the active accounting period has expired by calling `src/dusage/quota.rs#L53-L61`:
 1. The engine parses the RFC3339 timestamp `state_record.period_start`.
 2. It calculates the expected boundary of the next period (`next_period_start()`):
    - Daily: Current start + 1 calendar day.
@@ -9285,7 +9306,7 @@ On every sampling tick, `sample_once()` determines whether the active accounting
 ### 27.6.3 Period Rebaselining Workflow
 
 When a period rollover is detected:
-1. **Archive Completed Snapshot**: The sampler builds a final [UsageSnapshot](file:///home/hp/SGX/src/dusage/model.rs#L39-L59) capturing the entire completed period's totals across all interfaces, categories, and devices. This completed snapshot is appended to the persistent history ledger (`history.jsonl`).
+1. **Archive Completed Snapshot**: The sampler builds a final `src/dusage/model.rs#L39-L59` capturing the entire completed period's totals across all interfaces, categories, and devices. This completed snapshot is appended to the persistent history ledger (`history.jsonl`).
 2. **Re-baseline for New Period**: The sampler executes `rebaseline()`:
    - `state.period_start` is updated to the new period's start timestamp.
    - `state.iface_baselines` is updated to the current raw interface counters.
@@ -9298,7 +9319,7 @@ When a period rollover is detected:
 
 In addition to scheduled rollovers, administrators often need to reset bandwidth counters manually (e.g., when changing billing plans, replacing a cellular SIM card, or concluding an operational exercise).
 
-Invoking `POST /api/v1/dusage/reset` triggers [src/dusage/sampler.rs: reset_now()](file:///home/hp/SGX/src/dusage/sampler.rs#L143-L180):
+Invoking `POST /api/v1/dusage/reset` triggers `src/dusage/sampler.rs#L143-L180`:
 - It reads current raw counters from all interfaces and categories.
 - It instantiates a fresh `DusageState` with `period_start = Utc::now().to_rfc3339()`.
 - It re-baselines all counters to current raw values.
@@ -9313,7 +9334,7 @@ Invoking `POST /api/v1/dusage/reset` triggers [src/dusage/sampler.rs: reset_now(
 
 Historical analysis of network consumption is essential for capacity planning, detecting slow data exfiltration, and auditing operational trends. The Guardian subsystem maintains completed period records in [/var/lib/sgx-guardian/dusage/history.jsonl](file:///var/lib/sgx-guardian/dusage/history.jsonl).
 
-To ensure that the history log never causes disk exhaustion on resource-constrained embedded flash storage, [src/dusage/state.rs: append_history()](file:///home/hp/SGX/src/dusage/state.rs#L80-L94) enforces a strict **capped circular ring-buffer**:
+To ensure that the history log never causes disk exhaustion on resource-constrained embedded flash storage, `src/dusage/state.rs#L80-L94` enforces a strict **capped circular ring-buffer**:
 
     pub const MAX_HISTORY_ROWS: usize = 400;
 
@@ -9331,7 +9352,7 @@ At a monthly rollover frequency, 400 records provide over 33 years of historical
 
 ### 27.7.2 Multi-Dimensional Historical Breakdown (Interface, Category & Device Granularity)
 
-Unlike simplistic monitors that record only aggregate byte counts, each historical entry in `history.jsonl` is a complete, standalone [UsageSnapshot](file:///home/hp/SGX/src/dusage/model.rs#L39-L59) containing:
+Unlike simplistic monitors that record only aggregate byte counts, each historical entry in `history.jsonl` is a complete, standalone `src/dusage/model.rs#L39-L59` containing:
 - Period identification (`period`, `period_start`, `sampled_at`).
 - Complete interface array (`interfaces[]` with `iface`, `rx_bytes`, `tx_bytes`, `rx_total`, `tx_total`).
 - Functional category breakdown (`categories[]` with `category`, `bytes`).
@@ -9342,7 +9363,7 @@ This rich multi-dimensional telemetry allows administrators to inspect past bill
 
 ### 27.7.3 Atomic File Swapping (`write_atomic`) & Crash Resilience
 
-To eliminate the risk of file corruption during unexpected power outages, reboots, or hardware resets, all disk persistence in [src/dusage/state.rs](file:///home/hp/SGX/src/dusage/state.rs#L149-L162) utilizes POSIX atomic write-and-rename semantics:
+To eliminate the risk of file corruption during unexpected power outages, reboots, or hardware resets, all disk persistence in `src/dusage/state.rs#L149-L162` utilizes POSIX atomic write-and-rename semantics:
 1. Parent directories are recursively created if missing.
 2. The payload is written to a temporary sibling file (`<target>.tmp`).
 3. An explicit `file.sync_all().await` forces the operating system filesystem buffers to flush to physical storage.
@@ -9354,7 +9375,7 @@ If power fails at any point during writing, the original file remains intact, co
 
 ## 27.8 REST API Reference & Administrative Management Endpoints
 
-The Data Usage Monitoring subsystem exposes administrative REST endpoints over the standard Guardian management port (`8443` HTTPS / HTTP in development). All routes are mounted under `/api/v1/dusage/` in [src/api/routes.rs](file:///home/hp/SGX/src/api/routes.rs) and handled in [src/api/handlers/dusage.rs](file:///home/hp/SGX/src/api/handlers/dusage.rs).
+The Data Usage Monitoring subsystem exposes administrative REST endpoints over the standard Guardian management port (`8443` HTTPS / HTTP in development). All routes are mounted under `/api/v1/dusage/` in `src/api/routes.rs` and handled in `src/api/handlers/dusage.rs`.
 
 ### 27.8.1 Real-Time Snapshot Query (`GET /api/v1/dusage/current`)
 
@@ -9470,7 +9491,7 @@ Forces an immediate period re-baseline, zeroing current period usage and setting
 
 ### 27.8.5 React UI Management Console (`ST04DataUsage.tsx`, `dusageService.ts`)
 
-The operator management experience is delivered via [frontend/src/app/screens/settings/ST04DataUsage.tsx](file:///home/hp/SGX/frontend/src/app/screens/settings/ST04DataUsage.tsx) and the TypeScript client service in [frontend/src/app/services/dusageService.ts](file:///home/hp/SGX/frontend/src/app/services/dusageService.ts):
+The operator management experience is delivered via `frontend/src/app/screens/settings/ST04DataUsage.tsx` and the TypeScript client service in `frontend/src/app/services/dusageService.ts`:
 - **Dynamic Usage Ring Gauge**: Custom SVG circular progress ring displaying active consumption percentage with smooth animated stroke transitions, automatically styled according to the server's `usage_band` (`--destructive` for red, `--chart-5` for amber, `--chart-2` for green).
 - **Inline Quota Configuration**: Modal dialog triggered via the `Pencil` icon, allowing operators to set quota limits with automatic unit formatting (`KB`, `MB`, `GB`, `TB`) and cycle cadence (`daily`, `weekly`, `monthly`).
 - **One-Click Period Reset**: Protected administrative button with interactive confirmation dialog triggering `dusageService.reset()`, providing instant toast feedback.
@@ -9490,34 +9511,34 @@ The Data Usage Monitoring subsystem incorporates a comprehensive defense matrix 
 
 | Defense ID | Threat Vector | Mitigation Mechanism | Implementation Location |
 | :--- | :--- | :--- | :--- |
-| **DEF-USG-01** | **Host Reboot Counter Wrap & Spurious Spikes** | Subsystem detects `current_raw < baseline` on all interfaces and categories. It immediately re-snaps baselines to current counters and outputs zero delta, completely eliminating negative numbers or 18-exabyte integer underflow spikes. | [src/dusage/sampler.rs: interface_usage](file:///home/hp/SGX/src/dusage/sampler.rs#L256-L267) |
-| **DEF-USG-02** | **Disk Tampering of Quota Limits** | Quota records are sealed with `sha256-local-2026` cryptographic integrity proofs. The loader verifies the hash over canonical stripped bytes; tampered quota files fail verification, trigger Critical audit alerts, and fail closed. | [src/dusage/state.rs: load_quota](file:///home/hp/SGX/src/dusage/state.rs#L49-L58) |
-| **DEF-USG-03** | **Storage Corruption During Power Failure** | State, quota, and history updates utilize POSIX atomic write semantics (`.tmp` file creation, kernel `sync_all()` buffer flush, and atomic POSIX rename). Zero-byte truncated files are impossible. | [src/dusage/state.rs: write_atomic](file:///home/hp/SGX/src/dusage/state.rs#L149-L162) |
-| **DEF-USG-04** | **Firewall Policy Disruption** | Category packet counters utilize non-behavioral named counters (`counter name "<cat>"`). Packet filtering chains maintain strict `policy drop` and unchanging `accept` rules; counting logic can never compromise firewall security. | [src/dusage/counters.rs: read_nft_category_counters](file:///home/hp/SGX/src/dusage/counters.rs#L67-L93) |
-| **DEF-USG-05** | **Daemon Crash via Subprocess Failure** | Interface reading directly accesses sysfs without invoking external binaries. The background sampler daemon catches all errors, logging warnings while keeping the core Guardian daemon operating smoothly. | [src/dusage/sampler.rs: run_loop](file:///home/hp/SGX/src/dusage/sampler.rs#L14-L35) |
-| **DEF-USG-06** | **Disk Exhaustion via Unbounded Logs** | History file `history.jsonl` enforces a strict hard cap of `MAX_HISTORY_ROWS = 400`. Older records are pruned using circular FIFO drain logic, ensuring flash storage usage never exceeds ~250 KB. | [src/dusage/state.rs: append_history](file:///home/hp/SGX/src/dusage/state.rs#L80-L94) |
-| **DEF-USG-07** | **Future-Proof Network Modernization** | Bandwidth accounting is anchored in the universal Linux `/sys/class/net` kernel interface, ensuring complete durability and zero breakage when packet filtering transitions to eBPF in Sprint 9. | [src/dusage/counters.rs: read_interface_counters](file:///home/hp/SGX/src/dusage/counters.rs#L16-L65) |
-| **DEF-USG-08** | **Inconsistent Multi-Client Visual Thresholds** | Quota consumption percentages and severity color bands (`green`, `amber`, `red`) are computed exclusively on the server, guaranteeing identical threshold interpretation across all mobile, web, and CLI clients. | [src/dusage/quota.rs: usage_band](file:///home/hp/SGX/src/dusage/quota.rs#L71-L78) |
-| **DEF-USG-09** | **Replay & State Rollback Attacks** | State and quota files feature monotonically incrementing `sequence: u64` counters. Re-writing an older configuration produces a sequence violation that is detected and audited during synchronization. | [src/dusage/state.rs: seal_state](file:///home/hp/SGX/src/dusage/state.rs#L96-L101) |
-| **DEF-USG-10** | **Subsystem Failure in Degraded Environments** | When conntrack or nftables are missing or disabled (`SGX_DUSAGE_CONNTRACK_ENABLED=0`), the subsystem gracefully degrades to reporting empty collections without impacting primary interface accounting. | [src/dusage/devices.rs: read_device_usage](file:///home/hp/SGX/src/dusage/devices.rs#L14-L38) |
+| **DEF-USG-01** | **Host Reboot Counter Wrap & Spurious Spikes** | Subsystem detects `current_raw < baseline` on all interfaces and categories. It immediately re-snaps baselines to current counters and outputs zero delta, completely eliminating negative numbers or 18-exabyte integer underflow spikes. | `src/dusage/sampler.rs#L256-L267` |
+| **DEF-USG-02** | **Disk Tampering of Quota Limits** | Quota records are sealed with `sha256-local-2026` cryptographic integrity proofs. The loader verifies the hash over canonical stripped bytes; tampered quota files fail verification, trigger Critical audit alerts, and fail closed. | `src/dusage/state.rs#L49-L58` |
+| **DEF-USG-03** | **Storage Corruption During Power Failure** | State, quota, and history updates utilize POSIX atomic write semantics (`.tmp` file creation, kernel `sync_all()` buffer flush, and atomic POSIX rename). Zero-byte truncated files are impossible. | `src/dusage/state.rs#L149-L162` |
+| **DEF-USG-04** | **Firewall Policy Disruption** | Category packet counters utilize non-behavioral named counters (`counter name "<cat>"`). Packet filtering chains maintain strict `policy drop` and unchanging `accept` rules; counting logic can never compromise firewall security. | `src/dusage/counters.rs#L67-L93` |
+| **DEF-USG-05** | **Daemon Crash via Subprocess Failure** | Interface reading directly accesses sysfs without invoking external binaries. The background sampler daemon catches all errors, logging warnings while keeping the core Guardian daemon operating smoothly. | `src/dusage/sampler.rs#L14-L35` |
+| **DEF-USG-06** | **Disk Exhaustion via Unbounded Logs** | History file `history.jsonl` enforces a strict hard cap of `MAX_HISTORY_ROWS = 400`. Older records are pruned using circular FIFO drain logic, ensuring flash storage usage never exceeds ~250 KB. | `src/dusage/state.rs#L80-L94` |
+| **DEF-USG-07** | **Future-Proof Network Modernization** | Bandwidth accounting is anchored in the universal Linux `/sys/class/net` kernel interface, ensuring complete durability and zero breakage when packet filtering transitions to eBPF in Sprint 9. | `src/dusage/counters.rs#L16-L65` |
+| **DEF-USG-08** | **Inconsistent Multi-Client Visual Thresholds** | Quota consumption percentages and severity color bands (`green`, `amber`, `red`) are computed exclusively on the server, guaranteeing identical threshold interpretation across all mobile, web, and CLI clients. | `src/dusage/quota.rs#L71-L78` |
+| **DEF-USG-09** | **Replay & State Rollback Attacks** | State and quota files feature monotonically incrementing `sequence: u64` counters. Re-writing an older configuration produces a sequence violation that is detected and audited during synchronization. | `src/dusage/state.rs#L96-L101` |
+| **DEF-USG-10** | **Subsystem Failure in Degraded Environments** | When conntrack or nftables are missing or disabled (`SGX_DUSAGE_CONNTRACK_ENABLED=0`), the subsystem gracefully degrades to reporting empty collections without impacting primary interface accounting. | `src/dusage/devices.rs#L14-L38` |
 
 ---
 
 ## 27.10 Testing and Verification Summary (The DUSAGE-Series Validation Suite: DUSAGE-001 to DUSAGE-009)
 
-The Data Usage Monitoring subsystem is comprehensively verified via the **DUSAGE-Series** test specification documented in [docs/Data_Usage_Monitoring_Verification_Log.md](file:///home/hp/SGX/docs/Data_Usage_Monitoring_Verification_Log.md) and automated test suites:
+The Data Usage Monitoring subsystem is comprehensively verified via the **DUSAGE-Series** test specification documented in `docs/Data_Usage_Monitoring_Verification_Log.md` and automated test suites:
 
 | Test ID | Target Capability | Verification Location & Test Function | Verification Scope & Expected Results |
 | :--- | :--- | :--- | :--- |
-| **DUSAGE-001** | **Bandwidth Monitoring (Per-Interface Kernel Counters)** | [src/dusage/tests/mod.rs](file:///home/hp/SGX/src/dusage/tests/mod.rs): `sys_reader_and_sampler_compute_period_delta` | Generates 20 MB of network traffic; asserts `total_bytes` grows, `rx_bytes`/`tx_bytes` match sysfs deltas, and `rx_total` matches `/sys/class/net/*/statistics/rx_bytes`. |
-| **DUSAGE-002** | **Per-Category Accounting (nftables Named Counters)** | [src/dusage/tests/mod.rs](file:///home/hp/SGX/src/dusage/tests/mod.rs): `parses_nft_named_counter_json` | Injects synthetic nftables JSON counter output; verifies `parse_nft_counters_json()` extracts category names and byte values; confirms firewall policy remains unmodified. |
-| **DUSAGE-003** | **Quota Tracking & Color Threshold Bands** | [src/dusage/tests/mod.rs](file:///home/hp/SGX/src/dusage/tests/mod.rs): `quota_thresholds_match_frontend_bands` | Evaluates threshold logic; verifies `used_pct` calculation; confirms `>80%` maps to `red`, `>50%` maps to `amber`, `<=50%` maps to `green`, and missing quota maps to `none`. |
-| **DUSAGE-004** | **Usage History & Analytics Ledger** | [tests/cov_wave14_dusage_state_sampler_test.rs](file:///home/hp/SGX/tests/cov_wave14_dusage_state_sampler_test.rs): `history_append_keeps_latest_four_hundred_and_ignores_blank_lines` | Appends 401 historical snapshots to `history.jsonl`; asserts oldest row is pruned, exactly 400 rows remain, and blank lines are ignored. |
-| **DUSAGE-005** | **Reset Scheduling & Rollover Lifecycle** | [tests/cov_wave14_dusage_state_sampler_test.rs](file:///home/hp/SGX/tests/cov_wave14_dusage_state_sampler_test.rs): `sampler_rolls_period_archives_history_and_rebaselines_changed_configuration` | Simulates period rollover; asserts completed period archives to `history.jsonl`, `state.json` re-baselines to current raw counters, and new period total resets to zero. |
-| **DUSAGE-006** | **Cumulative Counter Correctness (Anti-Spike Safety)** | [src/dusage/tests/mod.rs](file:///home/hp/SGX/src/dusage/tests/mod.rs): `counter_reset_rebaselines_without_spurious_spike` | Simulates a host reboot by reducing raw interface counters from 500 to 30; asserts delta reports 0 bytes (no 18-exabyte spike) and subsequent samples track positive growth. |
-| **DUSAGE-007** | **REST API Interface: Real-Time Snapshot** | [src/api/handlers/dusage.rs](file:///home/hp/SGX/src/api/handlers/dusage.rs): `current_and_history_serve_snapshots_from_the_configured_state_dir` | Executes `GET /api/v1/dusage/current`; asserts HTTP 200 containing valid `period`, `interfaces[]`, `categories[]`, `total_bytes`, and `usage_band`. |
-| **DUSAGE-008** | **REST API Interface: Quota & Reset Endpoints** | [src/api/handlers/dusage.rs](file:///home/hp/SGX/src/api/handlers/dusage.rs): `quota_round_trips_through_put_and_get`, `reset_reports_success_and_returns_the_new_snapshot` | Executes `PUT /dusage/quota` and `GET /dusage/quota` validating sequence increments; executes `POST /dusage/reset` asserting `status: "success"` and zeroed total. |
-| **DUSAGE-009** | **Signed Quota Tamper Rejection (Fail-Closed Security)** | [tests/cov_wave14_dusage_state_sampler_test.rs](file:///home/hp/SGX/tests/cov_wave14_dusage_state_sampler_test.rs): `state_and_quota_persistence_seal_round_trip_and_reject_tampering` | Modifies `quota_bytes` directly in `quota.json` on disk; asserts `load_quota()` detects SHA-256 integrity mismatch, logs Critical audit rejection, and returns `None`. |
+| **DUSAGE-001** | **Bandwidth Monitoring (Per-Interface Kernel Counters)** | `src/dusage/tests/mod.rs`: `sys_reader_and_sampler_compute_period_delta` | Generates 20 MB of network traffic; asserts `total_bytes` grows, `rx_bytes`/`tx_bytes` match sysfs deltas, and `rx_total` matches `/sys/class/net/*/statistics/rx_bytes`. |
+| **DUSAGE-002** | **Per-Category Accounting (nftables Named Counters)** | `src/dusage/tests/mod.rs`: `parses_nft_named_counter_json` | Injects synthetic nftables JSON counter output; verifies `parse_nft_counters_json()` extracts category names and byte values; confirms firewall policy remains unmodified. |
+| **DUSAGE-003** | **Quota Tracking & Color Threshold Bands** | `src/dusage/tests/mod.rs`: `quota_thresholds_match_frontend_bands` | Evaluates threshold logic; verifies `used_pct` calculation; confirms `>80%` maps to `red`, `>50%` maps to `amber`, `<=50%` maps to `green`, and missing quota maps to `none`. |
+| **DUSAGE-004** | **Usage History & Analytics Ledger** | `tests/cov_wave14_dusage_state_sampler_test.rs`: `history_append_keeps_latest_four_hundred_and_ignores_blank_lines` | Appends 401 historical snapshots to `history.jsonl`; asserts oldest row is pruned, exactly 400 rows remain, and blank lines are ignored. |
+| **DUSAGE-005** | **Reset Scheduling & Rollover Lifecycle** | `tests/cov_wave14_dusage_state_sampler_test.rs`: `sampler_rolls_period_archives_history_and_rebaselines_changed_configuration` | Simulates period rollover; asserts completed period archives to `history.jsonl`, `state.json` re-baselines to current raw counters, and new period total resets to zero. |
+| **DUSAGE-006** | **Cumulative Counter Correctness (Anti-Spike Safety)** | `src/dusage/tests/mod.rs`: `counter_reset_rebaselines_without_spurious_spike` | Simulates a host reboot by reducing raw interface counters from 500 to 30; asserts delta reports 0 bytes (no 18-exabyte spike) and subsequent samples track positive growth. |
+| **DUSAGE-007** | **REST API Interface: Real-Time Snapshot** | `src/api/handlers/dusage.rs`: `current_and_history_serve_snapshots_from_the_configured_state_dir` | Executes `GET /api/v1/dusage/current`; asserts HTTP 200 containing valid `period`, `interfaces[]`, `categories[]`, `total_bytes`, and `usage_band`. |
+| **DUSAGE-008** | **REST API Interface: Quota & Reset Endpoints** | `src/api/handlers/dusage.rs`: `quota_round_trips_through_put_and_get`, `reset_reports_success_and_returns_the_new_snapshot` | Executes `PUT /dusage/quota` and `GET /dusage/quota` validating sequence increments; executes `POST /dusage/reset` asserting `status: "success"` and zeroed total. |
+| **DUSAGE-009** | **Signed Quota Tamper Rejection (Fail-Closed Security)** | `tests/cov_wave14_dusage_state_sampler_test.rs`: `state_and_quota_persistence_seal_round_trip_and_reject_tampering` | Modifies `quota_bytes` directly in `quota.json` on disk; asserts `load_quota()` detects SHA-256 integrity mismatch, logs Critical audit rejection, and returns `None`. |
 
 ---
 
@@ -9526,29 +9547,29 @@ The Data Usage Monitoring subsystem is comprehensively verified via the **DUSAGE
 The implementation of Feature 27 is organized across the following core source files:
 
 ### Core Data Usage Subsystem: `src/dusage/`
-- **[src/dusage/mod.rs](file:///home/hp/SGX/src/dusage/mod.rs)**: Subsystem coordinator, background daemon spawner (`spawn`), configuration loader (`DusageConfig`), and high-level query facades.
-- **[src/dusage/model.rs](file:///home/hp/SGX/src/dusage/model.rs)**: Domain models, including `InterfaceUsage`, `CategoryUsage`, `DeviceUsage`, `UsageSnapshot`, `DusageQuota`, `DusageState`, and local integrity proof helpers.
-- **[src/dusage/counters.rs](file:///home/hp/SGX/src/dusage/counters.rs)**: Low-level hardware counter reader for sysfs (`read_interface_counters`) and asynchronous nftables JSON parser (`read_nft_category_counters`).
-- **[src/dusage/devices.rs](file:///home/hp/SGX/src/dusage/devices.rs)**: Conntrack flow table reader and bidirectional IP bandwidth attribution parser (`read_device_usage`).
-- **[src/dusage/quota.rs](file:///home/hp/SGX/src/dusage/quota.rs)**: Quota normalization, period calculation (`period_start_for`, `next_period_start`), rollover detection (`period_has_rolled`), and severity color band evaluation (`usage_band`).
-- **[src/dusage/sampler.rs](file:///home/hp/SGX/src/dusage/sampler.rs)**: Continuous sampling loop (`run_loop`), baseline differencing, reboot/counter-flush anti-spike rebaselining, rollover archival, and manual reset pipeline (`reset_now`).
-- **[src/dusage/state.rs](file:///home/hp/SGX/src/dusage/state.rs)**: Persistent state management, SHA-256 cryptographic sealing/verification, circular ring-buffer history management (`history.jsonl`), and atomic POSIX disk writes (`write_atomic`).
-- **[src/dusage/errors.rs](file:///home/hp/SGX/src/dusage/errors.rs)**: Strongly typed domain errors (`DusageError`).
+- **`src/dusage/mod.rs`**: Subsystem coordinator, background daemon spawner (`spawn`), configuration loader (`DusageConfig`), and high-level query facades.
+- **`src/dusage/model.rs`**: Domain models, including `InterfaceUsage`, `CategoryUsage`, `DeviceUsage`, `UsageSnapshot`, `DusageQuota`, `DusageState`, and local integrity proof helpers.
+- **`src/dusage/counters.rs`**: Low-level hardware counter reader for sysfs (`read_interface_counters`) and asynchronous nftables JSON parser (`read_nft_category_counters`).
+- **`src/dusage/devices.rs`**: Conntrack flow table reader and bidirectional IP bandwidth attribution parser (`read_device_usage`).
+- **`src/dusage/quota.rs`**: Quota normalization, period calculation (`period_start_for`, `next_period_start`), rollover detection (`period_has_rolled`), and severity color band evaluation (`usage_band`).
+- **`src/dusage/sampler.rs`**: Continuous sampling loop (`run_loop`), baseline differencing, reboot/counter-flush anti-spike rebaselining, rollover archival, and manual reset pipeline (`reset_now`).
+- **`src/dusage/state.rs`**: Persistent state management, SHA-256 cryptographic sealing/verification, circular ring-buffer history management (`history.jsonl`), and atomic POSIX disk writes (`write_atomic`).
+- **`src/dusage/errors.rs`**: Strongly typed domain errors (`DusageError`).
 
 ### REST API Handlers & Routing: `src/api/`
-- **[src/api/handlers/dusage.rs](file:///home/hp/SGX/src/api/handlers/dusage.rs)**: Axum HTTP REST handlers for `/api/v1/dusage/current`, `/history`, `/quota` (GET/PUT), and `/reset`.
-- **[src/api/routes.rs](file:///home/hp/SGX/src/api/routes.rs)**: API route registration mounting dusage endpoints into the primary Guardian Axum router.
+- **`src/api/handlers/dusage.rs`**: Axum HTTP REST handlers for `/api/v1/dusage/current`, `/history`, `/quota` (GET/PUT), and `/reset`.
+- **`src/api/routes.rs`**: API route registration mounting dusage endpoints into the primary Guardian Axum router.
 
 ### Frontend API, Services & Management UI: `frontend/`
-- **[frontend/src/app/services/dusageService.ts](file:///home/hp/SGX/frontend/src/app/services/dusageService.ts)**: TypeScript API client service wrapping all `/api/v1/dusage/*` endpoints with strongly typed interfaces.
-- **[frontend/src/app/screens/settings/ST04DataUsage.tsx](file:///home/hp/SGX/frontend/src/app/screens/settings/ST04DataUsage.tsx)**: Full administrative UI dashboard featuring animated SVG usage ring, quota edit modal, manual reset dialog, grouped network interfaces, protocol category progress bars, and historical period analysis.
-- **[frontend/src/app/hooks/useApiData.ts](file:///home/hp/SGX/frontend/src/app/hooks/useApiData.ts)**: React data fetching hooks (`useDusageCurrent`, `useDusageHistory`, `useDusageQuota`) providing real-time UI state synchronization.
+- **`frontend/src/app/services/dusageService.ts`**: TypeScript API client service wrapping all `/api/v1/dusage/*` endpoints with strongly typed interfaces.
+- **`frontend/src/app/screens/settings/ST04DataUsage.tsx`**: Full administrative UI dashboard featuring animated SVG usage ring, quota edit modal, manual reset dialog, grouped network interfaces, protocol category progress bars, and historical period analysis.
+- **`frontend/src/app/hooks/useApiData.ts`**: React data fetching hooks (`useDusageCurrent`, `useDusageHistory`, `useDusageQuota`) providing real-time UI state synchronization.
 
 ### Test Suites: `tests/` & `src/dusage/tests/`
-- **[src/dusage/tests/mod.rs](file:///home/hp/SGX/src/dusage/tests/mod.rs)**: Subsystem unit tests covering sysfs period delta calculation, reboot counter-reset handling, dynamic interface lifecycle, quota threshold bands, nftables JSON parsing, and conntrack IP attribution.
-- **[tests/cov_wave14_dusage_state_sampler_test.rs](file:///home/hp/SGX/tests/cov_wave14_dusage_state_sampler_test.rs)**: Comprehensive integration test suite verifying SHA-256 seal verification, tamper rejection, 400-row history ring-buffer capping, configuration environment overrides, and period rollover archival.
-- **[docs/Data_Usage_Monitoring_Verification_Log.md](file:///home/hp/SGX/docs/Data_Usage_Monitoring_Verification_Log.md)**: Hardware verification test log documenting the complete DUSAGE-001 through DUSAGE-009 validation specification.
-- **[docs/Data_Usage_Monitoring_Complete_Plan.md](file:///home/hp/SGX/docs/Data_Usage_Monitoring_Complete_Plan.md)**: Original engineering development plan and architectural grounding analysis.
+- **`src/dusage/tests/mod.rs`**: Subsystem unit tests covering sysfs period delta calculation, reboot counter-reset handling, dynamic interface lifecycle, quota threshold bands, nftables JSON parsing, and conntrack IP attribution.
+- **`tests/cov_wave14_dusage_state_sampler_test.rs`**: Comprehensive integration test suite verifying SHA-256 seal verification, tamper rejection, 400-row history ring-buffer capping, configuration environment overrides, and period rollover archival.
+- **`docs/Data_Usage_Monitoring_Verification_Log.md`**: Hardware verification test log documenting the complete DUSAGE-001 through DUSAGE-009 validation specification.
+- **`docs/Data_Usage_Monitoring_Complete_Plan.md`**: Original engineering development plan and architectural grounding analysis.
 
 ---
 
@@ -9558,7 +9579,7 @@ The implementation of Feature 27 is organized across the following core source f
 
 In austere, tactical, and sovereign edge environments, personnel operating field infrastructure—such as defense operators, energy substation engineers, emergency medical responders, and municipal network administrators—cannot rely on public app stores (Apple App Store, Google Play), commercial cloud relays, external identity providers, or continuous internet connectivity. Deploying native mobile applications to secure field devices typically requires mobile device management (MDM) profiles, active internet certificate validations, and complex provisioning cycles that are impossible in air-gapped or contested mission zones.
 
-To overcome these constraints, the SG-X Guardian system incorporates a fully self-contained, browser-based **Progressive Web Application (PWA) and Local Portal** embedded directly into the Guardian Rust firmware binary ([src/api/frontend.rs](file:///home/hp/SGX/src/api/frontend.rs)). Built with **React 18, TypeScript, and Vite**, the Guardian PWA delivers an installable, mobile-optimized experience served locally over high-speed Wi-Fi Access Point (`uap0`) or Ethernet LAN (`eth0`).
+To overcome these constraints, the SG-X Guardian system incorporates a fully self-contained, browser-based **Progressive Web Application (PWA) and Local Portal** embedded directly into the Guardian Rust firmware binary (`src/api/frontend.rs`). Built with **React 18, TypeScript, and Vite**, the Guardian PWA delivers an installable, mobile-optimized experience served locally over high-speed Wi-Fi Access Point (`uap0`) or Ethernet LAN (`eth0`).
 
 ### 28.1.1 Problem Statement & Edge Tactical Constraints
 
@@ -9589,7 +9610,7 @@ The Guardian PWA implements a **strict dual-persona role-based access model** se
         |   |        (Role: "member", Scoped)       |     (Role: "admin", Unrestricted) |   |
         |   |                                       |                                   |   |
         |   |   1. Messages (Encrypted Chat)        |   1. System Health Score (3s)     |   |
-        |   |   2. Calls (Local WebRTC P2P)         |   2. Threat Alert Triage & AI     |   |
+        |   |   2. Calls (Local WebRTC P2P)         |   2. Threat Alert Triage          |   |
         |   |   3. Contacts (Circle Roster)         |   3. Network & Mesh Topology      |   |
         |   |   4. Files (Vault Share & Expiry)     |   4. Connected Device Quarantine  |   |
         |   |   5. Settings (Preferences & DND)     |   5. System Config & Governance   |   |
@@ -9630,11 +9651,11 @@ The Guardian PWA implements a **strict dual-persona role-based access model** se
         +-----------------------------------------------------------------------------------+
 
 1. **Member PWA (5 Primary Tabs)**: Designed for end-users, team members, and tactical personnel. The interface is strictly restricted to secure communications: **Messages**, **Calls**, **Contacts**, **Files**, and personal **Settings**. Administrative configuration routes are completely absent from the member view, and any manual URL access to administrative endpoints is rejected server-side.
-2. **Admin Console (Field Security Engineering)**: Designed for credentialed administrators and security engineers. Delivers full situational awareness: a 3-second **System Health Score**, **Threat Alert Triage** with AI recommendations, **Circle of Trust Topology**, **Connected Device Quarantine**, **Data Usage Quotas**, and **Automation Rule Builders**.
+2. **Admin Console (Field Security Engineering)**: Designed for credentialed administrators and security engineers. Delivers full situational awareness: a 3-second **System Health Score**, **Threat Alert Triage** with automated remediation recommendations, **Circle of Trust Topology**, **Connected Device Quarantine**, **Data Usage Quotas**, and **Automation Rule Builders**.
 
 ### 28.1.3 Zero-Internet Local Domain & LAN Access (`guardian.local`, `uap0`, `eth0`)
 
-The Guardian node acts as a standalone network gateway. It runs a local DHCP and DNS service ([config/dnsmasq/dnsmasq.conf.template](file:///home/hp/SGX/config/dnsmasq/dnsmasq.conf.template)) that authoritative resolves the local domain `guardian.local` (and `https://guardian.local`) directly to the node's local IP address (`192.168.50.1` on Wi-Fi access point `uap0` or the statically assigned interface address on `eth0`). Operators and members simply connect to the Guardian's Wi-Fi network and open any browser; no internet connectivity, public DNS resolution, or external certification authority is queried.
+The Guardian node acts as a standalone network gateway. It runs a local DHCP and DNS service (`config/dnsmasq/dnsmasq.conf.template`) that authoritative resolves the local domain `guardian.local` (and `https://guardian.local`) directly to the node's local IP address (`192.168.50.1` on Wi-Fi access point `uap0` or the statically assigned interface address on `eth0`). Operators and members simply connect to the Guardian's Wi-Fi network and open any browser; no internet connectivity, public DNS resolution, or external certification authority is queried.
 
 ---
 
@@ -9642,9 +9663,9 @@ The Guardian node acts as a standalone network gateway. It runs a local DHCP and
 
 ### 28.2.1 Local Access Architecture (`https://guardian.local`) & Captive Portal Routing
 
-When a mobile device associates with the Guardian's secure Wi-Fi access point, the onboard network stack routes HTTP port 80 requests to a captive redirection engine, automatically prompting the user to launch the Guardian portal at `https://guardian.local`. 
+When a mobile device associates with the Guardian's secure Wi-Fi access point, the onboard network stack routes HTTP port 80 requests to a captive redirection engine, automatically prompting the user to launch the Guardian portal at `https://guardian.local`.
 
-Transport Layer Security (TLS) is terminated directly on the Guardian's embedded Axum web server ([src/api/mod.rs](file:///home/hp/SGX/src/api/mod.rs)), using certificates signed by the node's Circle of Trust root authority. This ensures that camera, microphone, WebCrypto, and Service Worker APIs (which modern browsers restrict exclusively to secure origins) function without degradation.
+Transport Layer Security (TLS) is terminated directly on the Guardian's embedded Axum web server (`src/api/mod.rs`), using certificates signed by the node's Circle of Trust root authority. This ensures that camera, microphone, WebCrypto, and Service Worker APIs (which modern browsers restrict exclusively to secure origins) function without degradation.
 
 ### 28.2.2 Hardware Visual Fingerprint Verification (Anti-MITM Trust Establishment)
 
@@ -9675,7 +9696,7 @@ Human operators and members are authenticated via **Guardian-issued revocable br
 To mitigate token theft via malware or physical device loss:
 - **No Plaintext Long-Lived Storage**: Long-lived API tokens and raw private keys are strictly barred from unencrypted `localStorage`.
 - **In-Memory & `sessionStorage` Scoping**: Active session bearer tokens reside in browser `sessionStorage` or application memory. Closing the browser tab immediately purges the session.
-- **Server-Side Session Revocation**: Every incoming API request passes through [src/api/auth/middleware.rs](file:///home/hp/SGX/src/api/auth/middleware.rs), validating the session against the node's live revocation table. If an administrator revokes a member's credential or removes them from the Circle, subsequent requests fail with HTTP 401/403, and the client-side session is instantly destroyed.
+- **Server-Side Session Revocation**: Every incoming API request passes through `src/api/auth/middleware.rs`, validating the session against the node's live revocation table. If an administrator revokes a member's credential or removes them from the Circle, subsequent requests fail with HTTP 401/403, and the client-side session is instantly destroyed.
 
 ---
 
@@ -9683,7 +9704,7 @@ To mitigate token theft via malware or physical device loss:
 
 ### 28.3.1 Versioned Service Worker Cache (`sgx-guardian-shell-${VERSION}`)
 
-The Guardian Service Worker ([frontend/public/sw.js](file:///home/hp/SGX/frontend/public/sw.js)) provides instant application loading and robust offline shell execution. The cache identifier is strictly scoped to the semantic release version:
+The Guardian Service Worker (`frontend/public/sw.js`) provides instant application loading and robust offline shell execution. The cache identifier is strictly scoped to the semantic release version:
 
     const CACHE_NAME = `sgx-guardian-shell-${__APP_VERSION__}`;
 
@@ -9694,19 +9715,19 @@ Key operational mechanics include:
 
 ### 28.3.2 Strict 5 MiB Production Bundle Size Gate (`check-bundle-size.mjs`)
 
-Embedded microcontrollers and field mobile devices frequently have limited flash storage and memory bandwidth. To guarantee fast load times over low-power Wi-Fi links, the project enforces a mandatory **5 MiB bundle size ceiling** verified in CI via [frontend/scripts/check-bundle-size.mjs](file:///home/hp/SGX/frontend/scripts/check-bundle-size.mjs).
+Embedded microcontrollers and field mobile devices frequently have limited flash storage and memory bandwidth. To guarantee fast load times over low-power Wi-Fi links, the project enforces a mandatory **5 MiB bundle size ceiling** verified in CI via `frontend/scripts/check-bundle-size.mjs`.
 
-The entire production distribution ([frontend/dist/](file:///home/hp/SGX/frontend/)) is constrained to:
+The entire production distribution (`frontend/`) is constrained to:
 - Total assets: Under 4,968 KiB total.
 - Compiled JavaScript & CSS bundles: Approximately 2,828 KiB.
-- Pre-cache validation ([frontend/scripts/validate-precache.mjs](file:///home/hp/SGX/frontend/scripts/validate-precache.mjs)) verifies that every file listed in the service worker manifest exists in `dist/`.
+- Pre-cache validation (`frontend/scripts/validate-precache.mjs`) verifies that every file listed in the service worker manifest exists in `dist/`.
 
 ### 28.3.3 Self-Hosted Zero-CDN Asset Architecture (Fonts, Icons, Manifest)
 
 Unlike typical web applications that rely on Google Fonts, unpkg, or third-party CDNs, the Guardian PWA is **100% self-hosted**:
-- **Self-Hosted Typography**: The Inter and Outfit fonts ([frontend/src/styles/fonts.css](file:///home/hp/SGX/frontend/src/styles/fonts.css)) are stored locally in the binary distribution, scoped to Latin subsets to minimize footprint.
+- **Self-Hosted Typography**: The Inter and Outfit fonts (`frontend/src/styles/fonts.css`) are stored locally in the binary distribution, scoped to Latin subsets to minimize footprint.
 - **Bundled Vector Graphics**: All UI icons (Lucide React) and SVG diagrams are compiled into local JavaScript chunks.
-- **PWA Web App Manifest ([frontend/public/manifest.json](file:///home/hp/SGX/frontend/public/manifest.json))**: Configures the mobile web app with `display: "standalone"`, `orientation: "portrait"`, theme color `#0f172a`, and local icon assets for home screen installation on iOS and Android.
+- **PWA Web App Manifest (`frontend/public/manifest.json`)**: Configures the mobile web app with `display: "standalone"`, `orientation: "portrait"`, theme color `#0f172a`, and local icon assets for home screen installation on iOS and Android.
 
 ### 28.3.4 Safe Service Worker Activation & Cache Eviction (`SKIP_WAITING` Protocol)
 
@@ -9721,12 +9742,12 @@ To prevent active users from experiencing unexpected state desynchronization dur
 
 ### 28.4.1 Schema Definition (`PWA_DB_NAME = "sgx-guardian-pwa"`, Version 3)
 
-For durable, high-capacity client-side persistence, the PWA implements an IndexedDB subsystem defined in [frontend/src/pwa/db/schema.ts](file:///home/hp/SGX/frontend/src/pwa/db/schema.ts):
+For durable, high-capacity client-side persistence, the PWA implements an IndexedDB subsystem defined in `frontend/src/pwa/db/schema.ts`:
 
     export const PWA_DB_NAME = "sgx-guardian-pwa";
     export const PWA_DB_VERSION = 3;
 
-The database schema is upgraded transactionally via `openPwaDatabase()` in [frontend/src/pwa/db/database.ts](file:///home/hp/SGX/frontend/src/pwa/db/database.ts), ensuring smooth migrations across application updates.
+The database schema is upgraded transactionally via `openPwaDatabase()` in `frontend/src/pwa/db/database.ts`, ensuring smooth migrations across application updates.
 
 ### 28.4.2 Domain Object Stores
 
@@ -9743,9 +9764,9 @@ The database is divided into specialized, isolated object stores:
 | **`settings`** | `keyPath: "key"` | Local client preferences (theme, notification sound, DND window, storage limits). |
 | **`sync_cursors`** | `keyPath: "stream"` | High-water mark sequence cursors for deterministic incremental synchronization. |
 
-### 28.4.3 WebCrypto Encrypted Local Vault (`src/pwa/crypto/vault.ts`)
+### 28.4.3 WebCrypto Encrypted Local Vault (`frontend/src/pwa/crypto/vault.ts`)
 
-To protect cached messages and pending actions from unauthorized physical extraction on mobile devices, the PWA implements a **WebCrypto-backed encrypted storage vault** in [frontend/src/pwa/crypto/vault.ts](file:///home/hp/SGX/frontend/src/pwa/crypto/vault.ts):
+To protect cached messages and pending actions from unauthorized physical extraction on mobile devices, the PWA implements a **WebCrypto-backed encrypted storage vault** in `frontend/src/pwa/crypto/vault.ts`:
 - Utilizes AES-GCM-256 with cryptographically random 96-bit initialization vectors (IVs).
 - Encryption keys are derived from user session credentials and hardware-bound seed material via PBKDF2 with 100,000 iterations.
 - Sensitive message bodies and file descriptors are encrypted prior to insertion into IndexedDB stores, preventing plaintext exposure if a device is seized.
@@ -9753,8 +9774,8 @@ To protect cached messages and pending actions from unauthorized physical extrac
 ### 28.4.4 Automated Database Maintenance & Secure Cleanup (`maintenance.ts`, `offlineCleanup.ts`)
 
 To maintain peak performance and prevent unbounded storage accumulation on mobile devices:
-- **Storage Maintenance ([maintenance.ts](file:///home/hp/SGX/frontend/src/pwa/db/maintenance.ts))**: Enforces retention horizons on message and call records, automatically trimming historical logs beyond configured thresholds while preserving un-synced pending items.
-- **Emergency Clean-Slate ([offlineCleanup.ts](file:///home/hp/SGX/frontend/src/pwa/offlineCleanup.ts))**: When an operator logs out or a session revocation is received, `offlineCleanup.ts` wipes all IndexedDB tables and destroys cryptographic key material, ensuring zero residual data remains on shared mobile devices.
+- **Storage Maintenance (`frontend/src/pwa/db/maintenance.ts`)**: Enforces retention horizons on message and call records, automatically trimming historical logs beyond configured thresholds while preserving un-synced pending items.
+- **Emergency Clean-Slate (`frontend/src/pwa/offlineCleanup.ts`)**: When an operator logs out or a session revocation is received, `offlineCleanup.ts` wipes all IndexedDB tables and destroys cryptographic key material, ensuring zero residual data remains on shared mobile devices.
 
 ---
 
@@ -9769,7 +9790,7 @@ In standard consumer web development, developers rely on `window.navigator.onLin
 
 ### 28.5.2 Guardian Health Probe & Heartbeat Pipeline (`GuardianConnectivityContext.tsx`)
 
-To solve this, the PWA implements an **authoritative Guardian-centric connectivity engine** in [frontend/src/pwa/connectivity/GuardianConnectivityContext.tsx](file:///home/hp/SGX/frontend/src/pwa/connectivity/GuardianConnectivityContext.tsx).
+To solve this, the PWA implements an **authoritative Guardian-centric connectivity engine** in `frontend/src/pwa/connectivity/GuardianConnectivityContext.tsx`.
 
 The client ignores public internet status and continuously measures reachability directly against the local Guardian appliance:
 1. It dispatches lightweight, non-blocking HTTP GET requests to `https://guardian.local/api/v1/health`.
@@ -9792,12 +9813,12 @@ The connectivity provider exposes three unambiguous operational states to the en
 When an operator creates a message, updates a profile, or initiates a file share while in the `Disconnected PWA` state:
 1. **Durable Queueing**: The action is persisted into the `pending_actions` IndexedDB store with a unique `operation_id` and a client-side UUID `idempotency_key`.
 2. **Optimistic UI Update**: The interface renders the item immediately, marking its status with a distinct amber clock icon indicating `pending`.
-3. **Automatic Replay on Reconnect**: When `GuardianConnectivityContext` transitions back to reachable, [frontend/src/pwa/sync/pendingReplay.ts](file:///home/hp/SGX/frontend/src/pwa/sync/pendingReplay.ts) activates:
+3. **Automatic Replay on Reconnect**: When `GuardianConnectivityContext` transitions back to reachable, `frontend/src/pwa/sync/pendingReplay.ts` activates:
    - It drains the queue in strict chronological order.
    - It transmits each operation to the Guardian API attaching the `Idempotency-Key` header.
    - The Guardian backend ensures that duplicate submissions (e.g., if a previous attempt partially succeeded) are de-duplicated without re-execution.
    - Upon acknowledgment, the pending record is purged from IndexedDB, and the UI status updates to `sent`.
-4. **Conflict Resolution ([conflict.ts](file:///home/hp/SGX/frontend/src/pwa/sync/conflict.ts))**: If a conflicting server mutation occurred while the client was disconnected, the engine applies deterministic timestamp-based reconciliation, logging an audit record.
+4. **Conflict Resolution (`frontend/src/pwa/sync/conflict.ts`)**: If a conflicting server mutation occurred while the client was disconnected, the engine applies deterministic timestamp-based reconciliation, logging an audit record.
 
 ---
 
@@ -9819,9 +9840,9 @@ The Member PWA is designed with a field-first, one-handed mobile interface optim
 ### 28.6.2 Calls Tab: Local WebRTC Peer-to-Peer Voice/Video Calling without Cloud Relays
 
 - **Zero-Cloud Audio/Video**: Implements browser-to-browser WebRTC voice and video streams orchestrated directly by the Guardian appliance.
-- **Local Signaling**: SDP offer/answer exchanges and ICE candidates are routed through the Guardian's local WebSocket signaling channel ([src/call/](file:///home/hp/SGX/src/call/)).
+- **Local Signaling**: SDP offer/answer exchanges and ICE candidates are routed through the Guardian's local WebSocket signaling channel (`src/call/`).
 - **No External STUN/TURN**: Because both devices reside on the Guardian's local network (or across the flat Nebula mesh subnet), ICE candidates resolve locally without requiring public cloud relay servers.
-- **Media Permission Guard ([mediaPermissions.ts](file:///home/hp/SGX/frontend/src/pwa/security/mediaPermissions.ts))**: Browser camera and microphone access are strictly restricted to active call screens and require explicit user gestures, preventing background eavesdropping.
+- **Media Permission Guard (`frontend/src/pwa/security/mediaPermissions.ts`)**: Browser camera and microphone access are strictly restricted to active call screens and require explicit user gestures, preventing background eavesdropping.
 - **Call Resilience**: Call state machines handle Wi-Fi roaming, interface switches, and network blips with automatic stream renegotiation.
 
 ### 28.6.3 Contacts Tab: Member Roster, Role Badges, Online Presence & Quick Action Triggers
@@ -9855,10 +9876,10 @@ When an authenticated user possesses the `admin` role, the PWA expands into the 
 - **Hardware Telemetry**: Real-time NXP i.MX8M Plus hardware monitoring: CPU load, thermal sensor readouts, RAM consumption, and flash storage health.
 - **Network Interface Radar**: Live status of physical ports (`eth0`), dual Wi-Fi radios (`wlan0`, `uap0`), and encrypted overlay tunnels (`nebula0`).
 
-### 28.7.2 Threat Alert Triage & AI Remediation Recommendations
+### 28.7.2 Threat Alert Triage & Automated Remediation Recommendations
 
 - **Real-Time SSE Alert Feed**: Direct streaming of Suricata intrusion detection events, unauthorized MAC associations, and attestation failures.
-- **Under-4-Tap Remediation**: Integrated workflow allowing operators to view an alert, assess the AI-generated recommendation, and apply defensive countermeasures (e.g., IP blocking, client isolation, credential revocation) in fewer than 4 taps.
+- **Under-4-Tap Remediation**: Integrated workflow allowing operators to view an alert, assess the automatically generated recommendation, and apply defensive countermeasures (e.g., IP blocking, client isolation, credential revocation) in fewer than 4 taps.
 
 ### 28.7.3 Circle of Trust Management, DID Resolution & Hardware Device Control
 
@@ -9881,16 +9902,16 @@ The Guardian PWA implements an industry-leading browser defense matrix engineere
 
 | Defense ID | Threat Vector | Mitigation Mechanism | Implementation Location |
 | :--- | :--- | :--- | :--- |
-| **DEF-PWA-01** | **Malicious Local Wi-Fi Participant** | All non-public REST and WebSocket APIs require signed bearer sessions. The backend validates token signatures, role bindings, Circle IDs, and Guardian fingerprint on every single request. | [src/api/auth/middleware.rs: auth_middleware](file:///home/hp/SGX/src/api/auth/middleware.rs#L45-L95) |
-| **DEF-PWA-02** | **Stolen Browser Session Credential** | Session bearer tokens are stored in volatile `sessionStorage` (never plaintext `localStorage`). The backend maintains a live server-side session registry; revoked or expired sessions fail immediately. | [frontend/src/app/contexts/AuthContext.tsx](file:///home/hp/SGX/frontend/src/app/contexts/AuthContext.tsx#L85-L120) |
-| **DEF-PWA-03** | **Cross-Site Scripting (XSS) & Data Exfiltration** | Strict Content Security Policy (CSP): `default-src 'self'`, script execution restricted to self-hosted bundles (zero inline scripts), `object-src 'none'`, and frame embedding completely disabled (`frame-ancestors 'none'`). | [src/api/mod.rs: security_headers](file:///home/hp/SGX/src/api/mod.rs#L110-L145) |
-| **DEF-PWA-04** | **Service Worker Cache Poisoning** | The service worker handles only same-origin non-API `GET` requests, refuses opaque or missing assets during install, versions cache names by semantic release, and deletes stale caches on activation. | [frontend/public/sw.js](file:///home/hp/SGX/frontend/public/sw.js#L25-L75) |
-| **DEF-PWA-05** | **Mutation Replay Attacks** | All state-mutating requests (chat send, file share, profile update) attach a unique `Idempotency-Key` header. The backend deduplicates replayed submissions during network reconnects. | [frontend/src/pwa/sync/pendingReplay.ts](file:///home/hp/SGX/frontend/src/pwa/sync/pendingReplay.ts#L35-L65) |
-| **DEF-PWA-06** | **Guardian Hardware Substitution (MITM)** | The client verifies the visual fingerprint of the hardware Device Key Pair (DKP) during onboarding and re-validates the Guardian fingerprint on every authenticated session handshake. | [frontend/src/pwa/connectivity/GuardianConnectivityContext.tsx](file:///home/hp/SGX/frontend/src/pwa/connectivity/GuardianConnectivityContext.tsx#L80-L115) |
-| **DEF-PWA-07** | **Client-Side Role Escalation** | Role enforcement is strictly server-side. Tampering with client-side JavaScript or modifying stored role strings fails backend scope checks; administrative routes return HTTP 403 Forbidden. | [src/api/auth/middleware.rs: require_role](file:///home/hp/SGX/src/api/auth/middleware.rs#L102-L135) |
-| **DEF-PWA-08** | **Air-Gap False Connectivity Lockup** | Bypasses `navigator.onLine` and continuously measures reachability via dedicated HTTP health probes to `https://guardian.local/api/v1/health`, preventing infinite network timeouts. | [frontend/src/pwa/connectivity/GuardianConnectivityContext.tsx](file:///home/hp/SGX/frontend/src/pwa/connectivity/GuardianConnectivityContext.tsx#L45-L75) |
-| **DEF-PWA-09** | **Physical Device Seizure & Data Recovery** | Cached messages and pending action payloads are encrypted in IndexedDB using AES-GCM-256 via WebCrypto. Logging out triggers `offlineCleanup.ts`, wiping all local stores and cryptographic keys. | [frontend/src/pwa/crypto/vault.ts](file:///home/hp/SGX/frontend/src/pwa/crypto/vault.ts#L40-L90), [frontend/src/pwa/offlineCleanup.ts](file:///home/hp/SGX/frontend/src/pwa/offlineCleanup.ts#L10-L35) |
-| **DEF-PWA-10** | **Unauthorized Background Eavesdropping** | Runtime media permission guard restricts camera, microphone, and screen capture access exclusively to active call routes, requiring an active tab and a recent user physical gesture. | [frontend/src/pwa/security/mediaPermissions.ts](file:///home/hp/SGX/frontend/src/pwa/security/mediaPermissions.ts#L15-L55) |
+| **DEF-PWA-01** | **Malicious Local Wi-Fi Participant** | All non-public REST and WebSocket APIs require signed bearer sessions. The backend validates token signatures, role bindings, Circle IDs, and Guardian fingerprint on every single request. | `src/api/auth/middleware.rs#L45-L95` |
+| **DEF-PWA-02** | **Stolen Browser Session Credential** | Session bearer tokens are stored in volatile `sessionStorage` (never plaintext `localStorage`). The backend maintains a live server-side session registry; revoked or expired sessions fail immediately. | `frontend/src/app/contexts/AuthContext.tsx#L85-L120` |
+| **DEF-PWA-03** | **Cross-Site Scripting (XSS) & Data Exfiltration** | Strict Content Security Policy (CSP): `default-src 'self'`, script execution restricted to self-hosted bundles (zero inline scripts), `object-src 'none'`, and frame embedding completely disabled (`frame-ancestors 'none'`). | `src/api/mod.rs#L110-L145` |
+| **DEF-PWA-04** | **Service Worker Cache Poisoning** | The service worker handles only same-origin non-API `GET` requests, refuses opaque or missing assets during install, versions cache names by semantic release, and deletes stale caches on activation. | `frontend/public/sw.js#L25-L75` |
+| **DEF-PWA-05** | **Mutation Replay Attacks** | All state-mutating requests (chat send, file share, profile update) attach a unique `Idempotency-Key` header. The backend deduplicates replayed submissions during network reconnects. | `frontend/src/pwa/sync/pendingReplay.ts#L35-L65` |
+| **DEF-PWA-06** | **Guardian Hardware Substitution (MITM)** | The client verifies the visual fingerprint of the hardware Device Key Pair (DKP) during onboarding and re-validates the Guardian fingerprint on every authenticated session handshake. | `frontend/src/pwa/connectivity/GuardianConnectivityContext.tsx#L80-L115` |
+| **DEF-PWA-07** | **Client-Side Role Escalation** | Role enforcement is strictly server-side. Tampering with client-side JavaScript or modifying stored role strings fails backend scope checks; administrative routes return HTTP 403 Forbidden. | `src/api/auth/middleware.rs#L102-L135` |
+| **DEF-PWA-08** | **Air-Gap False Connectivity Lockup** | Bypasses `navigator.onLine` and continuously measures reachability via dedicated HTTP health probes to `https://guardian.local/api/v1/health`, preventing infinite network timeouts. | `frontend/src/pwa/connectivity/GuardianConnectivityContext.tsx#L45-L75` |
+| **DEF-PWA-09** | **Physical Device Seizure & Data Recovery** | Cached messages and pending action payloads are encrypted in IndexedDB using AES-GCM-256 via WebCrypto. Logging out triggers `offlineCleanup.ts`, wiping all local stores and cryptographic keys. | `frontend/src/pwa/crypto/vault.ts#L40-L90`, `frontend/src/pwa/offlineCleanup.ts#L10-L35` |
+| **DEF-PWA-10** | **Unauthorized Background Eavesdropping** | Runtime media permission guard restricts camera, microphone, and screen capture access exclusively to active call routes, requiring an active tab and a recent user physical gesture. | `frontend/src/pwa/security/mediaPermissions.ts#L15-L55` |
 
 ---
 
@@ -9900,16 +9921,16 @@ The Progressive Web Application and Local Portal subsystem is verified across au
 
 | Test ID | Target Capability | Verification Location & Test Function | Verification Scope & Expected Results |
 | :--- | :--- | :--- | :--- |
-| **PWA-001** | **Standalone Pre-cache & Bundle Size Gate** | [frontend/scripts/check-bundle-size.mjs](file:///home/hp/SGX/frontend/scripts/check-bundle-size.mjs), [validate-precache.mjs](file:///home/hp/SGX/frontend/scripts/validate-precache.mjs) | Compiles production assets; asserts total distribution is ≤ 5 MiB (4,968 KiB); verifies every pre-cached asset exists in `dist/` with valid hash. |
-| **PWA-002** | **Service Worker Offline Cache & Eviction** | [frontend/public/sw.js](file:///home/hp/SGX/frontend/public/sw.js), [docs/Guardian_PWA_Phase_11_Verification_Log.md](file:///home/hp/SGX/docs/Guardian_PWA_Phase_11_Verification_Log.md) | Tests service worker lifecycle; verifies same-origin shell pre-caching; simulates app update; verifies `SKIP_WAITING` protocol and old cache deletion. |
-| **PWA-003** | **IndexedDB Transactional Schema & Repositories** | [frontend/src/pwa/db/messageRepository.test.ts](file:///home/hp/SGX/frontend/src/pwa/db/messageRepository.test.ts), [simpleRepositories.test.ts](file:///home/hp/SGX/frontend/src/pwa/db/simpleRepositories.test.ts) | Tests `sgx-guardian-pwa` object stores; verifies CRUD operations for messages, contacts, and settings; validates transaction atomicity and index lookups. |
-| **PWA-004** | **WebCrypto Local Vault Encryption** | [frontend/src/pwa/crypto/vault.ts](file:///home/hp/SGX/frontend/src/pwa/crypto/vault.ts), [testSetup.ts](file:///home/hp/SGX/frontend/src/pwa/testSetup.ts) | Encrypts payload with AES-GCM-256; verifies random IV generation; confirms ciphertext stored in IndexedDB cannot be read without session key; verifies clean decryption. |
-| **PWA-005** | **Guardian-Aware Health Heartbeat & State Transition** | [frontend/src/pwa/connectivity/GuardianConnectivityContext.tsx](file:///home/hp/SGX/frontend/src/pwa/connectivity/GuardianConnectivityContext.tsx) | Disables network uplink while maintaining Wi-Fi link; verifies engine ignores `navigator.onLine` and transitions accurately between `Local Offline` and `Disconnected`. |
-| **PWA-006** | **Durable Offline Action Queue & Idempotent Replay** | [frontend/src/pwa/sync/pendingReplay.ts](file:///home/hp/SGX/frontend/src/pwa/sync/pendingReplay.ts) | Queues 10 chat messages while disconnected; restores Guardian connection; asserts queue drains in chronological order with `Idempotency-Key` headers. |
-| **PWA-007** | **Role Separation & Route Authorization Enforcement** | [src/api/auth/middleware.rs](file:///home/hp/SGX/src/api/auth/middleware.rs), [frontend/src/app/utils/authorization.ts](file:///home/hp/SGX/frontend/src/app/utils/authorization.ts) | Authenticates with `member` token; attempts access to `/api/v1/rules`, `/dusage/reset`, and `/backup`; asserts strict HTTP 403 rejection server-side. |
-| **PWA-008** | **WebRTC Local P2P Audio/Video Signaling** | [frontend/src/features/calls/](file:///home/hp/SGX/frontend/src/features/calls/), [src/call/](file:///home/hp/SGX/src/call/) | Initiates voice and video call between two local browsers; verifies local WebSocket signaling exchange; asserts direct P2P media flow without cloud STUN/TURN. |
-| **PWA-009** | **Media Permission Guard & Route Gesture Enforcer** | [frontend/src/pwa/security/mediaPermissions.ts](file:///home/hp/SGX/frontend/src/pwa/security/mediaPermissions.ts) | Simulates camera/mic access request from non-call route or hidden tab; asserts access is blocked; verifies camera activation succeeds only on active call screen. |
-| **PWA-010** | **Emergency Logout & Clean-Slate Storage Purge** | [frontend/src/pwa/offlineCleanup.ts](file:///home/hp/SGX/frontend/src/pwa/offlineCleanup.ts) | Triggers user logout; verifies `deletePwaDatabase()` completely removes all IndexedDB stores, clears session storage, and resets connectivity state. |
+| **PWA-001** | **Standalone Pre-cache & Bundle Size Gate** | `frontend/scripts/check-bundle-size.mjs`, `frontend/scripts/validate-precache.mjs` | Compiles production assets; asserts total distribution is ≤ 5 MiB (4,968 KiB); verifies every pre-cached asset exists in `dist/` with valid hash. |
+| **PWA-002** | **Service Worker Offline Cache & Eviction** | `frontend/public/sw.js`, `docs/Guardian_PWA_Phase_11_Verification_Log.md` | Tests service worker lifecycle; verifies same-origin shell pre-caching; simulates app update; verifies `SKIP_WAITING` protocol and old cache deletion. |
+| **PWA-003** | **IndexedDB Transactional Schema & Repositories** | `frontend/src/pwa/db/messageRepository.test.ts`, `frontend/src/pwa/db/simpleRepositories.test.ts` | Tests `sgx-guardian-pwa` object stores; verifies CRUD operations for messages, contacts, and settings; validates transaction atomicity and index lookups. |
+| **PWA-004** | **WebCrypto Local Vault Encryption** | `frontend/src/pwa/crypto/vault.ts`, `frontend/src/pwa/testSetup.ts` | Encrypts payload with AES-GCM-256; verifies random IV generation; confirms ciphertext stored in IndexedDB cannot be read without session key; verifies clean decryption. |
+| **PWA-005** | **Guardian-Aware Health Heartbeat & State Transition** | `frontend/src/pwa/connectivity/GuardianConnectivityContext.tsx` | Disables network uplink while maintaining Wi-Fi link; verifies engine ignores `navigator.onLine` and transitions accurately between `Local Offline` and `Disconnected`. |
+| **PWA-006** | **Durable Offline Action Queue & Idempotent Replay** | `frontend/src/pwa/sync/pendingReplay.ts` | Queues 10 chat messages while disconnected; restores Guardian connection; asserts queue drains in chronological order with `Idempotency-Key` headers. |
+| **PWA-007** | **Role Separation & Route Authorization Enforcement** | `src/api/auth/middleware.rs`, `frontend/src/app/utils/authorization.ts` | Authenticates with `member` token; attempts access to `/api/v1/rules`, `/dusage/reset`, and `/backup`; asserts strict HTTP 403 rejection server-side. |
+| **PWA-008** | **WebRTC Local P2P Audio/Video Signaling** | `frontend/src/features/calls/`, `src/call/` | Initiates voice and video call between two local browsers; verifies local WebSocket signaling exchange; asserts direct P2P media flow without cloud STUN/TURN. |
+| **PWA-009** | **Media Permission Guard & Route Gesture Enforcer** | `frontend/src/pwa/security/mediaPermissions.ts` | Simulates camera/mic access request from non-call route or hidden tab; asserts access is blocked; verifies camera activation succeeds only on active call screen. |
+| **PWA-010** | **Emergency Logout & Clean-Slate Storage Purge** | `frontend/src/pwa/offlineCleanup.ts` | Triggers user logout; verifies `deletePwaDatabase()` completely removes all IndexedDB stores, clears session storage, and resets connectivity state. |
 
 ---
 
@@ -9918,42 +9939,42 @@ The Progressive Web Application and Local Portal subsystem is verified across au
 The implementation of Feature 28 is organized across the following core source files:
 
 ### Frontend PWA Core & Offline Subsystem: `frontend/src/pwa/`
-- **[frontend/src/pwa/db/schema.ts](file:///home/hp/SGX/frontend/src/pwa/db/schema.ts)**: IndexedDB schema definition (`PWA_DB_NAME = "sgx-guardian-pwa"`, version 3), store names, and index configurations.
-- **[frontend/src/pwa/db/database.ts](file:///home/hp/SGX/frontend/src/pwa/db/database.ts)**: Low-level IndexedDB connection manager, transactional promise wrappers, and database upgrade handlers.
-- **[frontend/src/pwa/db/messageRepository.ts](file:///home/hp/SGX/frontend/src/pwa/db/messageRepository.ts)**: Dedicated repository for cached messages, conversation index queries, and delivery status updates.
-- **[frontend/src/pwa/db/pendingRepository.ts](file:///home/hp/SGX/frontend/src/pwa/db/pendingRepository.ts)**: Offline action queue repository managing pending mutations, operations, and status tracking.
-- **[frontend/src/pwa/db/simpleRepositories.ts](file:///home/hp/SGX/frontend/src/pwa/db/simpleRepositories.ts)**: Repositories for contacts, files, calls, membership sessions, and settings.
-- **[frontend/src/pwa/db/maintenance.ts](file:///home/hp/SGX/frontend/src/pwa/db/maintenance.ts)**: Automated storage maintenance, historical record trimming, and database compaction.
-- **[frontend/src/pwa/crypto/vault.ts](file:///home/hp/SGX/frontend/src/pwa/crypto/vault.ts)**: WebCrypto AES-GCM-256 client-side encryption vault for sensitive offline data protection.
-- **[frontend/src/pwa/connectivity/GuardianConnectivityContext.tsx](file:///home/hp/SGX/frontend/src/pwa/connectivity/GuardianConnectivityContext.tsx)**: React connectivity context and hook probing `/api/v1/health` to deliver true local connection states.
-- **[frontend/src/pwa/sync/pendingReplay.ts](file:///home/hp/SGX/frontend/src/pwa/sync/pendingReplay.ts)**: Deterministic offline queue replay worker with idempotency key enforcement.
-- **[frontend/src/pwa/sync/conflict.ts](file:///home/hp/SGX/frontend/src/pwa/sync/conflict.ts)**: Client-side conflict detection and timestamp reconciliation engine.
-- **[frontend/src/pwa/security/mediaPermissions.ts](file:///home/hp/SGX/frontend/src/pwa/security/mediaPermissions.ts)**: Runtime media permission guard restricting camera/microphone capture to visible call routes.
-- **[frontend/src/pwa/offlineCleanup.ts](file:///home/hp/SGX/frontend/src/pwa/offlineCleanup.ts)**: Clean-slate storage purge utility wiping all IndexedDB stores upon session revocation or logout.
+- **`frontend/src/pwa/db/schema.ts`**: IndexedDB schema definition (`PWA_DB_NAME = "sgx-guardian-pwa"`, version 3), store names, and index configurations.
+- **`frontend/src/pwa/db/database.ts`**: Low-level IndexedDB connection manager, transactional promise wrappers, and database upgrade handlers.
+- **`frontend/src/pwa/db/messageRepository.ts`**: Dedicated repository for cached messages, conversation index queries, and delivery status updates.
+- **`frontend/src/pwa/db/pendingRepository.ts`**: Offline action queue repository managing pending mutations, operations, and status tracking.
+- **`frontend/src/pwa/db/contactRepository.ts`**, **`frontend/src/pwa/db/fileRepository.ts`**, **`frontend/src/pwa/db/callRepository.ts`**, **`frontend/src/pwa/db/membershipRepository.ts`**, and **`frontend/src/pwa/db/settingsRepository.ts`**: Repositories for contacts, files, calls, membership sessions, and settings.
+- **`frontend/src/pwa/db/maintenance.ts`**: Automated storage maintenance, historical record trimming, and database compaction.
+- **`frontend/src/pwa/crypto/vault.ts`**: WebCrypto AES-GCM-256 client-side encryption vault for sensitive offline data protection.
+- **`frontend/src/pwa/connectivity/GuardianConnectivityContext.tsx`**: React connectivity context and hook probing `/api/v1/health` to deliver true local connection states.
+- **`frontend/src/pwa/sync/pendingReplay.ts`**: Deterministic offline queue replay worker with idempotency key enforcement.
+- **`frontend/src/pwa/sync/conflict.ts`**: Client-side conflict detection and timestamp reconciliation engine.
+- **`frontend/src/pwa/security/mediaPermissions.ts`**: Runtime media permission guard restricting camera/microphone capture to visible call routes.
+- **`frontend/src/pwa/offlineCleanup.ts`**: Clean-slate storage purge utility wiping all IndexedDB stores upon session revocation or logout.
 
 ### Service Worker & Build Tooling: `frontend/`
-- **[frontend/public/sw.js](file:///home/hp/SGX/frontend/public/sw.js)**: Versioned service worker script managing atomic pre-caching, cache eviction, and same-origin request routing.
-- **[frontend/public/manifest.json](file:///home/hp/SGX/frontend/public/manifest.json)**: Web App Manifest configuring standalone display, orientation, themes, and application icons.
-- **[frontend/vite.config.ts](file:///home/hp/SGX/frontend/vite.config.ts)**: Vite build configuration defining `pwaAssetManifest()` plugin and bundle chunking optimizations.
-- **[frontend/scripts/check-bundle-size.mjs](file:///home/hp/SGX/frontend/scripts/check-bundle-size.mjs)**: Build verification script enforcing the strict 5 MiB distribution ceiling.
-- **[frontend/scripts/validate-precache.mjs](file:///home/hp/SGX/frontend/scripts/validate-precache.mjs)**: Build gate script verifying that every asset referenced by `sw.js` exists in `dist/`.
+- **`frontend/public/sw.js`**: Versioned service worker script managing atomic pre-caching, cache eviction, and same-origin request routing.
+- **`frontend/public/manifest.json`**: Web App Manifest configuring standalone display, orientation, themes, and application icons.
+- **`frontend/vite.config.ts`**: Vite build configuration defining `pwaAssetManifest()` plugin and bundle chunking optimizations.
+- **`frontend/scripts/check-bundle-size.mjs`**: Build verification script enforcing the strict 5 MiB distribution ceiling.
+- **`frontend/scripts/validate-precache.mjs`**: Build gate script verifying that every asset referenced by `sw.js` exists in `dist/`.
 
 ### Member Experience Screens & Features: `frontend/src/`
-- **[frontend/src/features/calls/GroupCallingScreen.tsx](file:///home/hp/SGX/frontend/src/features/calls/GroupCallingScreen.tsx)**: Local WebRTC multi-party voice and video calling interface.
-- **[frontend/src/features/calls/IncomingGroupCallDialog.tsx](file:///home/hp/SGX/frontend/src/features/calls/IncomingGroupCallDialog.tsx)**: Incoming call notification modal with audio alert dispatching.
-- **[frontend/src/app/contexts/AuthContext.tsx](file:///home/hp/SGX/frontend/src/app/contexts/AuthContext.tsx)**: Authentication context managing session bearer tokens, fingerprint validation, and role scoping.
-- **[frontend/src/app/utils/authorization.ts](file:///home/hp/SGX/frontend/src/app/utils/authorization.ts)**: Client-side route and component authorization helpers separating member and admin views.
+- **`frontend/src/features/calls/GroupCallingScreen.tsx`**: Local WebRTC multi-party voice and video calling interface.
+- **`frontend/src/features/calls/IncomingGroupCallDialog.tsx`**: Incoming call notification modal with audio alert dispatching.
+- **`frontend/src/app/contexts/AuthContext.tsx`**: Authentication context managing session bearer tokens, fingerprint validation, and role scoping.
+- **`frontend/src/app/utils/authorization.ts`**: Client-side route and component authorization helpers separating member and admin views.
 
 ### Backend Embedded Server & API Security: `src/api/`
-- **[src/api/frontend.rs](file:///home/hp/SGX/src/api/frontend.rs)**: Rust Axum static file handler serving the compiled React PWA directly from embedded binary memory.
-- **[src/api/mod.rs](file:///home/hp/SGX/src/api/mod.rs)**: Global HTTP security headers middleware injecting strict CSP, nosniff, frame denial, and permissions policies.
-- **[src/api/auth/middleware.rs](file:///home/hp/SGX/src/api/auth/middleware.rs)**: Server-side authorization middleware enforcing role permissions, scopes, and session validity.
-- **[config/dnsmasq/dnsmasq.conf.template](file:///home/hp/SGX/config/dnsmasq/dnsmasq.conf.template)**: DHCP and DNS template providing local resolution for `guardian.local`.
+- **`src/api/frontend.rs`**: Rust Axum static file handler serving the compiled React PWA directly from embedded binary memory.
+- **`src/api/mod.rs`**: Global HTTP security headers middleware injecting strict CSP, nosniff, frame denial, and permissions policies.
+- **`src/api/auth/middleware.rs`**: Server-side authorization middleware enforcing role permissions, scopes, and session validity.
+- **`config/dnsmasq/dnsmasq.conf.template`**: DHCP and DNS template providing local resolution for `guardian.local`.
 
 ### Documentation & Verification Plans: `docs/`
-- **[docs/Guardian_PWA_Complete_Implementation_Plan.md](file:///home/hp/SGX/docs/Guardian_PWA_Complete_Implementation_Plan.md)**: Master engineering architecture roadmap and phased delivery plan.
-- **[docs/Guardian_PWA_Phase_11_Verification_Log.md](file:///home/hp/SGX/docs/Guardian_PWA_Phase_11_Verification_Log.md)**: Security assessment, threat model verification, and OWASP Top 10 compliance log.
-- **[docs/Guardian_PWA_Phase_12_Release_Evidence.md](file:///home/hp/SGX/docs/Guardian_PWA_Phase_12_Release_Evidence.md)**: Release evidence, automated test coverage metrics, and bundle digest logs.
+- **`docs/Guardian_PWA_Complete_Implementation_Plan.md`**: Master engineering architecture roadmap and phased delivery plan.
+- **`docs/Guardian_PWA_Phase_11_Verification_Log.md`**: Security assessment, threat model verification, and OWASP Top 10 compliance log.
+- **`docs/Guardian_PWA_Phase_12_Release_Evidence.md`**: Release evidence, automated test coverage metrics, and bundle digest logs.
 
 ---
 

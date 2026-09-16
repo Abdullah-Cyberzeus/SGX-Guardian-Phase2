@@ -172,7 +172,14 @@ fn is_ap_interface(iface: &str) -> bool {
 /// Wi-Fi radio, or cellular) — any interface that can plausibly carry the
 /// board's default route.
 fn is_uplink_interface(iface: &str) -> bool {
-    iface == "wlan0" || iface == "wlan1" || iface == "wwan0" || iface.starts_with("eth")
+    iface == "wlan0"
+        || iface == "wlan1"
+        || iface == "wlp4s0"
+        || iface.starts_with("eth")
+        || iface.starts_with("en")
+        || iface.starts_with("wwan")
+        || iface.starts_with("rmnet")
+        || iface.starts_with("usb")
 }
 
 #[cfg(test)]
@@ -299,5 +306,24 @@ mod tests {
             port: None,
         }]);
         assert!(validate_policy(&policy).is_ok());
+    }
+
+    #[test]
+    fn test_masquerade_accepts_predictable_ethernet_and_wlp4s0_names() {
+        // Single-radio devices (one Wi-Fi chip, no uap0/wlan1 vifs) use
+        // predictable-network-interface-naming device names like "enp2s0"
+        // for Ethernet and "wlp4s0" for the shared Wi-Fi station/AP radio —
+        // neither matched the old literal "eth0"/"wlan0"/"wlan1" checks.
+        for dst in ["enp2s0", "wlp4s0", "usb0", "rmnet0"] {
+            let policy = dummy_policy(vec![Rule {
+                id: "1".to_string(),
+                action: "masquerade".to_string(),
+                src: "ap0".to_string(),
+                dst: dst.to_string(),
+                protocol: "any".to_string(),
+                port: None,
+            }]);
+            assert!(validate_policy(&policy).is_ok(), "expected {dst} to be accepted");
+        }
     }
 }
