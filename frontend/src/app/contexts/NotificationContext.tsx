@@ -8,6 +8,8 @@ import {
 } from "../../api/notifications";
 import { notificationRepository } from "../../pwa/db/notificationRepository";
 import { isWithinDnd, loadLocalNotificationPrefs, playNotificationSound, vibrateForNotification } from "../lib/notificationLocalPrefs";
+import { notificationBody } from "../components/notifications/notificationVisuals";
+import { useContactNames } from "./ContactNameContext";
 
 const LAST_ID_KEY = "sgx_notify_last_id";
 const MAX_ITEMS = 150;
@@ -78,6 +80,7 @@ export function communicationPopupEnabled(kind: string): boolean {
 
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
+  const { displayForDid } = useContactNames();
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
@@ -162,6 +165,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
   const pushToast = useCallback((item: NotificationItem) => {
     if (!communicationPopupEnabled(item.kind) || !notificationEnabled(prefs, item.kind)) return;
+    const displayBody = notificationBody(item.kind, item.body, item.actorDid, displayForDid);
 
     void loadLocalNotificationPrefs(ownDid).then((local) => {
       // The master toggle silences delivery entirely on this device — no
@@ -171,7 +175,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       if (!local.masterEnabled) return;
 
       const toastId = `${item.id}-${Date.now()}`;
-      setToasts((prev) => [{ ...item, toastId }, ...prev].slice(0, MAX_TOASTS));
+      setToasts((prev) => [{ ...item, body: displayBody, toastId }, ...prev].slice(0, MAX_TOASTS));
 
       const quiet = isWithinDnd(local);
       if (!quiet) {
@@ -186,14 +190,14 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
           // The native popup has its own OS-level sound, independent of our
           // synthesized beep — silence it too whenever DND is active or the
           // user has turned the Sound toggle off, not just during DND.
-          new Notification(item.title, { body: item.body, silent: quiet || !local.sound });
+          new Notification(item.title, { body: displayBody, silent: quiet || !local.sound });
         } catch {
           // Notification construction can throw in some contexts; never
           // let it break in-app delivery.
         }
       }
     });
-  }, [prefs, ownDid]);
+  }, [displayForDid, prefs, ownDid]);
 
   // Immediately remove visible toasts when their preference is switched off.
   useEffect(() => {

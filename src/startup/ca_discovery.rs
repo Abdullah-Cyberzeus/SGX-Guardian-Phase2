@@ -44,6 +44,55 @@ pub fn ca_address_from_configs(paths: &GuardianPaths) -> Option<String> {
     None
 }
 
+fn host_from_endpoint(endpoint: &str) -> Option<String> {
+    endpoint
+        .rsplit_once(':')
+        .map(|(host, _)| host.trim().to_string())
+        .filter(|host| is_usable_ca_address(host))
+}
+
+/// Reads the current primary lighthouse endpoint and returns its LAN host.
+///
+/// This is a stronger CA hint than the YAML config on member boards: the
+/// registry is learned from the CA and carries the physical endpoint used by
+/// Nebula, while stale local configs can accidentally point a member back at
+/// itself.
+pub fn ca_address_from_lighthouse_registry(path: &str) -> Option<String> {
+    let registry = crate::nebula::lighthouse::LighthouseRegistry::load(path).ok()?;
+    registry
+        .lighthouses
+        .iter()
+        .find(|entry| entry.node_name == "nodeA" && entry.is_lighthouse)
+        .and_then(|entry| host_from_endpoint(&entry.physical_endpoint))
+        .or_else(|| {
+            registry
+                .primary_physical_endpoint()
+                .and_then(|endpoint| host_from_endpoint(&endpoint))
+        })
+}
+
+/// Resolves the CA/lighthouse LAN host using the safest runtime hints first.
+///
+/// Priority:
+/// 1. `SGX_LIGHTHOUSE_IP`, when explicitly provided.
+/// 2. The learned lighthouse registry.
+/// 3. The existing config-file polling fallback.
+pub async fn resolve_ca_ip_for_runtime() -> String {
+    if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
+        if is_usable_ca_address(&env_ip) {
+            return env_ip;
+        }
+    }
+
+    if let Some(ip) =
+        ca_address_from_lighthouse_registry(crate::nebula::registry_sync::LIGHTHOUSE_REGISTRY_PATH)
+    {
+        return ip;
+    }
+
+    resolve_ca_ip_from_config().await
+}
+
 /// Polls for the CA's LAN address, falling back to loopback once the attempts
 /// are exhausted.
 pub async fn resolve_ca_ip(paths: &GuardianPaths, attempts: u32, retry_delay: Duration) -> String {

@@ -230,6 +230,68 @@ impl DkpManager {
         })
     }
 
+    /// Load the currently active DKP without provisioning, repairing, or
+    /// rotating anything. Unlike `init`, a confirmed-absent or unreachable
+    /// slot is always an error here — never a trigger to quarantine metadata
+    /// and generate a new key. Callers that must sign with an
+    /// already-provisioned identity (e.g. baseline creation) should use this
+    /// instead of `init`, so a transient SE050 hiccup or missing metadata
+    /// can never silently change the device's signing key.
+    pub fn load_active(config: &SeConfig, base_path: &str) -> Result<Self, SeError> {
+        let metadata_path = format!("{}/keys/dkp_metadata.json", base_path);
+        let public_key_path = format!("{}/keys/dkp_pub.der", base_path);
+
+        let history = DkpKeyHistory::load(&metadata_path).map_err(|e| {
+            SeError::KeyError(format!(
+                "No active DKP metadata at {}: {}",
+                metadata_path, e
+            ))
+        })?;
+        let active = history
+            .active_key()
+            .ok_or_else(|| SeError::KeyError("DKP metadata has no active key".into()))?;
+        let slot_hex = active.key_id.clone();
+        let version = active.version;
+
+        match probe_slot_with_retry(config, &slot_hex, 4) {
+            Some(true) => {}
+            Some(false) => {
+                return Err(SeError::KeyError(format!(
+                    "DKP metadata references slot {} but SE050 confirms it is absent — \
+                     refusing to sign with baseline creation; run key provisioning/repair explicitly",
+                    slot_hex
+                )));
+            }
+            None => {
+                return Err(SeError::KeyError(format!(
+                    "Could not reach SE050 to confirm active DKP slot {} is present — \
+                     refusing to sign",
+                    slot_hex
+                )));
+            }
+        }
+
+        if !Path::new(&public_key_path)
+            .metadata()
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+        {
+            return Err(SeError::KeyError(format!(
+                "Active DKP public key missing or empty at {}",
+                public_key_path
+            )));
+        }
+
+        info!("Active DKP confirmed: {} (v{})", slot_hex, version);
+
+        Ok(Self {
+            history,
+            metadata_path,
+            public_key_path,
+            config: config.clone(),
+        })
+    }
+
     fn generate_dkp(config: &SeConfig, public_key_path: &str) -> Result<KeyMetadata, SeError> {
         let key_id = config.dkp_key_id_base;
         let key_id_hex = format!("0x{:08X}", key_id);

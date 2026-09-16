@@ -7,6 +7,8 @@ use std::sync::Arc;
 pub struct Peer {
     #[serde(rename = "peerId")]
     pub peer_id: String,
+    #[serde(rename = "nodeId", skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub did: Option<String>,
     pub ip: String,
@@ -118,6 +120,32 @@ async fn call_peer_online(ip: &str) -> bool {
     false
 }
 
+fn stable_node_id_for_ip(ip: &str) -> Option<String> {
+    if let Ok(registry) = crate::nebula::overlay_registry::OverlayRegistry::load(
+        crate::nebula::registry_sync::REGISTRY_PATH,
+    ) {
+        for node in ["nodeA", "nodeB", "nodeC"] {
+            if registry.get_ip(node).is_some_and(|overlay| overlay == ip) {
+                return Some(node.to_string());
+            }
+        }
+    }
+    if let Ok(registry) = crate::nebula::lighthouse::LighthouseRegistry::load(
+        crate::nebula::registry_sync::LIGHTHOUSE_REGISTRY_PATH,
+    ) {
+        for entry in registry.lighthouses {
+            if entry.overlay_ip == ip {
+                return Some(entry.node_name);
+            }
+        }
+    }
+    None
+}
+
+fn socket_like_peer_id(value: &str) -> bool {
+    value.parse::<std::net::SocketAddr>().is_ok()
+}
+
 pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>, ApiError> {
     let text = match safe_read("trusted_peers.json", &s.log_dir_primary).await {
         Some(t) => t,
@@ -186,7 +214,17 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>,
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string();
-            (peer_id != s.node_id).then_some((v, peer_id))
+            let ip = v.get("ip").and_then(|x| x.as_str()).unwrap_or("");
+            let inferred_node_id = v
+                .get("node_id")
+                .or_else(|| v.get("nodeId"))
+                .and_then(|x| x.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .or_else(|| stable_node_id_for_ip(ip));
+            (peer_id != s.node_id && inferred_node_id.as_deref() != Some(s.node_id.as_str()))
+                .then_some((v, peer_id))
         })
         .collect();
     let peers: Vec<Peer> =
@@ -202,6 +240,19 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>,
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string();
+            let node_id = v
+                .get("node_id")
+                .or_else(|| v.get("nodeId"))
+                .and_then(|x| x.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .or_else(|| stable_node_id_for_ip(&ip));
+            let peer_id = if socket_like_peer_id(&peer_id) {
+                node_id.clone().unwrap_or(peer_id)
+            } else {
+                peer_id
+            };
             let status = v
                 .get("status")
                 .and_then(|x| x.as_str())
@@ -231,6 +282,7 @@ pub async fn list(State(s): State<Arc<AppState>>) -> Result<Json<PeersResponse>,
             };
             Peer {
                 peer_id,
+                node_id,
                 did,
                 ip,
                 status,

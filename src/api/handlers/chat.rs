@@ -13,17 +13,24 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 pub(crate) fn get_grpc_addr(ip: &str, peer_id_str: &str) -> String {
-    let parsed_port = peer_id_str
-        .split(':')
-        .nth(1)
-        .and_then(|p| p.parse::<u16>().ok());
+    let route_id = stable_route_id_for_peer(ip, peer_id_str);
+    let route_id = route_id.as_deref().unwrap_or(peer_id_str);
+    let socket_like_peer_id = peer_id_str.parse::<std::net::SocketAddr>().is_ok();
+    let parsed_port = if socket_like_peer_id {
+        None
+    } else {
+        route_id
+            .split(':')
+            .nth(1)
+            .and_then(|p| p.parse::<u16>().ok())
+    };
 
     let chat_port = match parsed_port {
         Some(port) if (50051..=50099).contains(&port) => port + 200,
         Some(port) if (50151..=50199).contains(&port) => port + 100,
         Some(port) if (50251..=50299).contains(&port) => port,
         Some(port) => port + 100,
-        None => match peer_id_str {
+        None => match route_id {
             "nodeA" => 50251,
             "nodeB" => 50252,
             "nodeC" => 50253,
@@ -45,6 +52,32 @@ pub(crate) fn get_grpc_addr(ip: &str, peer_id_str: &str) -> String {
         },
     };
     format!("{}:{}", ip, chat_port)
+}
+
+fn stable_route_id_for_peer(ip: &str, peer_id: &str) -> Option<String> {
+    let peer_id_trimmed = peer_id.trim();
+    if matches!(peer_id_trimmed, "nodeA" | "nodeB" | "nodeC") {
+        return Some(peer_id_trimmed.to_string());
+    }
+    if let Ok(registry) = crate::nebula::overlay_registry::OverlayRegistry::load(
+        crate::nebula::registry_sync::REGISTRY_PATH,
+    ) {
+        for node in ["nodeA", "nodeB", "nodeC"] {
+            if registry.get_ip(node).is_some_and(|overlay| overlay == ip) {
+                return Some(node.to_string());
+            }
+        }
+    }
+    if let Ok(registry) = crate::nebula::lighthouse::LighthouseRegistry::load(
+        crate::nebula::registry_sync::LIGHTHOUSE_REGISTRY_PATH,
+    ) {
+        for entry in registry.lighthouses {
+            if entry.overlay_ip == ip {
+                return Some(entry.node_name);
+            }
+        }
+    }
+    None
 }
 
 /// A peer registry entry counts as trusted enough to chat with. Mirrors
@@ -159,6 +192,37 @@ pub(crate) fn peer_matches_identity(
         || node_hint.is_some_and(|hint| {
             route_id.eq_ignore_ascii_case(hint) || peer_id.eq_ignore_ascii_case(hint)
         })
+}
+
+fn select_chat_target_peer<'a>(
+    peers: impl Iterator<Item = &'a serde_json::Value>,
+    did: &str,
+    node_hint: Option<&str>,
+    local_ip: Option<&str>,
+) -> Option<&'a serde_json::Value> {
+    let matching: Vec<_> = peers
+        .filter(|peer| {
+            is_trusted_status(peer.get("status").and_then(|value| value.as_str()))
+                && peer_matches_identity(peer, did, node_hint)
+        })
+        .collect();
+    let usable = |peer: &&serde_json::Value| {
+        peer.get("ip")
+            .and_then(|value| value.as_str())
+            .is_some_and(|ip| ip.parse::<std::net::IpAddr>().is_ok() && Some(ip) != local_ip)
+    };
+    let exact_did = |peer: &&serde_json::Value| {
+        peer.get("did")
+            .and_then(|value| value.as_str())
+            .is_some_and(|peer_did| peer_did.eq_ignore_ascii_case(did))
+    };
+    matching
+        .iter()
+        .copied()
+        .find(|peer| exact_did(peer) && usable(peer))
+        .or_else(|| matching.iter().copied().find(usable))
+        .or_else(|| matching.iter().copied().find(exact_did))
+        .or_else(|| matching.into_iter().next())
 }
 
 /// Returns the local Nebula overlay IP (from the `nebula0` interface), or None if not found.
@@ -324,6 +388,11 @@ pub async fn send_message(
     }
     let sender_did = crate::api::handlers::browser_member::did_from_session(&session)
         .unwrap_or_else(|| state.device_did.clone());
+    if sender_did == state.device_did && local_guardian_did_deactivated()? {
+        return Err(ApiError::Forbidden(
+            "DID is deactivated. Reactivate this Guardian DID before sending messages.".to_string(),
+        ));
+    }
     let sender_label = resolve_actor_label(&state, &sender_did).await;
 
     // Chat attachments are Vault records uploaded before the destination is
@@ -431,7 +500,7 @@ pub async fn send_message(
         serde_json::from_str(&pernode_json).unwrap_or_default();
 
     // Merge per-node entries: add any peer whose DID is not already in global list.
-    for p in pernode_peers {
+    for p in &pernode_peers {
         let p_did = p
             .get("did")
             .and_then(|v| v.as_str())
@@ -444,7 +513,7 @@ pub async fn send_message(
             .iter()
             .any(|g| g.get("did").and_then(|v| v.as_str()).unwrap_or("") == p_did.as_str());
         if !already {
-            global_peers.push(p);
+            global_peers.push(p.clone());
         }
     }
     let raw_peers = global_peers;
@@ -553,11 +622,16 @@ pub async fn send_message(
         // P2P Chat: Find the specific trusted peer.
         // Match by full DID string OR by the base58 key suffix OR by peer_id.
         let recipient_node_hint = member_node_hint_for_did(&state, &req.recipient_did);
-        let target_peer = raw_peers.iter().find(|p| {
-            let status = p.get("status").and_then(|v| v.as_str());
-            is_trusted_status(status)
-                && peer_matches_identity(p, &req.recipient_did, recipient_node_hint.as_deref())
-        });
+        let local_overlay_ip = get_local_nebula_ip();
+        // The merged file may hold an older address for a DID that has a
+        // correct entry in the per-node file. Consult both and choose a
+        // routable, non-local entry before reporting the stale one.
+        let target_peer = select_chat_target_peer(
+            raw_peers.iter().chain(pernode_peers.iter()),
+            &req.recipient_did,
+            recipient_node_hint.as_deref(),
+            local_overlay_ip.as_deref(),
+        );
 
         if let Some(peer) = target_peer {
             let ip_str = peer
@@ -567,7 +641,6 @@ pub async fn send_message(
 
             // Guard: never route to our own overlay IP — that means the registry
             // has a stale entry where the peer's DID was saved with our own IP.
-            let local_overlay_ip = get_local_nebula_ip();
             if let Some(ref local_ip) = local_overlay_ip {
                 if ip_str == local_ip.as_str() {
                     eprintln!(
@@ -835,6 +908,14 @@ pub async fn send_message(
     }))
 }
 
+fn local_guardian_did_deactivated() -> Result<bool, ApiError> {
+    let did_path = std::env::var("SGX_GUARDIAN_DID_PATH")
+        .unwrap_or_else(|_| crate::did::DEFAULT_DID_PATH.to_string());
+    let record = crate::did::DidRecord::load(&did_path)
+        .map_err(|error| ApiError::Internal(format!("Failed to load local DID status: {error}")))?;
+    Ok(record.deactivated_at.is_some())
+}
+
 #[derive(Deserialize)]
 pub struct TypingRequest {
     pub recipient_did: String,
@@ -857,6 +938,11 @@ pub async fn typing(
 ) -> Result<Json<TypingResponse>, ApiError> {
     let sender_did = crate::api::handlers::browser_member::did_from_session(&session)
         .unwrap_or_else(|| state.device_did.clone());
+    if sender_did == state.device_did && local_guardian_did_deactivated()? {
+        return Err(ApiError::Forbidden(
+            "DID is deactivated. Reactivate this Guardian DID before sending messages.".to_string(),
+        ));
+    }
 
     let hide_typing = match session.as_ref() {
         Some(Extension(authed)) => state
@@ -1020,6 +1106,7 @@ pub async fn mark_as_read(
                 reader_did: reader_did.clone(),
                 timestamp,
                 group_id: req.group_id.clone().unwrap_or_default(),
+                reader_node_id: state.node_id.clone(),
             };
 
             let peer_did = req.original_sender_did.clone();
@@ -1464,6 +1551,28 @@ mod tests {
             "did:guardian:z6MkRealDeviceDid",
             Some("nodeA"),
         ));
+    }
+
+    #[test]
+    fn chat_uses_fresh_per_node_address_when_global_entry_points_to_self() {
+        let did = "did:guardian:nodeB-did";
+        let peers = [
+            serde_json::json!({"did": did, "ip": "192.168.100.1", "status": "verified"}),
+            serde_json::json!({"did": did, "ip": "192.168.100.2", "status": "verified"}),
+        ];
+        let selected =
+            select_chat_target_peer(peers.iter(), did, Some("nodeB"), Some("192.168.100.1"))
+                .expect("fresh peer address");
+        assert_eq!(selected["ip"], "192.168.100.2");
+    }
+
+    #[test]
+    fn chat_does_not_choose_local_address_when_only_stale_entry_exists() {
+        let did = "did:guardian:nodeB-did";
+        let peers = [serde_json::json!({"did": did, "ip": "192.168.100.1", "status": "verified"})];
+        let selected = select_chat_target_peer(peers.iter(), did, None, Some("192.168.100.1"))
+            .expect("stale peer is reported to caller");
+        assert_eq!(selected["ip"], "192.168.100.1");
     }
 
     /// `session: None` (the admin/device-level caller) short-circuits every

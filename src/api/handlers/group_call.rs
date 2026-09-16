@@ -163,6 +163,14 @@ async fn trusted_group_peers(state: &AppState) -> Result<Vec<TrustedGroupPeer>, 
     Ok(vec![])
 }
 
+fn local_guardian_did_deactivated() -> Result<bool, String> {
+    let did_path = std::env::var("SGX_GUARDIAN_DID_PATH")
+        .unwrap_or_else(|_| crate::did::DEFAULT_DID_PATH.to_string());
+    let record = crate::did::DidRecord::load(&did_path)
+        .map_err(|error| format!("Failed to load local DID status: {error}"))?;
+    Ok(record.deactivated_at.is_some())
+}
+
 pub async fn create(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -193,6 +201,18 @@ pub async fn create(
         return error(StatusCode::CONFLICT, "Another call is already active");
     }
     let actor_id = browser_call_actor_id(&state, &session);
+    if actor_id == state.node_id {
+        match local_guardian_did_deactivated() {
+            Ok(true) => {
+                return error(
+                    StatusCode::FORBIDDEN,
+                    "DID is deactivated. Reactivate this Guardian DID before starting calls.",
+                );
+            }
+            Ok(false) => {}
+            Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+        }
+    }
     let virtual_id = match local_virtual_id_for_actor(&state, &actor_id) {
         Ok(value) => value,
         Err(error_value) => return error(StatusCode::SERVICE_UNAVAILABLE, error_value.error),
@@ -510,6 +530,18 @@ pub async fn join(
             StatusCode::CONFLICT,
             "End the current one-to-one call before joining a group",
         );
+    }
+    if actor_id == state.node_id {
+        match local_guardian_did_deactivated() {
+            Ok(true) => {
+                return error(
+                    StatusCode::FORBIDDEN,
+                    "DID is deactivated. Reactivate this Guardian DID before joining calls.",
+                );
+            }
+            Ok(false) => {}
+            Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+        }
     }
     let nebula_ip = match local_nebula_ip(&state).await {
         Ok(ip) => ip,

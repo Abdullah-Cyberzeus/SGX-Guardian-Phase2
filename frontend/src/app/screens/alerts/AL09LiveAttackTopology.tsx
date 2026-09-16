@@ -358,7 +358,7 @@ function AttackLog({ history, activeCount }: { history: SimAttack[]; activeCount
   );
 }
 
-export function AL09LiveAttackTopology() {
+export function AL09LiveAttackTopology({ allowDemo = false }: { allowDemo?: boolean }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const groupRef = useRef<SVGGElement | null>(null);
   const meshRef = useRef<SVGGElement | null>(null);
@@ -378,6 +378,7 @@ export function AL09LiveAttackTopology() {
   const statusQuery = useThreatStatus();
   const liveAlerts = alertsQuery.data ?? [];
   const guardianActive = statusQuery.data?.suricata?.toLowerCase() === "active";
+  const hasLiveSensorData = liveAlerts.some(isModbusSensorAlert);
 
   const addAttack = useCallback((alert: ThreatAlert, isDemo = false) => {
     const context = getModbusAlertContext(alert);
@@ -459,7 +460,7 @@ export function AL09LiveAttackTopology() {
   }, [addAttack, liveAlerts, mode, playing]);
 
   useEffect(() => {
-    if (mode !== "demo" || !playing) return;
+    if (!allowDemo || mode !== "demo" || !playing) return;
     const run = () => {
       const scenario = MODBUS_SCENARIOS[demoIndex.current % MODBUS_SCENARIOS.length];
       demoIndex.current += 1;
@@ -468,7 +469,7 @@ export function AL09LiveAttackTopology() {
     run();
     const interval = window.setInterval(run, 2400);
     return () => window.clearInterval(interval);
-  }, [addAttack, mode, playing]);
+  }, [addAttack, allowDemo, mode, playing]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -517,7 +518,13 @@ export function AL09LiveAttackTopology() {
     void statusQuery.refetch();
   };
 
-  const latestSourceIp = history[0]?.alert.src_ip ?? NODE_B.ip;
+  useEffect(() => {
+    if (!allowDemo && mode === "demo") setMode("live");
+  }, [allowDemo, mode]);
+
+  if (!allowDemo && !alertsQuery.loading && !hasLiveSensorData) return null;
+
+  const latestSourceIp = history[0]?.alert.src_ip ?? "waiting";
   const stageClass = `topo-stage alerts-modbus-stage${fullscreen ? " is-alert-fullscreen" : ""}`;
 
   const stage = (
@@ -530,7 +537,7 @@ export function AL09LiveAttackTopology() {
           <ShieldAlert size={16} />
           <div>
             <div className="modbus-hud-eyebrow">MODBUS TCP SENSOR DETECTION</div>
-            <div className="modbus-hud-title">Node B attacking Node A and virtual sensors</div>
+            <div className="modbus-hud-title">Live sensor attack telemetry</div>
           </div>
         </div>
         <div className="modbus-hud-stats">
@@ -543,8 +550,8 @@ export function AL09LiveAttackTopology() {
 
       <div className="topo-toolbar modbus-toolbar" onClick={(event) => event.stopPropagation()}>
         <button title={playing ? "Pause attacks" : "Play attacks"} onClick={() => setPlaying((value) => !value)} aria-label={playing ? "Pause attacks" : "Play attacks"}>{playing ? <Pause size={14} /> : <Play size={14} />}</button>
-        <button title="Live API mode" className={mode === "live" ? "is-active" : ""} onClick={() => setMode("live")} aria-label="Live API mode">API</button>
-        <button title="Demo attack stream" className={mode === "demo" ? "is-active" : ""} onClick={() => setMode("demo")} aria-label="Demo attack stream">SIM</button>
+        {allowDemo && <button title="Live API mode" className={mode === "live" ? "is-active" : ""} onClick={() => setMode("live")} aria-label="Live API mode">API</button>}
+        {allowDemo && <button title="Demo attack stream" className={mode === "demo" ? "is-active" : ""} onClick={() => setMode("demo")} aria-label="Demo attack stream">SIM</button>}
         <button title="Refresh APIs" onClick={refreshApis} aria-label="Refresh APIs"><RefreshCw size={14} /></button>
         <button title="Zoom in" onClick={() => zoomBy(1.18)} aria-label="Zoom in"><ZoomIn size={14} /></button>
         <button title="Zoom out" onClick={() => zoomBy(1 / 1.18)} aria-label="Zoom out"><ZoomOut size={14} /></button>
@@ -569,7 +576,7 @@ export function AL09LiveAttackTopology() {
           <g className="modbus-zone-labels">
             <text x="170" y="96">ATTACKER ZONE</text>
             <text x="555" y="96">SERVER + IDS</text>
-            <text x="906" y="96">VIRTUAL SENSOR MESH</text>
+            <text x="906" y="96">SENSOR MESH</text>
           </g>
           <g ref={meshRef} className="gxmesh modbus-d3-mesh" />
           <g className="modbus-attack-layer">{activeAttacks.map((attack) => <AttackBeam key={attack.id} attack={attack} />)}</g>

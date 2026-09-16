@@ -192,6 +192,7 @@ pub async fn send(
                     record.size_plain, config.max_file_bytes
                 )));
             }
+            crate::api::handlers::vault::ensure_downloadable(&record)?;
             if is_local_recipient {
                 let cloned = crate::vault::ingest::clone_for_local_recipient(&record, peer_did)
                     .await
@@ -503,7 +504,9 @@ fn map_xfer_error(error: XferError) -> ApiError {
         XferError::FileTooLarge { size, max } => {
             ApiError::PayloadTooLarge(format!("file too large: {} > {}", size, max))
         }
-        XferError::RevokedPeer(message) => ApiError::Forbidden(message),
+        XferError::RevokedPeer(message) | XferError::SourceUnavailable(message) => {
+            ApiError::Forbidden(message)
+        }
         XferError::Conflict(message) | XferError::Cancelled(message) => ApiError::Conflict(message),
         XferError::HashMismatch { .. } | XferError::CircleMismatch { .. } => {
             ApiError::Conflict(error.to_string())

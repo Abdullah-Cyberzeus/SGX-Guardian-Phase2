@@ -1,5 +1,6 @@
 use base64::Engine as _;
 use clap::Subcommand;
+use serde::{Deserialize, Serialize};
 use sgx_guardian_client::key_manager::KeyManager;
 use sgx_guardian_client::secure_element::pcr::{
     canonical_baseline_signing_payload, signature_format, verify_baseline_signature_bytes,
@@ -14,6 +15,23 @@ const KEY_DIR_ENV: &str = "SGX_GUARDIAN_DEVICE_KEY_DIR";
 const DEFAULT_KEY_DIR: &str = "/var/lib/sgx-guardian/sgx-agent";
 const SE_BASE_PATH: &str = "/var/lib/sgx-guardian";
 const DKP_METADATA_PATH: &str = "/var/lib/sgx-guardian/keys/dkp_metadata.json";
+const BASELINE_HISTORY_PATH: &str = "/var/log/sgx-guardian/pcr_baseline_history.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BaselineHistoryEntry {
+    event_type: String,
+    action: String,
+    timestamp: String,
+    node: String,
+    baseline_id: String,
+    hash: String,
+    previous_hash: Option<String>,
+    registers: Vec<String>,
+    key_version: u32,
+    schema_version: u8,
+    signing_backend: Option<String>,
+    signature_format: Option<String>,
+}
 
 fn find_pcr_snapshot() -> Option<(String, String)> {
     if let Ok(entries) = std::fs::read_dir(PCR_DIR) {
@@ -121,11 +139,22 @@ pub fn run_create() {
     };
 
     let bl_path = baseline_path_for(&node_id);
+    let previous_baseline = PcrBaseline::load(&bl_path).ok();
     if let Some(parent) = Path::new(&bl_path).parent() {
         let _ = fs::create_dir_all(parent);
     }
     match baseline.save(&bl_path) {
         Ok(_) => {
+            let action = if previous_baseline.is_some() {
+                "updated"
+            } else {
+                "created"
+            };
+            if let Err(e) =
+                append_baseline_history(&node_id, &baseline, previous_baseline.as_ref(), action)
+            {
+                eprintln!("  ⚠️ Baseline history save failed: {}", e);
+            }
             println!("✅ Baseline created and SIGNED at {}", bl_path);
             println!("   Signing backend: {}", signer.backend_display());
             println!("   Device UID: [redacted]");
@@ -137,6 +166,46 @@ pub fn run_create() {
         }
         Err(e) => eprintln!("Write error: {}", e),
     };
+}
+
+fn append_baseline_history(
+    node_id: &str,
+    baseline: &PcrBaseline,
+    previous_baseline: Option<&PcrBaseline>,
+    action: &str,
+) -> anyhow::Result<()> {
+    let entry = BaselineHistoryEntry {
+        event_type: "baseline".to_string(),
+        action: action.to_string(),
+        timestamp: baseline.created_at.clone(),
+        node: node_id.to_string(),
+        baseline_id: format!("pcr-{}-baseline", node_id),
+        hash: baseline.composite_digest.clone(),
+        previous_hash: previous_baseline.map(|baseline| baseline.composite_digest.clone()),
+        registers: baseline.pcr_values.clone(),
+        key_version: baseline.key_version,
+        schema_version: baseline.schema_version,
+        signing_backend: baseline.signing_backend.clone(),
+        signature_format: baseline.signature_format.clone(),
+    };
+
+    let mut entries: Vec<BaselineHistoryEntry> = fs::read_to_string(BASELINE_HISTORY_PATH)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    entries.push(entry);
+    if entries.len() > 100 {
+        entries.drain(0..entries.len() - 100);
+    }
+
+    if let Some(parent) = Path::new(BASELINE_HISTORY_PATH).parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(
+        BASELINE_HISTORY_PATH,
+        serde_json::to_string_pretty(&entries)?,
+    )?;
+    Ok(())
 }
 
 pub fn run_verify() {
@@ -322,49 +391,48 @@ fn create_signed_baseline(
     })
 }
 
+/// Resolve the signer for baseline creation/verification using only an
+/// already-provisioned key. This deliberately never calls a key-manager
+/// `init_*`/`load_or_generate` path: those can repair DKP metadata, rotate
+/// keys, or provision a brand-new SE050/TPM/software key, any of which would
+/// silently change the device's signing identity as a side effect of what
+/// should be a read-only "create a baseline" action. Key generation,
+/// metadata repair, and key rotation remain separate operations that require
+/// explicit confirmation (see the key/DKP management commands).
 fn load_active_baseline_signer(node_id: &str) -> anyhow::Result<Box<dyn BaselineSigner>> {
     let key_path = device_key_path(node_id);
 
     if env_true("SGX_FORCE_SOFTWARE_KEYS") || env_true("SGX_DISABLE_SE050_DKP") {
-        return signer_from_key_manager(KeyManager::load_or_generate(&key_path)?);
+        return signer_from_key_manager(KeyManager::load_existing(&key_path)?);
     }
 
     #[cfg(feature = "tpm")]
     {
         let tpm_cfg = sgx_guardian_client::tpm::TpmConfig::default();
         if sgx_guardian_client::tpm::should_attempt(&tpm_cfg) {
-            let km = KeyManager::init_with_tpm(
-                &tpm_cfg,
-                sgx_guardian_client::tpm::TPM_BASE_PATH,
-                &key_path,
-            )
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "TPM 2.0 hardware mode selected, but active TPM DKP is unavailable: {}",
-                    e
-                )
-            })?;
+            let km = KeyManager::load_active_tpm(&tpm_cfg, sgx_guardian_client::tpm::TPM_BASE_PATH)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "TPM 2.0 hardware mode selected, but active TPM DKP is unavailable: {}",
+                        e
+                    )
+                })?;
             return signer_from_key_manager(km);
         }
     }
 
     #[cfg(feature = "secure-element")]
     {
-        let se_config = sgx_guardian_client::secure_element::config::SeConfig::default();
-        let km = KeyManager::init_with_se050(&se_config, SE_BASE_PATH, &key_path)?;
-        if km.backend_name() == "SE050" {
-            return signer_from_key_manager(km);
-        }
         if Path::new(DKP_METADATA_PATH).exists() {
-            anyhow::bail!(
-                "SE050 DKP metadata exists, but active SE050 DKP signer is unavailable; refusing software fallback"
-            );
+            let se_config = sgx_guardian_client::secure_element::config::SeConfig::default();
+            signer_from_key_manager(KeyManager::load_active_se050(&se_config, SE_BASE_PATH)?)
+        } else {
+            signer_from_key_manager(KeyManager::load_existing(&key_path)?)
         }
-        signer_from_key_manager(km)
     }
 
     #[cfg(not(feature = "secure-element"))]
-    signer_from_key_manager(KeyManager::load_or_generate(&key_path)?)
+    signer_from_key_manager(KeyManager::load_existing(&key_path)?)
 }
 
 fn signer_from_key_manager(km: KeyManager) -> anyhow::Result<Box<dyn BaselineSigner>> {
@@ -580,9 +648,44 @@ mod tests {
         std::env::set_var(KEY_DIR_ENV, key_dir.path());
         std::env::set_var("SGX_FORCE_SOFTWARE_KEYS", "1");
 
+        // Baseline creation must only ever sign with an already-provisioned
+        // key, so the key has to exist up front — provisioning it is a
+        // separate, explicit step (not something baseline creation does).
+        KeyManager::load_or_generate(&device_key_path("node-test-pcr"))
+            .expect("provision a key ahead of baseline creation");
+
         let signer = load_active_baseline_signer("node-test-pcr").expect("software signer");
         assert!(!signer.public_key().is_empty());
         assert!(signer.dkp_version() >= 1);
+
+        match key_dir_old {
+            Some(value) => std::env::set_var(KEY_DIR_ENV, value),
+            None => std::env::remove_var(KEY_DIR_ENV),
+        }
+        match force_old {
+            Some(value) => std::env::set_var("SGX_FORCE_SOFTWARE_KEYS", value),
+            None => std::env::remove_var("SGX_FORCE_SOFTWARE_KEYS"),
+        }
+    }
+
+    #[test]
+    fn load_active_baseline_signer_refuses_to_provision_a_missing_software_key() {
+        let _guard = KEY_DIR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let key_dir = tempfile::tempdir().expect("tempdir");
+        let key_dir_old = std::env::var_os(KEY_DIR_ENV);
+        let force_old = std::env::var_os("SGX_FORCE_SOFTWARE_KEYS");
+        std::env::set_var(KEY_DIR_ENV, key_dir.path());
+        std::env::set_var("SGX_FORCE_SOFTWARE_KEYS", "1");
+
+        let error = match load_active_baseline_signer("node-missing-key") {
+            Err(e) => e,
+            Ok(_) => panic!("no key provisioned yet, so baseline creation must refuse"),
+        };
+        assert!(error.to_string().contains("No identity key found"));
+        assert!(
+            !Path::new(&device_key_path("node-missing-key")).exists(),
+            "baseline creation must not have provisioned a key as a side effect"
+        );
 
         match key_dir_old {
             Some(value) => std::env::set_var(KEY_DIR_ENV, value),

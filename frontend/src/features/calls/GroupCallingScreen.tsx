@@ -43,6 +43,7 @@ export function GroupCallingScreen({ localDevice: fallbackLocalDevice }: { local
   const local = group.participants[localDevice];
   if (!local || local.state === "kicked" || local.state === "declined") return null;
   const host = group.host_device_id === localDevice;
+  const supportsVideo = group.requested_media.includes("video");
   const endOrLeave = () => (host ? endGroup() : leaveGroup()).catch(() => undefined);
   const endLabel = host ? "End call for everyone" : "Leave call";
   const displayForParticipant = (identity: string) => (
@@ -108,14 +109,14 @@ export function GroupCallingScreen({ localDevice: fallbackLocalDevice }: { local
         {muted || !local.audio_allowed ? <MicOff size={18} /> : <Mic size={18} />}
         <span>{muted || !local.audio_allowed ? "Mic off" : "Mic"}</span>
       </button>
-      <button title={!local.video_allowed ? "The host disabled your camera" : undefined} disabled={!local.video_allowed || !group.requested_media.includes("video")} onClick={toggleCamera}>
+      {supportsVideo && <button title={!local.video_allowed ? "The host disabled your camera" : undefined} disabled={!local.video_allowed} onClick={toggleCamera}>
         {cameraEnabled && local.video_allowed ? <Video size={18} /> : <VideoOff size={18} />}
         <span>{cameraEnabled && local.video_allowed ? "Camera" : "Camera off"}</span>
-      </button>
-      <button disabled={!local.video_allowed || !group.requested_media.includes("video")} onClick={() => shareScreen()}>
+      </button>}
+      {supportsVideo && <button disabled={!local.video_allowed} onClick={() => shareScreen()}>
         <MonitorUp size={18} />
         <span>Share screen</span>
-      </button>
+      </button>}
       <button
         className="end-call"
         onClick={endOrLeave}

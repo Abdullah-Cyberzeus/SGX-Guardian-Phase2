@@ -4,7 +4,7 @@ import {
   Clock, ChevronLeft, ChevronRight, ChevronDown, Trash2, Search, Shield, Archive,
   CheckSquare, Square, X, AlertTriangle, Brain, Loader2, Network,
 } from "lucide-react";
-import { useAlerts, useThreatStatus } from "../../hooks/useApiData";
+import { useAlerts, useThreatAlerts, useThreatStatus } from "../../hooks/useApiData";
 import type { ThreatStatus } from "../../services/threatService";
 import { ApiError } from "../../services/api";
 import { advisoryService, type AdvisoryRules, type RemediationRecommendation } from "../../services/advisoryService";
@@ -13,6 +13,7 @@ import { alertService, guardianAlertHeading, type Alert } from "../../services/a
 import { guardianDisplayText } from "../../utils/displayText";
 import { ThreatProtectionPanel } from "./AL08ThreatProtection";
 import { AL09LiveAttackTopology } from "./AL09LiveAttackTopology";
+import { isModbusSensorAlert } from "./attackTopologyTypes";
 import { SeverityBadge, StatusBadge } from "../../components/SeverityBadge";
 import { SkeletonBlock, SkeletonCard } from "../../components/SkeletonBlock";
 import { EmptyState } from "../../components/EmptyState";
@@ -755,13 +756,22 @@ export function AL01AlertsList() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
-  // Top-level view: alert list, live topology, and the Guardian Threat Protection panel.
+  // Top-level view: alert list, optional live topology, and the Guardian Threat Protection panel.
   const [mainView, setMainView] = useState<"list" | "topology" | "threat">("list");
 
   const { data: alertsData, loading, refetch } = useAlerts();
   // Guardian IDS status feeds the intel card + the Threat Protection tab indicator.
   const { data: threatStatus } = useThreatStatus();
+  const { data: threatAlerts } = useThreatAlerts({ limit: 1000 });
   const guardianActive = threatStatus?.suricata?.toLowerCase() === "active";
+  const hasLiveAttackTopologyData = useMemo(
+    () => (threatAlerts ?? []).some(isModbusSensorAlert),
+    [threatAlerts],
+  );
+
+  useEffect(() => {
+    if (mainView === "topology" && !hasLiveAttackTopologyData) setMainView("list");
+  }, [hasLiveAttackTopologyData, mainView]);
 
   const alerts = useMemo(() => (alertsData?.alerts ?? []) as AlertView[], [alertsData]);
 
@@ -839,11 +849,16 @@ export function AL01AlertsList() {
     onDelete: deleteAlerts,
   };
 
-  const MAIN_TABS: { key: "list" | "topology" | "threat"; label: string }[] = [
-    { key: "list", label: "Alert List" },
-    { key: "topology", label: "Live Attack Topology" },
-    { key: "threat", label: "Threat Protection" },
-  ];
+  const MAIN_TABS: { key: "list" | "topology" | "threat"; label: string }[] = hasLiveAttackTopologyData
+    ? [
+        { key: "list", label: "Alert List" },
+        { key: "topology", label: "Live Attack Topology" },
+        { key: "threat", label: "Threat Protection" },
+      ]
+    : [
+        { key: "list", label: "Alert List" },
+        { key: "threat", label: "Threat Protection" },
+      ];
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -890,7 +905,7 @@ export function AL01AlertsList() {
         </div>
       ) : mainView === "topology" ? (
         <div className="flex-1 min-h-0">
-          <AL09LiveAttackTopology />
+          <AL09LiveAttackTopology allowDemo={false} />
         </div>
       ) : (
       <div className="flex-1 min-h-0">

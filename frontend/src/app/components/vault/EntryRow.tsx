@@ -10,6 +10,8 @@ interface EntryRowProps {
   entry: BrowserEntry;
   /** Highlighted as the open file in the desktop split view. */
   active?: boolean;
+  /** Use the compact row shape when a side detail panel is open. */
+  compact?: boolean;
   onOpen: () => void;
   onToggleStar?: () => void;
   onFolderActions?: () => void;
@@ -22,7 +24,7 @@ function folderIcon(folder: VaultFolder) {
 }
 
 /** One Drive-style row — a folder or a file. Used inside the virtualized list. */
-export function EntryRow({ entry, active, onOpen, onToggleStar, onFolderActions }: EntryRowProps) {
+export function EntryRow({ entry, active, compact = false, onOpen, onToggleStar, onFolderActions }: EntryRowProps) {
   const isFolder = entry.type === "folder";
 
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -95,7 +97,7 @@ export function EntryRow({ entry, active, onOpen, onToggleStar, onFolderActions 
           {name}
         </p>
         <p
-          className="truncate md:hidden"
+          className={compact ? "truncate" : "truncate lg:hidden"}
           style={{
             fontFamily: "Inter, sans-serif",
             fontSize: "var(--text-xs)",
@@ -108,7 +110,7 @@ export function EntryRow({ entry, active, onOpen, onToggleStar, onFolderActions 
 
       {/* Owner — tablet+ */}
       <span
-        className="hidden w-28 flex-shrink-0 truncate md:block"
+        className={compact ? "hidden" : "hidden w-28 flex-shrink-0 truncate lg:block"}
         style={{
           fontFamily: "Inter, sans-serif",
           fontSize: "var(--text-xs)",
@@ -120,7 +122,7 @@ export function EntryRow({ entry, active, onOpen, onToggleStar, onFolderActions 
 
       {/* Modified — desktop */}
       <span
-        className="hidden w-32 flex-shrink-0 truncate lg:block"
+        className={compact ? "hidden" : "hidden w-32 flex-shrink-0 truncate xl:block"}
         style={{
           fontFamily: "Inter, sans-serif",
           fontSize: "var(--text-xs)",
@@ -132,7 +134,7 @@ export function EntryRow({ entry, active, onOpen, onToggleStar, onFolderActions 
 
       {/* Size / item count — tablet+ */}
       <span
-        className="hidden w-24 flex-shrink-0 text-right md:block"
+        className={compact ? "hidden" : "hidden w-24 flex-shrink-0 text-right lg:block"}
         style={{
           fontFamily: "Inter, sans-serif",
           fontSize: "var(--text-xs)",

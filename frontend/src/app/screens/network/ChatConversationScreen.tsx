@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { PageHeader } from "../../components/PageHeader";
 import { AttachmentMenu } from "../../components/circle/AttachmentMenu";
 import { MessageAttachment } from "../../components/circle/MessageAttachment";
-import { useCircles, useCommunicationPeers, useGuardianInfo } from "../../hooks/useApiData";
+import { useCircles, useCommunicationPeers, useDIDStatus, useGuardianInfo } from "../../hooks/useApiData";
 import { didService } from "../../services/didService";
 import chatService, { openChatSocket, parseChatPayload, type ChatMessageRecord } from "../../services/chatService";
 import { useCall } from "../../../features/calls/CallContext";
@@ -95,6 +95,10 @@ function circleMemberDisplayName(member: Partial<CircleMember>, fallback = "Circ
 
 function circleMemberRoleLabel(member: Partial<CircleMember>) {
   return String(member.role || "").toLowerCase() === "owner" ? "Admin" : (member.role || "member");
+}
+
+function sameDid(left?: string, right?: string) {
+  return Boolean(left && right && left.trim().toLowerCase() === right.trim().toLowerCase());
 }
 
 function peerIsOnline(peer?: Partial<Peer> | null) {
@@ -269,13 +273,15 @@ function CircleMembersSheet({
   const rowsForMember = (member: CircleMember) => {
     const peer = peerForMember(member);
     const browserMember = String(member.memberType || (member as any).member_type || "").toLowerCase() === "browser";
+    const isLocalMember = sameDid(member.did, currentDid);
+    const isOwnerMember = sameDid(member.did, ownerDid);
     return [
       { label: "Name", value: circleMemberDisplayName(member) },
       { label: "Role", value: circleMemberRoleLabel(member) },
       { label: "DID", value: member.did, mono: true },
       {
         label: "IP Address",
-        value: peer?.ip || member.overlayIp || member.physicalIp || (member.did && member.did === ownerDid ? adminIp : undefined) || (browserMember && member.did ? syntheticBrowserMemberIp(member.did) : "Hidden"),
+        value: peer?.ip || member.overlayIp || member.physicalIp || (isOwnerMember || isLocalMember ? adminIp : undefined) || (browserMember && member.did ? syntheticBrowserMemberIp(member.did) : "Hidden"),
         mono: true,
       },
       { label: "Member Type", value: member.memberType || (member as any).member_type || peer?.memberType || "guardian" },
@@ -304,7 +310,7 @@ function CircleMembersSheet({
               {members.map((member) => {
                 const id = String(member.did || member.id || circleMemberDisplayName(member));
                 const selected = selectedMemberId === id;
-                const isCurrent = currentDid && member.did === currentDid;
+                const isCurrent = sameDid(member.did, currentDid);
                 return (
                   <div key={id} className="overflow-hidden rounded-lg border border-border bg-background">
                     <button
@@ -352,6 +358,7 @@ export function ChatConversationScreen() {
   const [searchParams] = useSearchParams();
   const { data: circlesData, loading: circlesLoading } = useCircles();
   const { data: peersData, loading: peersLoading, error: peersError } = useCommunicationPeers();
+  const { data: didStatus } = useDIDStatus();
   const { data: guardianInfo } = useGuardianInfo();
   const circle = (Array.isArray(circlesData) ? circlesData : []).find((item: any) => item.id === circleId);
   const member = circle?.members?.find((item: any) => item.did === peerDid);
@@ -391,6 +398,7 @@ export function ChatConversationScreen() {
   const [savingContact, setSavingContact] = useState(false);
   const [queuedMessageIds, setQueuedMessageIds] = useState<Set<string>>(new Set());
   const [queuedMessages, setQueuedMessages] = useState<Map<string, { state: string; lastError?: string }>>(new Map());
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLInputElement>(null);
   const recordsRef = useRef<ChatMessageRecord[]>(records);
@@ -410,6 +418,8 @@ export function ChatConversationScreen() {
   const typingSendTimeoutRef = useRef<number | undefined>(undefined);
   const isTypingSentRef = useRef(false);
   const openedFromChats = isGroup && searchParams.get("from") === "chats";
+  const communicationDisabled = !isMemberRole(session?.user.role) && didStatus?.status === "deactivated";
+  const communicationDisabledMessage = "Reactivate this Guardian DID before sending messages or starting calls.";
 
   const circleMembers = useMemo(() => Array.isArray(circle?.members) ? circle.members : [], [circle?.members]);
   const nodeIdsForMember = useCallback((circleMember: any) => {
@@ -432,7 +442,10 @@ export function ChatConversationScreen() {
     if (String(circleMember?.memberType || circleMember?.member_type || "").toLowerCase() === "browser") return undefined;
     const candidates = nodeIdsForMember(circleMember);
     const explicitNodeMatch = candidates.length
-      ? (Array.isArray(peersData) ? peersData : []).find((candidate: any) => candidates.includes(String(candidate.peerId || "").trim().toLowerCase()))
+      ? (Array.isArray(peersData) ? peersData : []).find((candidate: any) =>
+          candidates.includes(String(candidate.peerId || "").trim().toLowerCase())
+          || candidates.includes(String(candidate.nodeId || "").trim().toLowerCase())
+        )
       : undefined;
     if (explicitNodeMatch) return explicitNodeMatch;
     const memberDid = String(circleMember?.did || "").trim().toLowerCase();
@@ -637,9 +650,22 @@ export function ChatConversationScreen() {
       close();
     };
   }, [loadHistory, isGroup, circleId, peerDid, localDid]);
+  const scrollMessagesToBottom = useCallback(() => {
+    const container = messagesScrollRef.current;
+    if (!container) {
+      bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end", inline: "nearest" });
+      return;
+    }
+    const scroll = () => {
+      container.scrollTop = container.scrollHeight;
+    };
+    scroll();
+    window.requestAnimationFrame(scroll);
+  }, []);
+
   useLayoutEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end", inline: "nearest" });
-  }, [records, circleId, peerDid]);
+    scrollMessagesToBottom();
+  }, [scrollMessagesToBottom, records.length, loading, circleId, peerDid]);
 
   useEffect(() => { recordsRef.current = records; }, [records]);
 
@@ -702,13 +728,14 @@ export function ChatConversationScreen() {
 
   const sendTypingSignal = useCallback((isTyping: boolean) => {
     if ((isGroup && !circleId) || (!isGroup && !peerDid)) return;
+    if (communicationDisabled) return;
     if (isTypingSentRef.current === isTyping) return;
     isTypingSentRef.current = isTyping;
     const recipientId = isGroup ? circleId! : peerDid!;
     void chatService.setTyping(recipientId, isGroup, isTyping).catch(() => {
       // Best-effort: the receiver clears a dropped typing signal after a timeout.
     });
-  }, [isGroup, circleId, peerDid]);
+  }, [communicationDisabled, isGroup, circleId, peerDid]);
 
   const handleComposerChange = useCallback((value: string) => {
     setMessage(value);
@@ -728,6 +755,10 @@ export function ChatConversationScreen() {
 
   const send = async (content: string | null, attachmentId: string | null = null) => {
     if ((isGroup && !circleId) || (!isGroup && !peerDid) || (!content?.trim() && !attachmentId)) return;
+    if (communicationDisabled) {
+      toast.error("DID is deactivated", { description: communicationDisabledMessage });
+      return;
+    }
     setSending(true);
     const sentContent = content?.trim() || null;
     const recipientId = isGroup ? circleId! : peerDid!;
@@ -825,6 +856,10 @@ export function ChatConversationScreen() {
   };
 
   const attach = async (file: File) => {
+    if (communicationDisabled) {
+      toast.error("DID is deactivated", { description: communicationDisabledMessage });
+      return;
+    }
     setSending(true);
     setUploadProgress(0);
     try {
@@ -868,6 +903,10 @@ export function ChatConversationScreen() {
 
   const callPeer = async (media: MediaType[]) => {
     if (isGroup || !peerDid) return;
+    if (communicationDisabled) {
+      toast.error("DID is deactivated", { description: communicationDisabledMessage });
+      return;
+    }
     if (call || group) {
       toast.error("Guardian is busy", { description: "End or leave the current call before starting another." });
       return;
@@ -900,6 +939,10 @@ export function ChatConversationScreen() {
 
   const callGroup = async (media: MediaType[]) => {
     if (!isGroup || !circleId) return;
+    if (communicationDisabled) {
+      toast.error("DID is deactivated", { description: communicationDisabledMessage });
+      return;
+    }
     if (call || group) {
       toast.error("Guardian is busy", { description: "End or leave the current call before starting another." });
       return;
@@ -982,11 +1025,11 @@ export function ChatConversationScreen() {
       <PageHeader showBack={paneMode === "standalone"} title={title} subtitle={subtitle} onBack={() => navigate(isGroup ? (openedFromChats ? "/chats" : `/network/${circleId}?tab=members`) : "/chats")} right={
         <div className="flex items-center gap-1">
           {isGroup ? <>
-            <button aria-label={`Voice call ${title}`} title={canStartGroupCall ? "Voice call Circle" : "No callable Circle members"} disabled={startingCall !== null || !canStartGroupCall} onClick={() => void callGroup(["audio"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "audio" ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} />}</button>
-            <button aria-label={`Video call ${title}`} title={canStartGroupCall ? "Video call Circle" : "No callable Circle members"} disabled={startingCall !== null || !canStartGroupCall} onClick={() => void callGroup(["audio", "video"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "video" ? <Loader2 size={18} className="animate-spin" /> : <Video size={18} />}</button>
+            <button aria-label={`Voice call ${title}`} title={communicationDisabled ? communicationDisabledMessage : canStartGroupCall ? "Voice call Circle" : "No callable Circle members"} disabled={startingCall !== null || !canStartGroupCall || communicationDisabled} onClick={() => void callGroup(["audio"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "audio" ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} />}</button>
+            <button aria-label={`Video call ${title}`} title={communicationDisabled ? communicationDisabledMessage : canStartGroupCall ? "Video call Circle" : "No callable Circle members"} disabled={startingCall !== null || !canStartGroupCall || communicationDisabled} onClick={() => void callGroup(["audio", "video"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "video" ? <Loader2 size={18} className="animate-spin" /> : <Video size={18} />}</button>
           </> : <>
-            <button aria-label={`Voice call ${title}`} title="Voice call" disabled={startingCall !== null || !peer} onClick={() => void callPeer(["audio"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "audio" ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} />}</button>
-            <button aria-label={`Video call ${title}`} title="Video call" disabled={startingCall !== null || !peer} onClick={() => void callPeer(["audio", "video"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "video" ? <Loader2 size={18} className="animate-spin" /> : <Video size={18} />}</button>
+            <button aria-label={`Voice call ${title}`} title={communicationDisabled ? communicationDisabledMessage : "Voice call"} disabled={startingCall !== null || !peer || communicationDisabled} onClick={() => void callPeer(["audio"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "audio" ? <Loader2 size={18} className="animate-spin" /> : <Phone size={18} />}</button>
+            <button aria-label={`Video call ${title}`} title={communicationDisabled ? communicationDisabledMessage : "Video call"} disabled={startingCall !== null || !peer || communicationDisabled} onClick={() => void callPeer(["audio", "video"])} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted disabled:cursor-not-allowed disabled:opacity-35">{startingCall === "video" ? <Loader2 size={18} className="animate-spin" /> : <Video size={18} />}</button>
           </>}
           <button aria-label="Refresh messages" onClick={() => void loadHistory()} className="grid h-10 w-10 place-items-center rounded-full hover:bg-muted"><RefreshCw size={18} /></button>
         </div>
@@ -1022,7 +1065,7 @@ export function ChatConversationScreen() {
           {search && <button type="button" aria-label="Clear search" onClick={() => setSearch("")} className="grid h-5 w-5 shrink-0 place-items-center rounded-full hover:bg-muted"><X size={14} className="text-muted-foreground" /></button>}
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div ref={messagesScrollRef} className="flex-1 overflow-y-auto">
         <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col gap-3 p-4 md:p-6">
           {loading && <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 size={18} className="animate-spin" /> Loading secure conversation…</div>}
           {!loading && messages.length === 0 && <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center text-muted-foreground"><MessageSquare size={36} /><p className="text-sm font-medium text-foreground">No messages yet</p><p className="max-w-xs text-xs">Start this secure {isGroup ? "Circle conversation" : "peer-to-peer conversation"}.</p></div>}
@@ -1051,10 +1094,11 @@ export function ChatConversationScreen() {
           </div>
         )}
         {uploadProgress !== null && <div className="mx-auto mb-2 max-w-2xl text-xs text-muted-foreground">Uploading file… {uploadProgress}%</div>}
+        {communicationDisabled && <div className="mx-auto mb-2 max-w-2xl text-xs text-muted-foreground">{communicationDisabledMessage}</div>}
         <div className="mx-auto flex max-w-2xl items-center gap-2">
-          <AttachmentMenu onPick={(file) => void attach(file)} disabled={sending} />
-          <input ref={messageInputRef} value={message} onChange={(event) => handleComposerChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void send(message); }} disabled={sending} placeholder={isGroup ? "Secure Circle message…" : `Message ${peerComposerName}…`} className="h-11 flex-1 rounded-full border border-border bg-input-background px-4 text-sm outline-none" />
-          <button type="button" aria-label="Send message" onClick={() => void send(message)} disabled={sending || !message.trim()} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground disabled:opacity-40">{sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}</button>
+          <AttachmentMenu onPick={(file) => void attach(file)} disabled={sending || communicationDisabled} />
+          <input ref={messageInputRef} value={message} onChange={(event) => handleComposerChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void send(message); }} disabled={sending || communicationDisabled} placeholder={communicationDisabled ? "DID deactivated" : isGroup ? "Secure Circle message…" : `Message ${peerComposerName}…`} className="h-11 flex-1 rounded-full border border-border bg-input-background px-4 text-sm outline-none disabled:opacity-60" />
+          <button type="button" aria-label="Send message" title={communicationDisabled ? communicationDisabledMessage : "Send message"} onClick={() => void send(message)} disabled={sending || !message.trim() || communicationDisabled} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground disabled:opacity-40">{sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}</button>
         </div>
       </div>
       <PeerDetailsDialog

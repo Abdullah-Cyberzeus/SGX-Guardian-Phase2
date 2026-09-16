@@ -306,6 +306,8 @@ use std::fs;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TrustedPeer {
     peer_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    node_id: Option<String>,
     ip: String,
     status: String,
     /// Legacy field. Equal to `last_attested_at` after Fix 3. Retained for
@@ -650,6 +652,14 @@ fn write_trusted_peer_with_dirs(
 ) {
     let (primary_file, fallback_file) = trusted_peer_node_paths(node, primary_dir, fallback_dir);
     let now = Utc::now().to_rfc3339();
+    let stable_node_id = ev.node_id.trim();
+    if stable_node_id == node || (stable_node_id.is_empty() && peer_id == node) {
+        eprintln!(
+            "⚠️ Refusing to trust self peer entry peer_id={} ip={}",
+            peer_id, ip
+        );
+        return;
+    }
     let dkp_state = stable_dkp_state_for_attestation(ev);
     let pcr_digest = ev
         .baseline_status
@@ -660,7 +670,11 @@ fn write_trusted_peer_with_dirs(
         rotation_reason.or_else(|| current_rotation_reason_for_peer(&ev.subject_did));
 
     let entry = TrustedPeer {
+        // Keep the routable endpoint as peer_id: downstream reachability and
+        // re-attestation code parses this field as host:port. The stable
+        // identity belongs in node_id and DID.
         peer_id: peer_id.to_string(),
+        node_id: Some(stable_node_id.to_string()).filter(|s| !s.is_empty()),
         ip: ip.to_string(),
         status: "verified".to_string(),
         timestamp: now.clone(),
@@ -684,6 +698,11 @@ fn write_trusted_peer_with_dirs(
             data = parsed;
         }
     }
+    data.retain(|p| {
+        let is_self = p.peer_id == node || p.node_id.as_deref() == Some(node);
+        let stale_same_endpoint = p.ip == ip && p.did.as_deref() != entry.did.as_deref();
+        !is_self && !stale_same_endpoint
+    });
 
     // Upsert by DID first, then fall back to peer_id for legacy records
     // that predate DID persistence.
@@ -692,6 +711,7 @@ fn write_trusted_peer_with_dirs(
         for p in data.iter_mut() {
             if p.did.as_deref() == Some(new_did.as_str()) {
                 p.peer_id = entry.peer_id.clone();
+                p.node_id = entry.node_id.clone();
                 p.ip = entry.ip.clone();
                 p.status = "verified".into();
                 p.timestamp = entry.timestamp.clone();
@@ -713,6 +733,7 @@ fn write_trusted_peer_with_dirs(
     if !updated {
         for p in data.iter_mut() {
             if p.did.is_none() && p.peer_id == peer_id {
+                p.node_id = entry.node_id.clone();
                 p.ip = entry.ip.clone();
                 p.status = "verified".into();
                 p.timestamp = entry.timestamp.clone();
@@ -917,12 +938,16 @@ fn merge_trusted_peer(existing: &mut TrustedPeer, candidate: TrustedPeer) {
 
     if candidate_is_newer {
         existing.peer_id = candidate.peer_id.clone();
+        existing.node_id = candidate.node_id.clone();
         existing.ip = candidate.ip.clone();
         existing.status = candidate.status.clone();
         existing.timestamp = candidate.timestamp.clone();
         if candidate.last_attested_at.is_some() {
             existing.last_attested_at = candidate.last_attested_at.clone();
         }
+    }
+    if candidate.node_id.is_some() {
+        existing.node_id = candidate.node_id.clone();
     }
     if candidate.did.is_some() {
         existing.did = candidate.did.clone();
@@ -2957,6 +2982,16 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                             }
                         }
 
+                        // The listener verified the caller too. Persist its observed
+                        // overlay address so inbound call and gRPC authorization can
+                        // recognize peers that initiated mutual attestation.
+                        write_trusted_peer(
+                            &remote.to_string(),
+                            &remote_ip,
+                            &incoming,
+                            current_rotation_reason_for_peer(&incoming.subject_did),
+                        );
+
                         let mut reply =
                             AttestationService::create_signed_evidence(&km, &policy.yaml)?;
                         if let Ok(Some(vc)) = crate::vc::persistence::load_own_any() {
@@ -3232,6 +3267,7 @@ mod tests {
         let dkp_state = stable_dkp_state_for_attestation(&ev);
         let persisted = vec![TrustedPeer {
             peer_id: "10.0.0.2:50152".to_string(),
+            node_id: None,
             ip: "10.0.0.2".to_string(),
             status: "verified".to_string(),
             timestamp: "2026-06-10T00:00:00Z".to_string(),
@@ -3651,6 +3687,7 @@ mod tests {
         let now = Utc::now().to_rfc3339();
         let peer = TrustedPeer {
             peer_id: "10.0.0.2:50152".into(),
+            node_id: None,
             ip: "10.0.0.2".into(),
             status: "verified".into(),
             timestamp: now,
@@ -4770,6 +4807,7 @@ mod tests {
             hex::encode(&hash[..16])
         };
         let mut ev = make_test_evidence(policy, &nonce);
+        ev.node_id = "nodeB".into();
         ev.subject_did = "did:guardian:remove-me".into();
         write_trusted_peer("10.5.5.5:50152", "10.5.5.5", &ev, None);
 
@@ -4826,6 +4864,7 @@ mod tests {
 
         let mut existing = TrustedPeer {
             peer_id: "10.7.7.7:50152".into(),
+            node_id: None,
             ip: "10.7.7.7".into(),
             status: "verified".into(),
             timestamp: older.clone(),
@@ -4841,6 +4880,7 @@ mod tests {
         };
         let newer_candidate = TrustedPeer {
             peer_id: "10.7.7.8:50152".into(),
+            node_id: None,
             ip: "10.7.7.8".into(),
             status: "verified".into(),
             timestamp: newer.clone(),
@@ -4862,6 +4902,7 @@ mod tests {
 
         let mut existing2 = TrustedPeer {
             peer_id: "A".into(),
+            node_id: None,
             ip: "1.1.1.1".into(),
             status: "verified".into(),
             timestamp: newer,
@@ -4877,6 +4918,7 @@ mod tests {
         };
         let older_candidate = TrustedPeer {
             peer_id: "B".into(),
+            node_id: None,
             ip: "2.2.2.2".into(),
             status: "stale".into(),
             timestamp: older,
@@ -4901,6 +4943,7 @@ mod tests {
     fn trusted_peer_seen_at_prefers_last_attested_at_then_falls_back_to_timestamp() {
         let mut peer = TrustedPeer {
             peer_id: "x".into(),
+            node_id: None,
             ip: "1.1.1.1".into(),
             status: "verified".into(),
             timestamp: "2026-01-01T00:00:00Z".into(),
@@ -4936,6 +4979,7 @@ mod tests {
 
         let peers = vec![TrustedPeer {
             peer_id: "10.8.8.8:50152".into(),
+            node_id: None,
             ip: "10.8.8.8".into(),
             status: "verified".into(),
             timestamp: Utc::now().to_rfc3339(),
@@ -4966,6 +5010,7 @@ mod tests {
     fn cached_vid_from_trusted_peer_returns_none_for_blank_did() {
         let peer = TrustedPeer {
             peer_id: "x".into(),
+            node_id: None,
             ip: "1.1.1.1".into(),
             status: "verified".into(),
             timestamp: Utc::now().to_rfc3339(),

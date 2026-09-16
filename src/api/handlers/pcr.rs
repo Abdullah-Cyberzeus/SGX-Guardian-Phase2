@@ -1,6 +1,6 @@
 use crate::api::{error::ApiError, state::AppState};
 use axum::{extract::State, Json};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -61,6 +61,10 @@ pub struct PcrHistoryEntryResponse {
     pub id: String,
     pub timestamp: String,
     pub status: String,
+    #[serde(rename = "eventType")]
+    pub event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registers: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -73,6 +77,37 @@ pub struct PcrHistoryEntryResponse {
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub peer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+    #[serde(rename = "baselineId", skip_serializing_if = "Option::is_none")]
+    pub baseline_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+    #[serde(rename = "previousHash", skip_serializing_if = "Option::is_none")]
+    pub previous_hash: Option<String>,
+    #[serde(rename = "keyVersion", skip_serializing_if = "Option::is_none")]
+    pub key_version: Option<u32>,
+    #[serde(rename = "schemaVersion", skip_serializing_if = "Option::is_none")]
+    pub schema_version: Option<u8>,
+    #[serde(rename = "signingBackend", skip_serializing_if = "Option::is_none")]
+    pub signing_backend: Option<String>,
+    #[serde(rename = "baselineRegisters", skip_serializing_if = "Option::is_none")]
+    pub baseline_registers: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+struct BaselineHistoryEntry {
+    event_type: Option<String>,
+    action: Option<String>,
+    timestamp: String,
+    node: Option<String>,
+    baseline_id: Option<String>,
+    hash: String,
+    previous_hash: Option<String>,
+    registers: Vec<String>,
+    key_version: u32,
+    schema_version: u8,
+    signing_backend: Option<String>,
 }
 
 fn baseline_path(state: &AppState) -> PathBuf {
@@ -81,6 +116,10 @@ fn baseline_path(state: &AppState) -> PathBuf {
 
 fn history_path(state: &AppState) -> PathBuf {
     Path::new(&state.log_dir_primary).join("attestation_results.json")
+}
+
+fn baseline_history_path(state: &AppState) -> PathBuf {
+    Path::new(&state.log_dir_primary).join("pcr_baseline_history.json")
 }
 
 fn read_pcr_baseline(
@@ -136,12 +175,12 @@ pub async fn history_read(
     let path = history_path(&s);
     let text = match tokio::fs::read_to_string(&path).await {
         Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Json(vec![])),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => "[]".to_string(),
         Err(err) => return Err(ApiError::from(err)),
     };
 
     let entries: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
-    let history = entries
+    let mut history: Vec<PcrHistoryEntryResponse> = entries
         .into_iter()
         .enumerate()
         .map(|(idx, entry)| {
@@ -176,15 +215,61 @@ pub async fn history_read(
                 } else {
                     "fail".into()
                 },
+                event_type: "verification".into(),
+                action: None,
                 registers: Some(5),
                 mismatches: if pcr_match { Some(0) } else { Some(5) },
                 match_count: Some(if pcr_match { 5 } else { 0 }),
                 total_count: Some(5),
                 reason: (!reason.is_empty()).then_some(reason),
                 peer: (!peer.is_empty()).then_some(peer),
+                node: None,
+                baseline_id: None,
+                hash: None,
+                previous_hash: None,
+                key_version: None,
+                schema_version: None,
+                signing_backend: None,
+                baseline_registers: None,
             }
         })
         .collect();
+
+    let baseline_text = match tokio::fs::read_to_string(baseline_history_path(&s)).await {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => "[]".to_string(),
+        Err(err) => return Err(ApiError::from(err)),
+    };
+    let baseline_entries: Vec<BaselineHistoryEntry> =
+        serde_json::from_str(&baseline_text).unwrap_or_default();
+    history.extend(
+        baseline_entries
+            .into_iter()
+            .enumerate()
+            .map(|(idx, entry)| PcrHistoryEntryResponse {
+                id: format!("baseline-{}-{}", entry.timestamp, idx),
+                timestamp: entry.timestamp,
+                status: "pass".into(),
+                event_type: entry.event_type.unwrap_or_else(|| "baseline".into()),
+                action: entry.action.or_else(|| Some("created".into())),
+                registers: Some(entry.registers.len() as u32),
+                mismatches: None,
+                match_count: None,
+                total_count: Some(entry.registers.len() as u32),
+                reason: None,
+                peer: None,
+                node: entry.node,
+                baseline_id: entry.baseline_id,
+                hash: Some(entry.hash),
+                previous_hash: entry.previous_hash,
+                key_version: Some(entry.key_version),
+                schema_version: Some(entry.schema_version),
+                signing_backend: entry.signing_backend,
+                baseline_registers: Some(entry.registers),
+            }),
+    );
+
+    history.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
     Ok(Json(history))
 }

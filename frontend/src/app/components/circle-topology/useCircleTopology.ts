@@ -43,7 +43,7 @@ function memberAliases(member: Record<string, unknown>): string[] {
     member.ip,
   ]
     .map((value) => normalizeNodeId(firstText(value)))
-    .filter((value) => value && value !== "unknown-node");
+    .filter((value): value is string => Boolean(value && value !== "unknown-node"));
 }
 
 function physicalIpFromPeer(peer: Peer): string | undefined {
@@ -64,6 +64,21 @@ function overlayIpFromMember(member: Record<string, unknown>): string | undefine
 
 function lastSignalFromMember(member: Record<string, unknown>): string | undefined {
   return firstText(member.lastSeen, member.last_seen, member.lastSignal, member.last_signal, member.updatedAt, member.updated_at);
+}
+
+function peerAliases(peer: Peer): string[] {
+  return [
+    peer.nodeId,
+    peer.peerId?.split("|")[0],
+    peer.peerId,
+    peer.did,
+    peer.deviceName,
+    peer.displayName,
+    peer.overlayIp,
+    peer.ip,
+  ]
+    .map((value) => normalizeNodeId(firstText(value)))
+    .filter((value): value is string => Boolean(value && value !== "unknown-node"));
 }
 
 export function mergeLiveNodes(
@@ -109,9 +124,10 @@ export function mergeLiveNodes(
   }
 
   for (const peer of peers) {
-    const probableId = normalizeNodeId(peer.peerId.split("|")[0] || peer.peerId);
+    const aliases = peerAliases(peer);
+    const probableId = aliases[0] ?? normalizeNodeId(peer.peerId.split("|")[0] || peer.peerId);
     const match =
-      map.get(probableId) ??
+      aliases.map((alias) => map.get(alias)).find(Boolean) ??
       Array.from(map.values()).find((node) => (
         Boolean(peer.did && node.did === peer.did) ||
         Boolean(peer.ip && (node.ip === peer.ip || node.overlayIp === peer.ip)) ||

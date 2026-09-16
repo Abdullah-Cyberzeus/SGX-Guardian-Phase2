@@ -131,6 +131,16 @@ pub fn deactivate(did_path: &str, _reason: &str) -> Result<(), DidError> {
     record.save(did_path)
 }
 
+pub fn reactivate(did_path: &str) -> Result<bool, DidError> {
+    let mut record = DidRecord::load(did_path)?;
+    if record.deactivated_at.is_none() {
+        return Ok(false);
+    }
+    record.deactivated_at = None;
+    record.save(did_path)?;
+    Ok(true)
+}
+
 pub fn ensure_runtime_pubkey(km: &KeyManager, dkp_pubkey_path: &str) -> Result<Vec<u8>, DidError> {
     let pubkey = km
         .runtime_public_key_export()

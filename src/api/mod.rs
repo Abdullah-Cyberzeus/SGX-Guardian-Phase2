@@ -273,6 +273,7 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             post(handlers::policy::sign_deploy_current),
         )
         .route("/api/v1/did/deactivate", post(handlers::did::deactivate))
+        .route("/api/v1/did/reactivate", post(handlers::did::reactivate))
         .route("/api/v1/relay/limits", post(handlers::relay::limits))
         .route("/api/v1/vc/issue", post(handlers::vc::issue))
         .route("/api/v1/vc/renew", post(handlers::vc::renew))

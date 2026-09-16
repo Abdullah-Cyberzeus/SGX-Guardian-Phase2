@@ -72,18 +72,36 @@ function pick(raw: Record<string, unknown>, ...keys: string[]): unknown {
   return undefined;
 }
 
+function normalizeKind(rawKind: unknown, rawSeverity: unknown): string {
+  const original = rawKind === undefined || rawKind === null || rawKind === "" ? "alert" : String(rawKind);
+  const compact = original.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const severity = String(rawSeverity ?? "").toLowerCase();
+
+  if (compact === "securityalert" || compact === "threatalert" || compact === "alert" || compact === "security") {
+    if (severity === "critical" || severity === "high") return "AlertHigh";
+    if (severity === "medium" || severity === "warning") return "AlertMedium";
+    return "AlertLow";
+  }
+
+  const normalized = original
+    .replace(/[-\s]+/g, "_")
+    .replace(/_([a-z0-9])/g, (_, letter: string) => letter.toUpperCase())
+    .replace(/^[a-z]/, (letter) => letter.toUpperCase());
+  if (normalized === "DeviceUnauthorized") return "DevicePendingApproval";
+  return normalized;
+}
+
 export function normalizeNotification(raw: unknown): NotificationItem {
   const r = (raw ?? {}) as Record<string, unknown>;
-  const rawKind = String(pick(r, "kind") ?? "AlertLow");
-  const kind = rawKind.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())
-    .replace(/^[a-z]/, (letter) => letter.toUpperCase());
+  const severity = String(pick(r, "severity") ?? "info");
+  const kind = normalizeKind(pick(r, "kind", "notification_type", "notificationType", "type", "category"), severity);
   return {
     id: String(pick(r, "id") ?? crypto.randomUUID()),
     kind,
     title: String(pick(r, "title") ?? "Notification"),
     body: String(pick(r, "body", "message") ?? ""),
-    severity: String(pick(r, "severity") ?? "info"),
-    refId: (pick(r, "ref_id", "refId") as string | undefined) ?? undefined,
+    severity,
+    refId: (pick(r, "ref_id", "refId", "alert_id", "alertId", "device_id", "deviceId", "source_id", "sourceId") as string | undefined) ?? undefined,
     createdAt: String(pick(r, "created_at", "createdAt") ?? new Date().toISOString()),
     read: Boolean(pick(r, "read") ?? false),
     actorDid: (pick(r, "actor_did", "actorDid") as string | undefined) ?? undefined,

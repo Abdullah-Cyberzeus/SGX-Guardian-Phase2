@@ -2,13 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Bell, Check, Settings } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
+import { useContactNames } from "../../contexts/ContactNameContext";
 import { useNotifications } from "../../contexts/NotificationContext";
 import type { NotificationItem } from "../../../api/notifications";
-import { notificationIcon, severityColor, notificationRoute, relativeTime } from "./notificationVisuals";
+import { notificationBody, notificationIcon, severityColor, notificationRoute, relativeTime } from "./notificationVisuals";
 
 export function NotificationBell() {
   const { session } = useAuth();
   const { items, unreadCount, connected, markRead, markAllRead } = useNotifications();
+  const { displayForDid } = useContactNames();
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -59,6 +61,7 @@ export function NotificationBell() {
             {items.map((item) => {
               const Icon = notificationIcon(item.kind);
               const color = severityColor(item.severity);
+              const body = notificationBody(item.kind, item.body, item.actorDid, displayForDid);
               return (
                 <button
                   key={item.id}
@@ -70,7 +73,7 @@ export function NotificationBell() {
                   </div>
                   <div className="notify-panel-item-body">
                     <strong>{item.title}</strong>
-                    {item.body && <span>{item.body}</span>}
+                    {body && <span>{body}</span>}
                     <small>{relativeTime(item.createdAt)}</small>
                   </div>
                   {!item.read && <span className="notify-panel-item-dot" />}

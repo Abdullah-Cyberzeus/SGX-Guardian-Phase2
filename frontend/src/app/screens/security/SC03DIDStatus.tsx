@@ -52,11 +52,30 @@ function CopyButton({ value }: { value: string }) {
   );
 }
 
-function InfoRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+function InfoTooltip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span className="group relative inline-flex align-middle">
+      <span
+        tabIndex={0}
+        role="img"
+        aria-label={label}
+        className="inline-flex h-6 w-6 cursor-help items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+      >
+        <Info size={14} />
+      </span>
+      <span className="pointer-events-none absolute left-0 top-7 z-30 hidden w-[min(22rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs normal-case leading-5 tracking-normal text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+        {children}
+      </span>
+    </span>
+  );
+}
+
+function InfoRow({ label, value, mono = false, tooltip }: { label: string; value: string; mono?: boolean; tooltip?: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4 py-2" style={{ borderBottom: "1px solid var(--border)" }}>
-      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", flexShrink: 0 }}>
+      <span className="inline-flex items-center gap-1.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)", flexShrink: 0 }}>
         {label}
+        {tooltip ? <InfoTooltip label={`About ${label}`}>{tooltip}</InfoTooltip> : null}
       </span>
       <div className="flex items-center gap-1 min-w-0">
         <span
@@ -153,7 +172,9 @@ export function SC03DIDStatus() {
   const navigate = useNavigate();
   const { contactNameForDid } = useContactNames();
   const [deactivating, setDeactivating] = useState(false);
+  const [reactivating, setReactivating] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showReactivateConfirm, setShowReactivateConfirm] = useState(false);
 
   const { data: didStatus, loading: statusLoading, error: statusError, refetch: refetchStatus } = useDIDStatus();
   const { data: resolveData, loading: resolveLoading } = useDIDResolve();
@@ -163,7 +184,6 @@ export function SC03DIDStatus() {
   const [showRaw, setShowRaw] = useState(false);
   const [rawDoc, setRawDoc] = useState<DIDDocumentRaw | null>(null);
   const [rawDocTitle, setRawDocTitle] = useState<string>("");
-  const [rawInitialView, setRawInitialView] = useState<"structured" | "raw">("structured");
   const [loadingRaw, setLoadingRaw] = useState(false);
 
   const [verifying, setVerifying] = useState(false);
@@ -191,8 +211,6 @@ export function SC03DIDStatus() {
       const raw = await didService.getDocumentRaw();
       setRawDoc(raw);
       setRawDocTitle("Local DID Document");
-      // The "Raw" button opens straight to the Raw JSON tab.
-      setRawInitialView("raw");
       setShowRaw(true);
     } catch (err) {
       toast.error("Failed to load DID Document", {
@@ -209,8 +227,6 @@ export function SC03DIDStatus() {
       const raw = await didService.getDocumentPeer(peer.did);
       setRawDoc(raw);
       setRawDocTitle(`Peer: ${peer.node_name}`);
-      // Peer rows open the structured summary first.
-      setRawInitialView("structured");
       setShowRaw(true);
     } catch (err) {
       toast.error("Failed to load peer DID Document", {
@@ -295,6 +311,26 @@ export function SC03DIDStatus() {
     } finally {
       setDeactivating(false);
       setShowConfirm(false);
+    }
+  };
+
+  const handleReactivate = async () => {
+    setReactivating(true);
+    try {
+      const result = await didService.reactivate(true);
+      if (result.ok) {
+        toast.success("DID reactivated", { description: result.message });
+        await Promise.all([refetchStatus(), refetchDoc(), refetchPeers()]);
+      } else {
+        toast.error("Reactivation failed", { description: result.message });
+      }
+    } catch (err) {
+      toast.error("Failed to reactivate DID", {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setReactivating(false);
+      setShowReactivateConfirm(false);
     }
   };
 
@@ -390,12 +426,27 @@ export function SC03DIDStatus() {
         {/* DID Details */}
         {didStatus && (
           <div className="rounded-lg border p-4 flex flex-col" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
-            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>
+            <p className="inline-flex items-center gap-1.5" style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", fontWeight: "var(--font-weight-semibold)", color: "var(--muted-foreground)", letterSpacing: "0.08em", marginBottom: "8px" }}>
               DID DETAILS
+              <InfoTooltip label="About DID details">
+                DID Details show the basic identity information for this Guardian. Each field below has its own help icon for a more specific explanation.
+              </InfoTooltip>
             </p>
-            <InfoRow label="Method" value={`${didStatus.method} v${didStatus.methodVersion}`} />
-            <InfoRow label="DKP Version" value={String(didStatus.currentDkpVersion)} />
-            <InfoRow label="SE050 UID Source" value={didStatus.se050UidSource} />
+            <InfoRow
+              label="Method"
+              value={`${didStatus.method} v${didStatus.methodVersion}`}
+              tooltip="The DID method is the identity format Guardian uses so other systems know how to read and verify this device identity."
+            />
+            <InfoRow
+              label="DKP Version"
+              value={String(didStatus.currentDkpVersion)}
+              tooltip="DKP Version shows which device key version is currently connected to this Guardian identity."
+            />
+            <InfoRow
+              label="SE050 UID Source"
+              value={didStatus.se050UidSource}
+              tooltip="SE050 UID Source shows how Guardian read the secure chip ID used to anchor this device identity in hardware."
+            />
             <InfoRow label="Created" value={formatDate(didStatus.createdAt)} />
             {didStatus.deactivatedAt && (
               <InfoRow label="Deactivated" value={formatDate(didStatus.deactivatedAt)} />
@@ -474,7 +525,12 @@ export function SC03DIDStatus() {
 
             <InfoRow label="Node" value={didDocument.node_name} />
             <InfoRow label="Status" value={didDocument.status} />
-            <InfoRow label="Proof VM" value={didDocument.proof_vm} mono />
+            <InfoRow
+              label="Proof VM"
+              value={didDocument.proof_vm}
+              mono
+              tooltip="Proof VM is the verification method used to check the DID document signature and confirm it was signed by the expected Guardian key."
+            />
 
             <div className="grid grid-cols-3 gap-2 pt-1">
               <button
@@ -670,6 +726,78 @@ export function SC03DIDStatus() {
           </button>
         )}
 
+        {/* Reactivate Section */}
+        {didStatus && !isActive && !showReactivateConfirm && (
+          <button
+            onClick={() => setShowReactivateConfirm(true)}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg"
+            style={{
+              backgroundColor: "color-mix(in srgb, var(--chart-2) 12%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--chart-2) 30%, transparent)",
+              color: "var(--chart-2)",
+              cursor: "pointer",
+              fontFamily: "Inter, sans-serif",
+              fontSize: "var(--text-sm)",
+              fontWeight: "var(--font-weight-semibold)",
+            }}
+          >
+            <ShieldCheck size={16} />
+            Reactivate DID
+          </button>
+        )}
+
+        {showReactivateConfirm && (
+          <div
+            className="rounded-lg border p-4 flex flex-col gap-3"
+            style={{
+              backgroundColor: "color-mix(in srgb, var(--chart-2) 8%, transparent)",
+              borderColor: "color-mix(in srgb, var(--chart-2) 30%, transparent)",
+            }}
+          >
+            <div className="flex items-start gap-2">
+              <ShieldCheck size={16} style={{ color: "var(--chart-2)", flexShrink: 0, marginTop: "2px" }} />
+              <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--chart-2)", lineHeight: 1.5 }}>
+                This will mark this Guardian's DID as active again and refresh the local DID Document status.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowReactivateConfirm(false)}
+                className="flex-1 py-2 rounded-lg"
+                style={{
+                  backgroundColor: "var(--muted)",
+                  border: "1px solid var(--border)",
+                  color: "var(--foreground)",
+                  cursor: "pointer",
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "var(--text-sm)",
+                  fontWeight: "var(--font-weight-medium)",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReactivate}
+                disabled={reactivating}
+                className="flex-1 py-2 rounded-lg flex items-center justify-center gap-2"
+                style={{
+                  backgroundColor: "var(--chart-2)",
+                  border: "none",
+                  color: "white",
+                  cursor: reactivating ? "not-allowed" : "pointer",
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "var(--text-sm)",
+                  fontWeight: "var(--font-weight-semibold)",
+                  opacity: reactivating ? 0.7 : 1,
+                }}
+              >
+                {reactivating && <Loader2 size={14} className="animate-spin" />}
+                {reactivating ? "Reactivating..." : "Confirm Reactivate"}
+              </button>
+            </div>
+          </div>
+        )}
+
         {showConfirm && (
           <div
             className="rounded-lg border p-4 flex flex-col gap-3"
@@ -725,7 +853,7 @@ export function SC03DIDStatus() {
       </div>
 
       {showRaw && rawDoc && (
-        <RawDocumentModal title={rawDocTitle} doc={rawDoc} initialView={rawInitialView} onClose={() => setShowRaw(false)} />
+        <RawDocumentModal title={rawDocTitle} doc={rawDoc} onClose={() => setShowRaw(false)} />
       )}
 
       {showPublish && (
@@ -892,16 +1020,13 @@ function RawDocumentModal({
   title,
   doc,
   onClose,
-  initialView = "structured",
 }: {
   title: string;
   doc: DIDDocumentRaw;
   onClose: () => void;
-  initialView?: "structured" | "raw";
 }) {
   const json = JSON.stringify(doc, null, 2);
   const [copied, setCopied] = useState(false);
-  const [view, setView] = useState<"structured" | "raw">(initialView);
   const handleCopy = () => {
     navigator.clipboard.writeText(json);
     setCopied(true);
@@ -958,201 +1083,160 @@ function RawDocumentModal({
           </button>
         </div>
 
-        {/* View switcher */}
-        <div className="px-5 pb-3">
-          <div className="flex p-1 rounded-lg" style={{ backgroundColor: "var(--muted)" }}>
-            {([
-              { id: "structured" as const, label: "Document", icon: FileText },
-              { id: "raw" as const, label: "Raw JSON", icon: FileJson },
-            ]).map(({ id, label, icon: Icon }) => (
-              <button
-                key={id}
-                onClick={() => setView(id)}
-                className="flex-1 flex items-center justify-center gap-1.5"
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: "6px",
-                  backgroundColor: view === id ? "var(--card)" : "transparent",
-                  color: view === id ? "var(--foreground)" : "var(--muted-foreground)",
-                  border: view === id ? "1px solid var(--border)" : "none",
-                  fontFamily: "Inter, sans-serif",
-                  fontSize: "var(--text-xs)",
-                  fontWeight: view === id ? "var(--font-weight-semibold)" : "var(--font-weight-normal)",
-                  cursor: "pointer",
-                }}
-              >
-                <Icon size={12} />
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* Body */}
         <div className="overflow-auto px-5 pb-3" style={{ flex: 1, minHeight: 0 }}>
-          {view === "structured" ? (
-            <div className="flex flex-col gap-3">
-              <DocSection icon={Fingerprint} title="Identity">
-                <DocRow label="DID" value={doc.id} monoBlock />
-                <DocRow label="Controller" value={doc.controller} monoBlock />
-                <DocRow label="Node" value={doc["sgx:nodeName"]} />
-                <DocRow label="Method Spec" value={`v${doc["sgx:methodSpecVersion"]}`} />
-                <DocRow label="Created" value={formatDocDate(doc["sgx:created"])} />
-                <DocRow label="Updated" value={formatDocDate(doc["sgx:updated"])} />
+          <div className="flex flex-col gap-3">
+            <DocSection icon={Fingerprint} title="Identity">
+              <DocRow label="DID" value={doc.id} monoBlock />
+              <DocRow label="Controller" value={doc.controller} monoBlock />
+              <DocRow label="Node" value={doc["sgx:nodeName"]} />
+              <DocRow label="Method Spec" value={`v${doc["sgx:methodSpecVersion"]}`} />
+              <DocRow label="Created" value={formatDocDate(doc["sgx:created"])} />
+              <DocRow label="Updated" value={formatDocDate(doc["sgx:updated"])} />
+            </DocSection>
+
+            {doc["@context"]?.length > 0 && (
+              <DocSection icon={Link2} title="Context" count={doc["@context"].length}>
+                <div className="flex flex-wrap gap-1.5">
+                  {doc["@context"].map((ctx, i) => (
+                    <span
+                      key={`${ctx}-${i}`}
+                      style={{
+                        padding: "3px 8px",
+                        borderRadius: "999px",
+                        backgroundColor: "var(--background)",
+                        border: "1px solid var(--border)",
+                        fontFamily: "JetBrains Mono, monospace",
+                        fontSize: "10px",
+                        color: "var(--foreground)",
+                        wordBreak: "break-all",
+                      }}
+                    >
+                      {ctx}
+                    </span>
+                  ))}
+                </div>
               </DocSection>
+            )}
 
-              {doc["@context"]?.length > 0 && (
-                <DocSection icon={Link2} title="Context" count={doc["@context"].length}>
-                  <div className="flex flex-wrap gap-1.5">
-                    {doc["@context"].map((ctx, i) => (
-                      <span
-                        key={`${ctx}-${i}`}
-                        style={{
-                          padding: "3px 8px",
-                          borderRadius: "999px",
-                          backgroundColor: "var(--background)",
-                          border: "1px solid var(--border)",
-                          fontFamily: "JetBrains Mono, monospace",
-                          fontSize: "10px",
-                          color: "var(--foreground)",
-                          wordBreak: "break-all",
-                        }}
-                      >
-                        {ctx}
-                      </span>
-                    ))}
-                  </div>
-                </DocSection>
-              )}
+            <DocSection icon={Key} title="Verification Methods" count={doc.verificationMethod?.length ?? 0}>
+              {(doc.verificationMethod ?? []).map(vm => (
+                <div
+                  key={vm.id}
+                  className="rounded-md p-2 flex flex-col gap-1"
+                  style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}
+                >
+                  <DocRow label="ID" value={vm.id} mono />
+                  <DocRow label="Type" value={vm.type} />
+                  <DocRow label="Curve" value={`${vm.publicKeyJwk.kty} / ${vm.publicKeyJwk.crv}`} />
+                  <DocRow label="Key ID" value={vm.publicKeyJwk.kid} mono />
+                </div>
+              ))}
+            </DocSection>
 
-              <DocSection icon={Key} title="Verification Methods" count={doc.verificationMethod?.length ?? 0}>
-                {(doc.verificationMethod ?? []).map(vm => (
+            {revoked.length > 0 && (
+              <DocSection icon={ShieldOff} title="Revoked Verification Methods" count={revoked.length}>
+                {revoked.map(rv => (
                   <div
-                    key={vm.id}
+                    key={rv.id}
                     className="rounded-md p-2 flex flex-col gap-1"
-                    style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}
+                    style={{
+                      backgroundColor: "color-mix(in srgb, var(--destructive) 8%, transparent)",
+                      border: "1px solid color-mix(in srgb, var(--destructive) 20%, transparent)",
+                    }}
                   >
-                    <DocRow label="ID" value={vm.id} mono />
-                    <DocRow label="Type" value={vm.type} />
-                    <DocRow label="Curve" value={`${vm.publicKeyJwk.kty} / ${vm.publicKeyJwk.crv}`} />
-                    <DocRow label="Key ID" value={vm.publicKeyJwk.kid} mono />
+                    <DocRow label="ID" value={rv.id} mono />
+                    <DocRow label="Reason" value={rv.reason} />
+                    <DocRow label="Revoked At" value={formatDocDate(rv.revokedAt)} />
                   </div>
                 ))}
               </DocSection>
+            )}
 
-              {revoked.length > 0 && (
-                <DocSection icon={ShieldOff} title="Revoked Verification Methods" count={revoked.length}>
-                  {revoked.map(rv => (
-                    <div
-                      key={rv.id}
-                      className="rounded-md p-2 flex flex-col gap-1"
-                      style={{
-                        backgroundColor: "color-mix(in srgb, var(--destructive) 8%, transparent)",
-                        border: "1px solid color-mix(in srgb, var(--destructive) 20%, transparent)",
-                      }}
-                    >
-                      <DocRow label="ID" value={rv.id} mono />
-                      <DocRow label="Reason" value={rv.reason} />
-                      <DocRow label="Revoked At" value={formatDocDate(rv.revokedAt)} />
+            {(doc.authentication?.length > 0 || doc.assertionMethod?.length > 0) && (
+              <DocSection icon={ShieldCheck} title="Key Purposes">
+                {doc.authentication?.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
+                      Authentication
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {doc.authentication.map(ref => (
+                        <span
+                          key={`auth-${ref}`}
+                          style={{
+                            padding: "3px 8px",
+                            borderRadius: "6px",
+                            backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)",
+                            border: "1px solid color-mix(in srgb, var(--primary) 22%, transparent)",
+                            color: "var(--primary)",
+                            fontFamily: "JetBrains Mono, monospace",
+                            fontSize: "10px",
+                            wordBreak: "break-all",
+                          }}
+                        >
+                          {ref}
+                        </span>
+                      ))}
                     </div>
-                  ))}
-                </DocSection>
-              )}
+                  </div>
+                )}
+                {doc.assertionMethod?.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
+                      Assertion
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {doc.assertionMethod.map(ref => (
+                        <span
+                          key={`asrt-${ref}`}
+                          style={{
+                            padding: "3px 8px",
+                            borderRadius: "6px",
+                            backgroundColor: "color-mix(in srgb, var(--chart-2) 10%, transparent)",
+                            border: "1px solid color-mix(in srgb, var(--chart-2) 22%, transparent)",
+                            color: "var(--chart-2)",
+                            fontFamily: "JetBrains Mono, monospace",
+                            fontSize: "10px",
+                            wordBreak: "break-all",
+                          }}
+                        >
+                          {ref}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </DocSection>
+            )}
 
-              {(doc.authentication?.length > 0 || doc.assertionMethod?.length > 0) && (
-                <DocSection icon={ShieldCheck} title="Key Purposes">
-                  {doc.authentication?.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
-                        Authentication
-                      </span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {doc.authentication.map(ref => (
-                          <span
-                            key={`auth-${ref}`}
-                            style={{
-                              padding: "3px 8px",
-                              borderRadius: "6px",
-                              backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)",
-                              border: "1px solid color-mix(in srgb, var(--primary) 22%, transparent)",
-                              color: "var(--primary)",
-                              fontFamily: "JetBrains Mono, monospace",
-                              fontSize: "10px",
-                              wordBreak: "break-all",
-                            }}
-                          >
-                            {ref}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {doc.assertionMethod?.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
-                        Assertion
-                      </span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {doc.assertionMethod.map(ref => (
-                          <span
-                            key={`asrt-${ref}`}
-                            style={{
-                              padding: "3px 8px",
-                              borderRadius: "6px",
-                              backgroundColor: "color-mix(in srgb, var(--chart-2) 10%, transparent)",
-                              border: "1px solid color-mix(in srgb, var(--chart-2) 22%, transparent)",
-                              color: "var(--chart-2)",
-                              fontFamily: "JetBrains Mono, monospace",
-                              fontSize: "10px",
-                              wordBreak: "break-all",
-                            }}
-                          >
-                            {ref}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </DocSection>
-              )}
+            {(doc.service?.length ?? 0) > 0 && (
+              <DocSection icon={Globe} title="Services" count={doc.service.length}>
+                {doc.service.map(svc => (
+                  <div
+                    key={svc.id}
+                    className="rounded-md p-2 flex flex-col gap-1"
+                    style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}
+                  >
+                    <DocRow label="ID" value={svc.id} mono />
+                    <DocRow label="Type" value={svc.type} />
+                    <DocRow label="Endpoint" value={svc.serviceEndpoint} mono />
+                  </div>
+                ))}
+              </DocSection>
+            )}
 
-              {(doc.service?.length ?? 0) > 0 && (
-                <DocSection icon={Globe} title="Services" count={doc.service.length}>
-                  {doc.service.map(svc => (
-                    <div
-                      key={svc.id}
-                      className="rounded-md p-2 flex flex-col gap-1"
-                      style={{ backgroundColor: "var(--background)", border: "1px solid var(--border)" }}
-                    >
-                      <DocRow label="ID" value={svc.id} mono />
-                      <DocRow label="Type" value={svc.type} />
-                      <DocRow label="Endpoint" value={svc.serviceEndpoint} mono />
-                    </div>
-                  ))}
-                </DocSection>
-              )}
-
-              {doc.proof && (
-                <DocSection icon={Lock} title="Proof">
-                  <DocRow label="Type" value={doc.proof.type} />
-                  <DocRow label="Cryptosuite" value={doc.proof.cryptosuite} />
-                  <DocRow label="Purpose" value={doc.proof.proofPurpose} />
-                  <DocRow label="Created" value={formatDocDate(doc.proof.created)} />
-                  <DocRow label="Verification Method" value={doc.proof.verificationMethod} monoBlock />
-                  <DocRow label="Proof Value" value={doc.proof.proofValue} monoBlock />
-                </DocSection>
-              )}
-            </div>
-          ) : (
-            <div
-              className="rounded-lg p-3"
-              style={{ backgroundColor: "var(--muted)", border: "1px solid var(--border)" }}
-            >
-              <pre style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px", color: "var(--foreground)", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 }}>
-                {json}
-              </pre>
-            </div>
-          )}
+            {doc.proof && (
+              <DocSection icon={Lock} title="Proof">
+                <DocRow label="Type" value={doc.proof.type} />
+                <DocRow label="Cryptosuite" value={doc.proof.cryptosuite} />
+                <DocRow label="Purpose" value={doc.proof.proofPurpose} />
+                <DocRow label="Created" value={formatDocDate(doc.proof.created)} />
+                <DocRow label="Verification Method" value={doc.proof.verificationMethod} monoBlock />
+                <DocRow label="Proof Value" value={doc.proof.proofValue} monoBlock />
+              </DocSection>
+            )}
+          </div>
         </div>
 
         {/* Footer */}

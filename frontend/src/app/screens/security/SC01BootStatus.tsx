@@ -9,20 +9,32 @@ import {
   XCircle,
   Lock,
   Unlock,
-  Cpu,
-  HardDrive,
   RefreshCw,
-  ChevronRight,
-  Copy,
-  Check,
   Info,
   Link2,
   Server,
-  Fingerprint,
   Loader2,
 } from "lucide-react";
 import { useBootStatus } from "../../hooks/useApiData";
 import { toast } from "sonner";
+
+function InfoTooltip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span className="group relative inline-flex align-middle">
+      <span
+        tabIndex={0}
+        role="img"
+        aria-label={label}
+        className="inline-flex h-6 w-6 cursor-help items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus:bg-muted focus:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+      >
+        <Info size={14} />
+      </span>
+      <span className="pointer-events-none absolute left-0 top-7 z-30 hidden w-[min(22rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-left text-xs normal-case leading-5 tracking-normal text-popover-foreground shadow-lg group-hover:block group-focus-within:block">
+        {children}
+      </span>
+    </span>
+  );
+}
 
 // Trust Chain Step Component
 function TrustChainStep({
@@ -110,68 +122,6 @@ function TrustChainStep({
         >
           {step.description}
         </p>
-      </div>
-    </div>
-  );
-}
-
-// Hash Display with Copy
-function HashDisplay({ hash, label }: { hash: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(hash).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <div>
-      {label && (
-        <p
-          style={{
-            fontFamily: "Inter, sans-serif",
-            fontSize: "var(--text-xs)",
-            color: "var(--muted-foreground)",
-            marginBottom: "6px",
-          }}
-        >
-          {label}
-        </p>
-      )}
-      <div className="flex items-center gap-2">
-        <code
-          style={{
-            fontFamily: "JetBrains Mono, monospace",
-            fontSize: "10px",
-            color: "var(--foreground)",
-            backgroundColor: "var(--muted)",
-            padding: "8px 12px",
-            borderRadius: "6px",
-            flex: 1,
-            wordBreak: "break-all",
-            lineHeight: 1.5,
-          }}
-        >
-          {hash}
-        </code>
-        <button
-          onClick={handleCopy}
-          className="p-2 rounded-lg transition-colors flex-shrink-0"
-          style={{
-            backgroundColor: copied
-              ? "color-mix(in srgb, var(--chart-2) 15%, transparent)"
-              : "var(--muted)",
-            border: "none",
-            cursor: "pointer",
-          }}
-        >
-          {copied ? (
-            <Check size={16} style={{ color: "var(--chart-2)" }} />
-          ) : (
-            <Copy size={16} style={{ color: "var(--muted-foreground)" }} />
-          )}
-        </button>
       </div>
     </div>
   );
@@ -287,6 +237,7 @@ export function SC01BootStatus() {
           )}
           <div className="flex-1">
             <p
+              className="inline-flex items-center gap-1.5"
               style={{
                 fontFamily: "Inter, sans-serif",
                 fontSize: "var(--text-base)",
@@ -295,6 +246,9 @@ export function SC01BootStatus() {
               }}
             >
               {bootState.title}
+              <InfoTooltip label="About Boot Status">
+                Boot Status tells you whether Guardian started from trusted software and whether secure boot protection is active.
+              </InfoTooltip>
             </p>
             <p
               style={{
@@ -322,6 +276,7 @@ export function SC01BootStatus() {
             <div className="flex items-center gap-2 mb-2">
               <Shield size={16} style={{ color: "var(--primary)" }} />
               <span
+                className="inline-flex items-center gap-1.5"
                 style={{
                   fontFamily: "Inter, sans-serif",
                   fontSize: "var(--text-xs)",
@@ -329,6 +284,9 @@ export function SC01BootStatus() {
                 }}
               >
                 HAB Status
+                <InfoTooltip label="About HAB Status">
+                  HAB Status shows whether the hardware secure boot system is available and enforcing boot checks.
+                </InfoTooltip>
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -378,6 +336,7 @@ export function SC01BootStatus() {
                 <Unlock size={16} style={{ color: "var(--chart-5)" }} />
               )}
               <span
+                className="inline-flex items-center gap-1.5"
                 style={{
                   fontFamily: "Inter, sans-serif",
                   fontSize: "var(--text-xs)",
@@ -385,6 +344,9 @@ export function SC01BootStatus() {
                 }}
               >
                 Device Mode
+                <InfoTooltip label="About Device Mode">
+                  Device Mode shows whether the device is locked down. Closed mode enforces secure boot; open mode is more permissive and should be reviewed.
+                </InfoTooltip>
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -426,6 +388,7 @@ export function SC01BootStatus() {
             <div className="flex items-center gap-2 mb-2">
               <Link2 size={16} style={{ color: "var(--primary)" }} />
               <span
+                className="inline-flex items-center gap-1.5"
                 style={{
                   fontFamily: "Inter, sans-serif",
                   fontSize: "var(--text-xs)",
@@ -433,6 +396,9 @@ export function SC01BootStatus() {
                 }}
               >
                 Boot Chain
+                <InfoTooltip label="About Boot Chain">
+                  Boot Chain shows whether each startup layer linked cleanly to the next trusted layer, from early boot through Guardian software.
+                </InfoTooltip>
               </span>
             </div>
             <span
@@ -458,6 +424,7 @@ export function SC01BootStatus() {
             <div className="flex items-center gap-2 mb-2">
               <Server size={16} style={{ color: "var(--primary)" }} />
               <span
+                className="inline-flex items-center gap-1.5"
                 style={{
                   fontFamily: "Inter, sans-serif",
                   fontSize: "var(--text-xs)",
@@ -465,6 +432,9 @@ export function SC01BootStatus() {
                 }}
               >
                 HAB Events
+                <InfoTooltip label="About HAB Events">
+                  HAB Events are hardware boot warnings or failures. None means the hardware did not report secure boot problems.
+                </InfoTooltip>
               </span>
             </div>
             <span
@@ -489,6 +459,7 @@ export function SC01BootStatus() {
           }}
         >
           <p
+            className="inline-flex items-center gap-1.5"
             style={{
               fontFamily: "Inter, sans-serif",
               fontSize: "var(--text-xs)",
@@ -540,10 +511,6 @@ export function SC01BootStatus() {
               </div>
             ))}
           </div>
-
-          <div className="mt-4">
-            <HashDisplay hash={bootStatus.binaryHash} label="Guardian Binary Hash" />
-          </div>
         </div>
 
         {/* Trust Chain */}
@@ -565,6 +532,14 @@ export function SC01BootStatus() {
             }}
           >
             Trust Chain Verification
+            <InfoTooltip label="About Trust Chain Verification">
+              <span className="block">Trust Chain Verification confirms that the device started from trusted software instead of something changed or tampered with.</span>
+              <span className="mt-1 block"><strong>Boot ROM:</strong> The first built-in code that starts the device and checks the next startup piece.</span>
+              <span className="mt-1 block"><strong>Bootloader:</strong> The small program that prepares the device and loads the operating system.</span>
+              <span className="mt-1 block"><strong>Kernel:</strong> The core of the operating system that controls hardware and system services.</span>
+              <span className="mt-1 block"><strong>Root filesystem:</strong> The main set of system files and apps the device runs after startup.</span>
+              <span className="mt-1 block"><strong>Guardian service:</strong> The Guardian software that starts after the device is running and protects the node.</span>
+            </InfoTooltip>
           </p>
           <div>
             {bootStatus.trustChain.map((step, index) => (

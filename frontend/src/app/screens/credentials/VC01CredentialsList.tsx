@@ -8,7 +8,6 @@ import {
   ShieldCheck,
   RefreshCw,
   Trash2,
-  Plus,
   Download,
   FileText,
   AlertTriangle,
@@ -280,159 +279,6 @@ function ActionButton({
       {busy ? <Loader2 size={12} className="animate-spin" /> : icon}
       {label}
     </button>
-  );
-}
-
-// ── Issue VC Modal ─────────────────────────────────────────────────────────────
-
-function IssueVcModal({ onClose, onIssued }: { onClose: () => void; onIssued: () => void }) {
-  const [to, setTo] = useState("");
-  const [role, setRole] = useState<"member" | "owner">("member");
-  const [days, setDays] = useState("365");
-  const [busy, setBusy] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!to.trim()) { toast.error("Subject DID is required"); return; }
-    const daysNum = parseInt(days, 10);
-    if (isNaN(daysNum) || daysNum < 1 || daysNum > 3650) {
-      toast.error("Days must be between 1 and 3650");
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await vcService.issue({ to: to.trim(), role, days: daysNum });
-      toast.success(res.reused ? "Reused existing active VC" : "VC issued successfully");
-      onIssued();
-      onClose();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to issue VC");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-lg rounded-2xl p-6 flex flex-col gap-4"
-        style={{ background: "var(--card)", border: "1px solid var(--border)", maxHeight: "80vh", overflowY: "auto" }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
-          <h2 style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-base)", fontWeight: "var(--font-weight-semibold)", color: "var(--foreground)" }}>
-            Issue Verifiable Credential
-          </h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted-foreground)" }}>
-            <XCircle size={18} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div>
-            <label style={{ fontSize: "var(--text-xs)", color: "var(--muted-foreground)", fontFamily: "Inter, sans-serif", display: "block", marginBottom: "6px" }}>
-              Subject DID *
-            </label>
-            <input
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              placeholder="did:guardian:z6Mk…"
-              style={{
-                width: "100%",
-                padding: "8px 12px",
-                borderRadius: "var(--radius-md)",
-                border: "1px solid var(--border)",
-                background: "var(--input)",
-                color: "var(--foreground)",
-                fontFamily: "JetBrains Mono, monospace",
-                fontSize: "var(--text-xs)",
-                outline: "none",
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
-
-          <div>
-            <label style={{ fontSize: "var(--text-xs)", color: "var(--muted-foreground)", fontFamily: "Inter, sans-serif", display: "block", marginBottom: "6px" }}>
-              Role
-            </label>
-            <div className="flex gap-2">
-              {(["member", "owner"] as const).map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => setRole(r)}
-                  style={{
-                    flex: 1,
-                    padding: "6px",
-                    borderRadius: "var(--radius-md)",
-                    border: "1px solid",
-                    borderColor: role === r ? "var(--primary)" : "var(--border)",
-                    background: role === r ? "color-mix(in srgb, var(--primary) 10%, transparent)" : "transparent",
-                    color: role === r ? "var(--primary)" : "var(--muted-foreground)",
-                    fontFamily: "Inter, sans-serif",
-                    fontSize: "var(--text-xs)",
-                    fontWeight: "var(--font-weight-medium)",
-                    cursor: "pointer",
-                    textTransform: "capitalize",
-                  }}
-                >
-                  {r}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label style={{ fontSize: "var(--text-xs)", color: "var(--muted-foreground)", fontFamily: "Inter, sans-serif", display: "block", marginBottom: "6px" }}>
-              Validity (days)
-            </label>
-            <input
-              type="number"
-              value={days}
-              onChange={(e) => setDays(e.target.value)}
-              min={1}
-              max={3650}
-              style={{
-                width: "100%",
-                padding: "8px 12px",
-                borderRadius: "var(--radius-md)",
-                border: "1px solid var(--border)",
-                background: "var(--input)",
-                color: "var(--foreground)",
-                fontFamily: "Inter, sans-serif",
-                fontSize: "var(--text-sm)",
-                outline: "none",
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={busy}
-            className="flex items-center justify-center gap-2 rounded-lg py-2.5"
-            style={{
-              background: "var(--primary)",
-              color: "var(--primary-foreground)",
-              fontFamily: "Inter, sans-serif",
-              fontSize: "var(--text-sm)",
-              fontWeight: "var(--font-weight-semibold)",
-              border: "none",
-              cursor: busy ? "not-allowed" : "pointer",
-              opacity: busy ? 0.7 : 1,
-            }}
-          >
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-            {busy ? "Issuing…" : "Issue Credential"}
-          </button>
-        </form>
-      </div>
-    </div>
   );
 }
 
@@ -794,7 +640,6 @@ export function VC01CredentialsList() {
   const [tab, setTab] = useState<TabKey>("credentials");
   const [scope, setScope] = useState<VcShowFilters["scope"]>("all");
   const [status, setStatus] = useState<VcShowFilters["status"]>("all");
-  const [showIssueModal, setShowIssueModal] = useState(false);
   const [renewTarget, setRenewTarget] = useState<string | null>(null);
   const [pullingStatus, setPullingStatus] = useState(false);
   const [jsonView, setJsonView] = useState<{ title: string; data: unknown } | null>(null);
@@ -1022,23 +867,6 @@ export function VC01CredentialsList() {
             {pullingStatus ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
             Pull Status
           </button>
-          {/* Issue new VC */}
-          <button
-            onClick={() => setShowIssueModal(true)}
-            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5"
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontSize: "var(--text-xs)",
-              fontWeight: "var(--font-weight-semibold)",
-              color: "var(--primary-foreground)",
-              background: "var(--primary)",
-              border: "none",
-              cursor: "pointer",
-            }}
-          >
-            <Plus size={12} />
-            Issue VC
-          </button>
         </div>
       </div>
 
@@ -1071,21 +899,6 @@ export function VC01CredentialsList() {
                 <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-sm)", color: "var(--muted-foreground)" }}>
                   No credentials found
                 </p>
-                <button
-                  onClick={() => setShowIssueModal(true)}
-                  className="flex items-center gap-1.5 rounded-md px-3 py-1.5"
-                  style={{
-                    fontSize: "var(--text-xs)",
-                    fontFamily: "Inter, sans-serif",
-                    color: "var(--primary)",
-                    background: "color-mix(in srgb, var(--primary) 10%, transparent)",
-                    border: "1px solid color-mix(in srgb, var(--primary) 25%, transparent)",
-                    cursor: "pointer",
-                  }}
-                >
-                  <Plus size={12} />
-                  Issue first credential
-                </button>
               </div>
             )}
             {!vcLoading && items.map((item) => (
@@ -1242,12 +1055,6 @@ export function VC01CredentialsList() {
       </div>
 
       {/* Modals */}
-      {showIssueModal && (
-        <IssueVcModal
-          onClose={() => setShowIssueModal(false)}
-          onIssued={() => { refetchVcs(); refetchFiles(); refetchOwn(); refetchPeers(); }}
-        />
-      )}
       {renewTarget && (
         <RenewModal
           vcId={renewTarget}

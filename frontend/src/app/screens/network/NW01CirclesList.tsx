@@ -601,6 +601,7 @@ export function NW01CirclesList() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const selectedCircleId = searchParams.get("circle");
+  const topologyCircleParam = searchParams.get("topology");
   const [topologyCircleId, setTopologyCircleId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -618,6 +619,13 @@ export function NW01CirclesList() {
 
   const activeCircles = useMemo(() => circles.filter((circle: any) => circle.status !== "archived"), [circles]);
   const archivedCircles = useMemo(() => circles.filter((circle: any) => circle.status === "archived"), [circles]);
+
+  useEffect(() => {
+    if (!topologyCircleParam || loading) return;
+    const circle = activeCircles.find((item: any) => item.id === topologyCircleParam);
+    if (circle) setTopologyCircleId(circle.id);
+    navigate("/network", { replace: true });
+  }, [activeCircles, loading, navigate, topologyCircleParam]);
 
   const selectedCircle = useMemo(() => {
     return selectedCircleId ? circles.find((c: any) => c.id === selectedCircleId) : null;

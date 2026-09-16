@@ -248,7 +248,10 @@ export function NW04CircleDetail() {
     if (String(member?.memberType || member?.member_type || "").toLowerCase() === "browser") return undefined;
     const candidates = nodeIdsForMember(member);
     const explicitNodeMatch = candidates.length
-      ? trustedPeers.find((peer) => candidates.includes(peer.peerId.trim().toLowerCase()))
+      ? trustedPeers.find((peer) =>
+          candidates.includes(peer.peerId.trim().toLowerCase())
+          || candidates.includes(String(peer.nodeId || "").trim().toLowerCase())
+        )
       : undefined;
     if (explicitNodeMatch) return explicitNodeMatch;
     const memberDid = String(member?.did || "").trim().toLowerCase();
