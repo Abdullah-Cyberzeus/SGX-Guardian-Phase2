@@ -1,4 +1,5 @@
 use crate::did::doc_persistence;
+use crate::did::document::DidDocument;
 use crate::did::DidRecord;
 use crate::key_manager::KeyManager;
 use crate::vc::credential::{
@@ -383,25 +384,39 @@ pub fn default_permissions_for_role(role: CredentialRole) -> Vec<String> {
 }
 
 pub fn subject_did_for_node(node_name: &str) -> Result<String, VcError> {
-    if let Ok(Some(doc)) = doc_persistence::load_self() {
-        if doc.sgx_node_name.as_deref() == Some(node_name) {
-            return Ok(doc.id);
+    // A node's DID changes when its local identity is regenerated (e.g. state
+    // wiped and reprovisioned under the same node_name). Stale docs for a
+    // reused node_name can still be sitting in the peer cache or CA aggregate
+    // alongside the current one, so we must not just take the first match —
+    // we compare `sgx:updated` (RFC3339, so string-comparable) across every
+    // source and keep the most recently published document.
+    let mut best: Option<DidDocument> = None;
+    let mut consider = |doc: DidDocument| {
+        if doc.sgx_node_name.as_deref() != Some(node_name) {
+            return;
         }
+        let is_newer = best
+            .as_ref()
+            .map(|b| doc.sgx_updated > b.sgx_updated)
+            .unwrap_or(true);
+        if is_newer {
+            best = Some(doc);
+        }
+    };
+
+    if let Ok(Some(doc)) = doc_persistence::load_self() {
+        consider(doc);
     }
     for doc in doc_persistence::list_peer_docs()? {
-        if doc.sgx_node_name.as_deref() == Some(node_name) {
-            return Ok(doc.id);
-        }
+        consider(doc);
     }
     for doc in doc_persistence::load_ca_aggregate()? {
-        if doc.sgx_node_name.as_deref() == Some(node_name) {
-            return Ok(doc.id);
-        }
+        consider(doc);
     }
-    Err(VcError::InvalidStructure(format!(
-        "subject DID not found for node {}",
-        node_name
-    )))
+
+    best.map(|doc| doc.id).ok_or_else(|| {
+        VcError::InvalidStructure(format!("subject DID not found for node {}", node_name))
+    })
 }
 
 pub fn known_ca_did() -> Result<String, VcError> {

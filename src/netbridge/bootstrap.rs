@@ -81,7 +81,6 @@ impl Bootstrapper {
     pub fn prepare_runtime_directories(&self) -> Result<(), BootstrapError> {
         let dirs = [
             self.options.runtime_dir.as_str(), // /tmp/netbridge
-            "/var/run/wpa_supplicant",         // wpa_supplicant socket dir
             "/etc/sgx-guardian",               // template config dir
         ];
 
@@ -98,8 +97,6 @@ impl Bootstrapper {
     /// Embed default templates directly into the binary so they can be recreated if missing
     const DEFAULT_HOSTAPD: &'static str =
         include_str!("../../config/hostapd/hostapd.conf.template");
-    const DEFAULT_WPA: &'static str =
-        include_str!("../../config/wpa_supplicant/wpa_supplicant.conf.template");
     const DEFAULT_DNSMASQ: &'static str =
         include_str!("../../config/dnsmasq/dnsmasq.conf.template");
 
@@ -111,10 +108,6 @@ impl Bootstrapper {
             (
                 "/etc/sgx-guardian/hostapd.conf.template",
                 Self::DEFAULT_HOSTAPD,
-            ),
-            (
-                "/etc/sgx-guardian/wpa_supplicant.conf.template",
-                Self::DEFAULT_WPA,
             ),
             (
                 "/etc/sgx-guardian/dnsmasq.conf.template",
@@ -181,44 +174,14 @@ impl Bootstrapper {
 
         Ok(())
     }
-
-    /// Validates uplink dependencies: wpa_supplicant, udhcpc, permissions, and client-mode hardware support
-    pub fn run_uplink_validations(
-        &self,
-        settings: &crate::netbridge::types::WifiClientSettings,
-    ) -> Result<(), BootstrapError> {
-        info!("Running system validations for Wi-Fi client (uplink) mode...");
-        self.validator
-            .validate_uplink_runtime_conditions(&settings.interface)?;
-        info!("All uplink system validations passed.");
-        Ok(())
-    }
-
-    /// Orchestrates the runtime preparation for the Wi-Fi uplink
-    pub fn initialize_uplink_startup(
-        &self,
-        settings: &crate::netbridge::types::WifiClientSettings,
-    ) -> Result<(), BootstrapError> {
-        // 1. Run startup validations
-        self.run_uplink_validations(settings)?;
-
-        // 2. Prepare runtime directories
-        self.prepare_runtime_directories()?;
-
-        // 3. Ensure configuration templates are present
-        self.ensure_templates_exist()?;
-
-        Ok(())
-    }
 }
 
 /// Tests for the first-boot provisioning flow.
 ///
-/// `prepare_runtime_directories` and `ensure_templates_exist` both target
-/// hardcoded system paths (`/var/run/wpa_supplicant`, `/etc/sgx-guardian`) that
-/// only root can create, and every validation in the startup flow shells out to
-/// a wireless tool (`iw`, `hostapd`, `wpa_supplicant`, `udhcpc`) that is not
-/// installed here. Both facts make the unprivileged outcome fully
+/// `prepare_runtime_directories` and `ensure_templates_exist` both target the
+/// hardcoded system path `/etc/sgx-guardian`, which only root can create, and
+/// every validation in the startup flow shells out to a wireless tool (`iw`,
+/// `hostapd`) that is not installed here. Both facts make the unprivileged outcome fully
 /// deterministic, so these tests assert the real failure the daemon gets when
 /// it is started on a host that has not been provisioned — including which step
 /// of each orchestration aborts first, which is the part that actually matters
@@ -226,7 +189,7 @@ impl Bootstrapper {
 #[cfg(test)]
 mod tests {
     use super::{BootstrapError, BootstrapOptions, Bootstrapper};
-    use crate::netbridge::types::{ApSettings, NetbridgeError, WifiClientSettings};
+    use crate::netbridge::types::{ApSettings, NetbridgeError};
     use crate::netbridge::validator::ValidationError;
     use std::path::Path;
 
@@ -246,13 +209,6 @@ mod tests {
             ssid: "sgx-test-ap".to_string(),
             interface: "wlan0".to_string(),
             ..ApSettings::default()
-        }
-    }
-
-    fn uplink_settings() -> WifiClientSettings {
-        WifiClientSettings {
-            interface: "wlan0".to_string(),
-            ..WifiClientSettings::default()
         }
     }
 
@@ -313,16 +269,23 @@ mod tests {
         if !unprivileged() {
             return;
         }
+        // The only other hardcoded system path is /etc/sgx-guardian; if it was
+        // already created on this host (e.g. by a prior real bootstrap run as
+        // root), `prepare_runtime_directories`'s `!path.exists()` guard skips
+        // it and there is nothing left in the list to fail on.
+        if Path::new("/etc/sgx-guardian").exists() {
+            return;
+        }
         let temp = tempfile::tempdir().expect("tempdir");
         let options = options_in(temp.path());
         let runtime_dir = options.runtime_dir.clone();
         let bootstrapper = Bootstrapper::new(options);
 
         // The loop creates the (missing) runtime directory first, and only then
-        // hits `/var/run/wpa_supplicant`, which it cannot create.
+        // hits `/etc/sgx-guardian`, which it cannot create.
         let error = bootstrapper
             .prepare_runtime_directories()
-            .expect_err("creating /var/run/wpa_supplicant must be refused");
+            .expect_err("creating /etc/sgx-guardian must be refused");
         assert!(
             matches!(error, BootstrapError::Io(_)),
             "expected an IO error, got {error:?}"
@@ -364,7 +327,6 @@ mod tests {
         // These are `include_str!`ed at build time, so a missing or emptied
         // template file is a build-time regression this asserts against.
         assert!(Bootstrapper::DEFAULT_HOSTAPD.contains("ssid="));
-        assert!(!Bootstrapper::DEFAULT_WPA.trim().is_empty());
         assert!(!Bootstrapper::DEFAULT_DNSMASQ.trim().is_empty());
         // `ensure_templates_exist` rewrites any template still carrying the
         // legacy `{BSSID}` placeholder, so the embedded copy must not have it.
@@ -397,29 +359,5 @@ mod tests {
         // Aborting at step 1 must leave every later side effect undone.
         assert!(!Path::new(&runtime_dir).exists());
         assert!(!Path::new(&output_config).exists());
-    }
-
-    #[test]
-    fn run_uplink_validations_reports_the_missing_uplink_toolchain() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let bootstrapper = Bootstrapper::new(options_in(temp.path()));
-        match bootstrapper.run_uplink_validations(&uplink_settings()) {
-            Err(BootstrapError::Validation(_)) => {}
-            other => panic!("expected a validation failure, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn initialize_uplink_startup_aborts_at_the_validation_step() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let options = options_in(temp.path());
-        let runtime_dir = options.runtime_dir.clone();
-        let bootstrapper = Bootstrapper::new(options);
-
-        match bootstrapper.initialize_uplink_startup(&uplink_settings()) {
-            Err(BootstrapError::Validation(_)) => {}
-            other => panic!("expected the validation step to abort first, got {other:?}"),
-        }
-        assert!(!Path::new(&runtime_dir).exists());
     }
 }

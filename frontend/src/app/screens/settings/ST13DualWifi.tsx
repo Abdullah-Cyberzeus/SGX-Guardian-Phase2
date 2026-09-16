@@ -204,7 +204,12 @@ export function ST13DualWifi() {
       setNetworks(unique);
       toast.success(unique.length ? `Found ${unique.length} Wi-Fi network${unique.length === 1 ? "" : "s"}` : "Scan completed; no networks found");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Wi-Fi scan failed");
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("E_WIFI_DEVICE_UNMANAGED")) {
+        toast.error("Turn off Hotspot mode first, then scan and switch to Client mode.");
+      } else {
+        toast.error(message || "Wi-Fi scan failed");
+      }
     } finally {
       setScanning(false);
     }
@@ -342,15 +347,22 @@ export function ST13DualWifi() {
               {MODE_OPTIONS.map((option) => {
                 const Icon = option.icon;
                 const active = selectedMode === option.key;
+                const dualUnsupported = option.key === "dual" && modeData?.dual_wifi_supported === false;
                 return (
                   <button
                     key={option.key}
                     disabled={applying}
-                    onClick={() => setSelectedMode(option.key)}
-                    className={`flex items-start gap-3 rounded-lg border p-3 text-left transition ${active ? "border-primary bg-primary/5 ring-1 ring-primary" : "hover:bg-muted/50"}`}
+                    onClick={() => {
+                      if (dualUnsupported) {
+                        toast.error("Dual Wi-Fi mode is not supported on this device — it has a single Wi-Fi radio, which can be either a hotspot or a client, not both at once.");
+                        return;
+                      }
+                      setSelectedMode(option.key);
+                    }}
+                    className={`flex items-start gap-3 rounded-lg border p-3 text-left transition ${active ? "border-primary bg-primary/5 ring-1 ring-primary" : dualUnsupported ? "opacity-50 hover:bg-muted/50" : "hover:bg-muted/50"}`}
                   >
                     <span className={`rounded-lg p-2 ${active ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"}`}><Icon size={17} /></span>
-                    <span><span className="block text-sm font-semibold">{option.label}</span><span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{option.description}</span></span>
+                    <span><span className="block text-sm font-semibold">{option.label}</span><span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{dualUnsupported ? "Not supported on this device's single Wi-Fi radio" : option.description}</span></span>
                   </button>
                 );
               })}

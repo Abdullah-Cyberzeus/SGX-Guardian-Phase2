@@ -168,7 +168,8 @@ pub async fn require_auth(
         }
     }
 
-    if let Some(response) = reject_cross_site_unsafe_request(req.method(), req.headers()) {
+    if let Some(response) = reject_cross_site_unsafe_request(req.method(), req.headers(), req.uri())
+    {
         log_audit(
             &state.node_id,
             AuditCategory::Identity,
@@ -275,7 +276,11 @@ fn is_cors_preflight(method: &Method, headers: &HeaderMap) -> bool {
         && headers.contains_key(header::ACCESS_CONTROL_REQUEST_METHOD)
 }
 
-fn reject_cross_site_unsafe_request(method: &Method, headers: &HeaderMap) -> Option<Response> {
+fn reject_cross_site_unsafe_request(
+    method: &Method,
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+) -> Option<Response> {
     if matches!(method, &Method::GET | &Method::HEAD | &Method::OPTIONS) {
         return None;
     }
@@ -303,10 +308,21 @@ fn reject_cross_site_unsafe_request(method: &Method, headers: &HeaderMap) -> Opt
     let origin = headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())?;
-    let Some(host) = headers
+    // HTTP/2 (and HTTP/3) requests carry the target host in the `:authority`
+    // pseudo-header, not a `Host` header — hyper surfaces that only via
+    // `Uri::authority()`, never as a `host` entry in `headers`. Browsers
+    // negotiate h2 over TLS by default, so falling back here (rather than
+    // rejecting outright) is required for ordinary same-origin fetches to
+    // pass this check.
+    let host = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
-    else {
+        .map(str::to_owned)
+        .or_else(|| {
+            uri.authority()
+                .map(|authority| authority.as_str().to_owned())
+        });
+    let Some(host) = host else {
         return Some(forbidden("request origin could not be verified"));
     };
     let origin_host = origin
@@ -314,7 +330,7 @@ fn reject_cross_site_unsafe_request(method: &Method, headers: &HeaderMap) -> Opt
         .or_else(|| origin.strip_prefix("http://"))
         .and_then(|rest| rest.split('/').next())
         .unwrap_or(origin);
-    if origin_host.eq_ignore_ascii_case(host) || is_local_development_origin(origin_host) {
+    if origin_host.eq_ignore_ascii_case(&host) || is_local_development_origin(origin_host) {
         return None;
     }
     Some(forbidden("request origin is not allowed"))
@@ -658,7 +674,11 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("sec-fetch-site", "cross-site".parse().unwrap());
 
-        let response = reject_cross_site_unsafe_request(&Method::POST, &headers);
+        let response = reject_cross_site_unsafe_request(
+            &Method::POST,
+            &headers,
+            &axum::http::Uri::from_static("/"),
+        );
 
         assert!(response.is_some());
     }
@@ -669,7 +689,24 @@ mod tests {
         headers.insert(header::ORIGIN, "https://guardian.local".parse().unwrap());
         headers.insert(header::HOST, "guardian.local".parse().unwrap());
 
-        let response = reject_cross_site_unsafe_request(&Method::PATCH, &headers);
+        let response = reject_cross_site_unsafe_request(
+            &Method::PATCH,
+            &headers,
+            &axum::http::Uri::from_static("/"),
+        );
+
+        assert!(response.is_none());
+    }
+
+    #[test]
+    fn http2_requests_without_a_host_header_fall_back_to_the_uri_authority() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, "https://guardian.local".parse().unwrap());
+
+        let uri: axum::http::Uri = "https://guardian.local/api/v1/transport/lock"
+            .parse()
+            .unwrap();
+        let response = reject_cross_site_unsafe_request(&Method::POST, &headers, &uri);
 
         assert!(response.is_none());
     }

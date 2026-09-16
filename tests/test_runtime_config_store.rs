@@ -234,16 +234,6 @@ fn uplink_interface_round_trips() {
 }
 
 #[test]
-fn restore_flag_round_trips() {
-    with_temp_runtime_files(|_, _| {
-        let mut cfg = GuardianConfig::default();
-        cfg.flags.restore_on_boot = true;
-        ConfigStore::save(&cfg).unwrap();
-        assert!(ConfigStore::load().unwrap().flags.restore_on_boot);
-    });
-}
-
-#[test]
 fn multiple_uplink_networks_round_trip() {
     with_temp_runtime_files(|_, _| {
         let mut cfg = GuardianConfig::default();

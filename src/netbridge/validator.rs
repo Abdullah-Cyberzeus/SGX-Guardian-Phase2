@@ -190,157 +190,6 @@ impl Validator {
 
         Ok(())
     }
-
-    pub fn check_wpa_supplicant_installed(&self) -> Result<(), ValidationError> {
-        let output = Command::new("wpa_supplicant")
-            .arg("-v")
-            .output()
-            .map_err(|_| ValidationError::WpaSupplicantNotInstalled)?;
-        if !output.status.success() {
-            return Err(ValidationError::WpaSupplicantNotInstalled);
-        }
-        Ok(())
-    }
-
-    pub fn check_udhcpc_installed(&self) -> Result<(), ValidationError> {
-        let output = Command::new("udhcpc")
-            .arg("--version")
-            .output()
-            .map_err(|_| ValidationError::UdhcpcNotInstalled)?;
-        // udhcpc --version returns error code 1 sometimes even when printing version,
-        // so checking if it outputs string starting with "udhcpc" is safer.
-        let output_str = str::from_utf8(&output.stderr).unwrap_or("");
-        if !output_str.contains("udhcpc") {
-            let stdout_str = str::from_utf8(&output.stdout).unwrap_or("");
-            if !stdout_str.contains("udhcpc") {
-                return Err(ValidationError::UdhcpcNotInstalled);
-            }
-        }
-        Ok(())
-    }
-
-    pub fn check_interface_exists(&self, iface: &str) -> Result<(), ValidationError> {
-        let output = Command::new("ip")
-            .arg("link")
-            .arg("show")
-            .arg(iface)
-            .output()
-            .map_err(|_| ValidationError::CommandExecutionFailed("ip link".to_string()))?;
-        if !output.status.success() {
-            return Err(ValidationError::InterfaceNotAvailable(iface.to_string()));
-        }
-        Ok(())
-    }
-
-    pub fn check_root_permissions(&self) -> Result<(), ValidationError> {
-        let output = Command::new("id")
-            .arg("-u")
-            .output()
-            .map_err(|_| ValidationError::CommandExecutionFailed("id -u".to_string()))?;
-        let output_str = str::from_utf8(&output.stdout).unwrap_or("");
-        if output_str.trim() != "0" {
-            return Err(ValidationError::PermissionDenied);
-        }
-        Ok(())
-    }
-
-    pub fn check_client_mode_support(&self) -> Result<bool, ValidationError> {
-        let output = Command::new("iw")
-            .arg("list")
-            .output()
-            .map_err(|_| ValidationError::IwNotInstalled)?;
-
-        if !output.status.success() {
-            return Err(ValidationError::CommandExecutionFailed(
-                "iw list".to_string(),
-            ));
-        }
-
-        let output_str = str::from_utf8(&output.stdout).unwrap_or("");
-        let mut in_supported_modes = false;
-        for line in output_str.lines() {
-            let trimmed = line.trim();
-            if trimmed == "Supported interface modes:" {
-                in_supported_modes = true;
-                continue;
-            }
-            if in_supported_modes {
-                if trimmed.starts_with('*') {
-                    if trimmed == "* managed" || trimmed == "* station" {
-                        return Ok(true);
-                    }
-                } else if !trimmed.is_empty() {
-                    in_supported_modes = false;
-                }
-            }
-        }
-        Ok(false)
-    }
-
-    pub fn check_interface_not_busy(&self, iface: &str) -> Result<(), ValidationError> {
-        // If wpa_cli status returns successfully on this interface, another instance is already managing it
-        let output = Command::new("wpa_cli")
-            .arg("-i")
-            .arg(iface)
-            .arg("status")
-            .output();
-
-        if let Ok(out) = output {
-            let status_str = str::from_utf8(&out.stdout).unwrap_or("");
-            if status_str.contains("wpa_state=") {
-                return Err(ValidationError::InterfaceBusy(iface.to_string()));
-            }
-        }
-        Ok(())
-    }
-
-    pub fn check_wifi_scan_works(&self, iface: &str) -> Result<(), ValidationError> {
-        // Ensure interface is UP before scanning, otherwise scan will fail with "Network is down"
-        let _ = Command::new("ip")
-            .arg("link")
-            .arg("set")
-            .arg(iface)
-            .arg("up")
-            .output();
-
-        // Give it a split second to bring up the radio
-        std::thread::sleep(std::time::Duration::from_millis(200));
-
-        let output = Command::new("iw")
-            .arg("dev")
-            .arg(iface)
-            .arg("scan")
-            .output()
-            .map_err(|_| ValidationError::IwNotInstalled)?;
-
-        // iw scan might return 0 but print "command failed: Network is down (-100)" to stderr
-        // or just return a non-zero status. We check both.
-        if !output.status.success() {
-            return Err(ValidationError::ScanFailed(iface.to_string()));
-        }
-
-        let err_str = str::from_utf8(&output.stderr).unwrap_or("");
-        if err_str.contains("failed") || err_str.contains("Network is down") {
-            return Err(ValidationError::ScanFailed(iface.to_string()));
-        }
-
-        Ok(())
-    }
-
-    pub fn validate_uplink_runtime_conditions(&self, iface: &str) -> Result<(), ValidationError> {
-        self.check_root_permissions()?;
-        self.check_interface_exists(iface)?;
-        self.check_wpa_supplicant_installed()?;
-        self.check_udhcpc_installed()?;
-        if !self.check_client_mode_support()? {
-            return Err(ValidationError::ClientModeNotSupported);
-        }
-        self.check_interface_not_busy(iface)?;
-        // Note: hardware scan validation removed — wpa_supplicant handles scanning internally.
-        // Running iw scan here after a reset causes false failures on embedded hardware that
-        // needs 1-2+ seconds to fully initialize the radio after being brought up.
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -348,16 +197,12 @@ mod tests {
     use super::*;
 
     // Every method on `Validator` other than `check_port_available` shells out
-    // directly to an external binary (iw, hostapd, dnsmasq, wpa_supplicant,
-    // udhcpc, ip, wpa_cli, id) via `std::process::Command` with no injectable
-    // runner/trait seam (unlike `ProcessRunner` used elsewhere in this crate).
-    // `iw`, `hostapd`, `dnsmasq`, `wpa_supplicant`, `udhcpc`, and `wpa_cli` are
-    // all confirmed absent in this sandbox (verified by hand: `which <bin>`
-    // fails for each), and the test process is confirmed non-root (`id -u` =
-    // 1000) — so every method's outcome is in fact fully deterministic here,
-    // just not the "happy path" outcome. `ip` and `id` ARE present, so
-    // `check_interface_exists`/`check_root_permissions`/`check_wifi_scan_works`
-    // exercise their real command-invocation logic too, not just spawn-failure.
+    // directly to an external binary (iw, hostapd, dnsmasq) via
+    // `std::process::Command` with no injectable runner/trait seam (unlike
+    // `ProcessRunner` used elsewhere in this crate). `iw`, `hostapd`, and
+    // `dnsmasq` are all confirmed absent in this sandbox (verified by hand:
+    // `which <bin>` fails for each) — so every method's outcome is in fact
+    // fully deterministic here, just not the "happy path" outcome.
 
     #[test]
     fn display_command_execution_failed() {
@@ -547,84 +392,6 @@ mod tests {
         assert!(matches!(
             validator.validate_runtime_conditions(),
             Err(ValidationError::IwNotInstalled)
-        ));
-    }
-
-    #[test]
-    fn check_wpa_supplicant_installed_reports_not_installed() {
-        let validator = Validator::new();
-        assert!(matches!(
-            validator.check_wpa_supplicant_installed(),
-            Err(ValidationError::WpaSupplicantNotInstalled)
-        ));
-    }
-
-    #[test]
-    fn check_udhcpc_installed_reports_not_installed() {
-        let validator = Validator::new();
-        assert!(matches!(
-            validator.check_udhcpc_installed(),
-            Err(ValidationError::UdhcpcNotInstalled)
-        ));
-    }
-
-    #[test]
-    fn check_interface_exists_true_for_loopback_false_for_fake_interface() {
-        let validator = Validator::new();
-        assert!(validator.check_interface_exists("lo").is_ok());
-        assert!(matches!(
-            validator.check_interface_exists("zzz-fake-iface-not-real"),
-            Err(ValidationError::InterfaceNotAvailable(iface)) if iface == "zzz-fake-iface-not-real"
-        ));
-    }
-
-    #[test]
-    fn check_root_permissions_reports_permission_denied_when_not_root() {
-        let validator = Validator::new();
-        assert!(matches!(
-            validator.check_root_permissions(),
-            Err(ValidationError::PermissionDenied)
-        ));
-    }
-
-    #[test]
-    fn check_client_mode_support_reports_iw_not_installed() {
-        let validator = Validator::new();
-        assert!(matches!(
-            validator.check_client_mode_support(),
-            Err(ValidationError::IwNotInstalled)
-        ));
-    }
-
-    #[test]
-    fn check_interface_not_busy_is_ok_when_wpa_cli_is_absent() {
-        let validator = Validator::new();
-        // `wpa_cli` fails to spawn at all (ENOENT), so `output` is `Err` and
-        // the function falls through to `Ok(())` without ever inspecting a
-        // real wpa_cli status.
-        assert!(validator.check_interface_not_busy("lo").is_ok());
-    }
-
-    #[test]
-    fn check_wifi_scan_works_reports_iw_not_installed() {
-        let validator = Validator::new();
-        // The preceding `ip link set lo up` real call succeeds harmlessly;
-        // the subsequent `iw dev lo scan` fails because `iw` is absent.
-        assert!(matches!(
-            validator.check_wifi_scan_works("lo"),
-            Err(ValidationError::IwNotInstalled)
-        ));
-    }
-
-    #[test]
-    fn validate_uplink_runtime_conditions_short_circuits_on_non_root() {
-        let validator = Validator::new();
-        // check_root_permissions runs first and fails deterministically
-        // (non-root), before any of the later checks (interface existence,
-        // wpa_supplicant, udhcpc, client mode support) ever run.
-        assert!(matches!(
-            validator.validate_uplink_runtime_conditions("lo"),
-            Err(ValidationError::PermissionDenied)
         ));
     }
 }

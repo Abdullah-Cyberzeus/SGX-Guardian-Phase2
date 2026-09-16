@@ -51,6 +51,7 @@ async fn get_mode(State(state): State<RuntimeApiState>) -> impl IntoResponse {
     Json(json!({
         "mode": mode_str,
         "status": status,
+        "dual_wifi_supported": RuntimeManager::dual_wifi_supported(),
         "module1": {
             "role": "ap",
             "ssid": config.hotspot.ssid,
@@ -131,11 +132,12 @@ async fn set_mode(
 
 async fn scan_networks() -> axum::response::Response {
     let config = ConfigStore::load().unwrap_or_default();
-    let uplink_iface = if !config.uplink.interface.is_empty() {
-        config.uplink.interface
+    let configured_uplink = if !config.uplink.interface.is_empty() {
+        config.uplink.interface.clone()
     } else {
         crate::netbridge::backend::DEFAULT_NM_UPLINK_INTERFACE.to_string()
     };
+    let uplink_iface = RuntimeManager::resolve_interface(&configured_uplink);
 
     let result = match crate::netbridge::network_manager::NetworkManagerBackend::system(
         std::time::Duration::from_secs(5),

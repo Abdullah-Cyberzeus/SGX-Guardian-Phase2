@@ -9,11 +9,6 @@ pub enum RuntimeMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct RuntimeFlags {
-    pub restore_on_boot: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HotspotConfig {
     pub interface: String,
     pub ssid: String,
@@ -50,7 +45,6 @@ impl Default for UplinkConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuardianConfig {
     pub mode: RuntimeMode,
-    pub flags: RuntimeFlags,
     pub hotspot: HotspotConfig,
     pub uplink: UplinkConfig,
 }
@@ -59,7 +53,6 @@ impl Default for GuardianConfig {
     fn default() -> Self {
         Self {
             mode: RuntimeMode::Off,
-            flags: RuntimeFlags::default(),
             hotspot: HotspotConfig::default(),
             uplink: UplinkConfig::default(),
         }

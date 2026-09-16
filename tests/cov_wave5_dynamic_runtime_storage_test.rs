@@ -14,7 +14,7 @@ use sgx_guardian_client::runtime::crypto::{
 use sgx_guardian_client::runtime::errors::RuntimeError;
 use sgx_guardian_client::runtime::event_bus::{EventBus, RuntimeEvent};
 use sgx_guardian_client::runtime::models::{
-    GuardianConfig, HotspotConfig, RuntimeFlags, RuntimeMode, SavedWifi, UplinkConfig,
+    GuardianConfig, HotspotConfig, RuntimeMode, SavedWifi, UplinkConfig,
 };
 use sgx_guardian_client::runtime::state::{StateMetadata, StateTransition, SystemState};
 use sgx_guardian_client::runtime::state_machine::StateMachine;
@@ -54,9 +54,6 @@ impl Drop for EnvRestore {
 fn runtime_config() -> GuardianConfig {
     GuardianConfig {
         mode: RuntimeMode::DualWifi,
-        flags: RuntimeFlags {
-            restore_on_boot: true,
-        },
         hotspot: HotspotConfig {
             interface: "wlan0".into(),
             ssid: "Guardian Lab".into(),
@@ -389,7 +386,6 @@ async fn runtime_state_machine_publishes_transitions_errors_and_reset() {
 fn runtime_models_events_errors_and_defaults_serialize_all_variants() {
     let config = GuardianConfig::default();
     assert_eq!(config.mode, RuntimeMode::Off);
-    assert!(!config.flags.restore_on_boot);
     assert!(!config.hotspot.client_isolation);
 
     for mode in [
