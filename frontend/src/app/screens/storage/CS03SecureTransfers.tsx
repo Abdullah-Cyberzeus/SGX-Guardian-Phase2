@@ -52,6 +52,14 @@ function StatusPill({ value }: { value?: string }) {
   );
 }
 
+function vaultFileUnavailableReason(file: VaultRecord) {
+  if (file.revoked) return "Revoked files cannot be sent";
+  if (typeof file.expires_at === "string" && new Date(file.expires_at).getTime() <= Date.now()) {
+    return "Expired files cannot be sent";
+  }
+  return "";
+}
+
 export function CS03SecureTransfers() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -119,7 +127,9 @@ export function CS03SecureTransfers() {
       ]);
       setVaultFiles(files.files);
       setVaultFolders(folders.folders);
-      const availableIds = new Set(files.files.map(fileId));
+      const availableIds = new Set(
+        files.files.filter((file) => !vaultFileUnavailableReason(file)).map(fileId),
+      );
       setSelectedVaultIds((selected) => selected.filter((id) => availableIds.has(id)));
     } catch (cause) {
       setVaultError(cause instanceof Error ? cause.message : "Check the Guardian connection.");
@@ -180,6 +190,17 @@ export function CS03SecureTransfers() {
     if (!selectedPeer?.did || selectedVaultIds.length === 0) {
       setSendError("Select a peer and at least one Vault file.");
       toast.error("Select a peer and at least one Vault file");
+      return;
+    }
+    const selectedFiles = selectedVaultIds
+      .map((id) => vaultFiles.find((file) => fileId(file) === id))
+      .filter((file): file is VaultRecord => Boolean(file));
+    const unavailableFile = selectedFiles.find(vaultFileUnavailableReason);
+    if (unavailableFile) {
+      const reason = vaultFileUnavailableReason(unavailableFile);
+      setSendError(reason);
+      toast.error("File cannot be sent", { description: reason });
+      setSelectedVaultIds((current) => current.filter((id) => id !== fileId(unavailableFile)));
       return;
     }
     setSendError(null);
@@ -475,17 +496,20 @@ export function CS03SecureTransfers() {
                     {childFiles.map((file) => {
                       const id = fileId(file);
                       const selected = selectedVaultIds.includes(id);
+                      const unavailableReason = vaultFileUnavailableReason(file);
                       return (
                         <button
                           type="button"
                           key={id}
                           aria-pressed={selected}
+                          disabled={Boolean(unavailableReason)}
+                          title={unavailableReason || undefined}
                           onClick={() => setSelectedVaultIds((current) =>
                             current.includes(id)
                               ? current.filter((selectedId) => selectedId !== id)
                               : [...current, id]
                           )}
-                          className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left"
+                          className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left disabled:cursor-not-allowed disabled:opacity-55"
                           style={{
                             backgroundColor: selected
                               ? "color-mix(in srgb, var(--primary) 12%, transparent)"
@@ -498,7 +522,7 @@ export function CS03SecureTransfers() {
                               {String(file.filename ?? file.name ?? id)}
                             </span>
                             <span className="block text-[11px] text-muted-foreground">
-                              {formatBytes(Number(file.size_plain ?? file.size ?? 0))}
+                              {unavailableReason || formatBytes(Number(file.size_plain ?? file.size ?? 0))}
                             </span>
                           </span>
                           <span

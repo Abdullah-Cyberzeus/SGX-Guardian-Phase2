@@ -97,6 +97,10 @@ function circleMemberRoleLabel(member: Partial<CircleMember>) {
   return String(member.role || "").toLowerCase() === "owner" ? "Admin" : (member.role || "member");
 }
 
+function sameDid(left?: string, right?: string) {
+  return Boolean(left && right && left.trim().toLowerCase() === right.trim().toLowerCase());
+}
+
 function peerIsOnline(peer?: Partial<Peer> | null) {
   return peer?.presenceStatus === "online" || Boolean(peer?.online);
 }
@@ -269,13 +273,15 @@ function CircleMembersSheet({
   const rowsForMember = (member: CircleMember) => {
     const peer = peerForMember(member);
     const browserMember = String(member.memberType || (member as any).member_type || "").toLowerCase() === "browser";
+    const isLocalMember = sameDid(member.did, currentDid);
+    const isOwnerMember = sameDid(member.did, ownerDid);
     return [
       { label: "Name", value: circleMemberDisplayName(member) },
       { label: "Role", value: circleMemberRoleLabel(member) },
       { label: "DID", value: member.did, mono: true },
       {
         label: "IP Address",
-        value: peer?.ip || member.overlayIp || member.physicalIp || (member.did && member.did === ownerDid ? adminIp : undefined) || (browserMember && member.did ? syntheticBrowserMemberIp(member.did) : "Hidden"),
+        value: peer?.ip || member.overlayIp || member.physicalIp || (isOwnerMember || isLocalMember ? adminIp : undefined) || (browserMember && member.did ? syntheticBrowserMemberIp(member.did) : "Hidden"),
         mono: true,
       },
       { label: "Member Type", value: member.memberType || (member as any).member_type || peer?.memberType || "guardian" },
@@ -304,7 +310,7 @@ function CircleMembersSheet({
               {members.map((member) => {
                 const id = String(member.did || member.id || circleMemberDisplayName(member));
                 const selected = selectedMemberId === id;
-                const isCurrent = currentDid && member.did === currentDid;
+                const isCurrent = sameDid(member.did, currentDid);
                 return (
                   <div key={id} className="overflow-hidden rounded-lg border border-border bg-background">
                     <button
@@ -392,6 +398,7 @@ export function ChatConversationScreen() {
   const [savingContact, setSavingContact] = useState(false);
   const [queuedMessageIds, setQueuedMessageIds] = useState<Set<string>>(new Set());
   const [queuedMessages, setQueuedMessages] = useState<Map<string, { state: string; lastError?: string }>>(new Map());
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLInputElement>(null);
   const recordsRef = useRef<ChatMessageRecord[]>(records);
@@ -643,9 +650,22 @@ export function ChatConversationScreen() {
       close();
     };
   }, [loadHistory, isGroup, circleId, peerDid, localDid]);
+  const scrollMessagesToBottom = useCallback(() => {
+    const container = messagesScrollRef.current;
+    if (!container) {
+      bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end", inline: "nearest" });
+      return;
+    }
+    const scroll = () => {
+      container.scrollTop = container.scrollHeight;
+    };
+    scroll();
+    window.requestAnimationFrame(scroll);
+  }, []);
+
   useLayoutEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end", inline: "nearest" });
-  }, [records, circleId, peerDid]);
+    scrollMessagesToBottom();
+  }, [scrollMessagesToBottom, records.length, loading, circleId, peerDid]);
 
   useEffect(() => { recordsRef.current = records; }, [records]);
 
@@ -1045,7 +1065,7 @@ export function ChatConversationScreen() {
           {search && <button type="button" aria-label="Clear search" onClick={() => setSearch("")} className="grid h-5 w-5 shrink-0 place-items-center rounded-full hover:bg-muted"><X size={14} className="text-muted-foreground" /></button>}
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div ref={messagesScrollRef} className="flex-1 overflow-y-auto">
         <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col gap-3 p-4 md:p-6">
           {loading && <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 size={18} className="animate-spin" /> Loading secure conversation…</div>}
           {!loading && messages.length === 0 && <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center text-muted-foreground"><MessageSquare size={36} /><p className="text-sm font-medium text-foreground">No messages yet</p><p className="max-w-xs text-xs">Start this secure {isGroup ? "Circle conversation" : "peer-to-peer conversation"}.</p></div>}

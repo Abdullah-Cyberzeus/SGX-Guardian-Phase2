@@ -1020,10 +1020,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("📌 Using SGX_LIGHTHOUSE_IP={}", env_ip);
                         env_ip
                     } else {
-                        ca_discovery::resolve_ca_ip_from_config().await
+                        ca_discovery::resolve_ca_ip_for_runtime().await
                     }
                 } else {
-                    ca_discovery::resolve_ca_ip_from_config().await
+                    ca_discovery::resolve_ca_ip_for_runtime().await
                 }
             };
             println!("📡 nodeA (CA/Lighthouse) LAN IP: {}", ca_lan_ip);
@@ -1260,7 +1260,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let resolver_ca_host = match did_doc_publish_state.as_ref() {
             Some((_, ca_host, _, _)) => ca_host.clone(),
-            None => ca_discovery::resolve_ca_ip_from_config().await,
+            None => ca_discovery::resolve_ca_ip_for_runtime().await,
         };
         did_resolver =
             sgx_guardian_client::did::Resolver::new(sgx_guardian_client::did::ResolverConfig {
@@ -1321,7 +1321,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut vc_status_list_sync_elapsed = 0u64;
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(RELAY_SYNC_INTERVAL_SECS)).await;
-                let ca_host = ca_discovery::resolve_ca_ip_from_config().await;
+                let ca_host = ca_discovery::resolve_ca_ip_for_runtime().await;
                 let mut topology_changed = false;
                 did_doc_sync_elapsed += RELAY_SYNC_INTERVAL_SECS;
                 vc_status_list_sync_elapsed += RELAY_SYNC_INTERVAL_SECS;
@@ -2925,7 +2925,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         *overlay_ip_cidr = cached_ip;
                     }
                     if !*is_ca {
-                        *ca_host = ca_discovery::resolve_ca_ip_from_config().await;
+                        *ca_host = ca_discovery::resolve_ca_ip_for_runtime().await;
                     }
                     publish_args = Some((overlay_ip_cidr.clone(), ca_host.clone(), *is_ca));
                 }

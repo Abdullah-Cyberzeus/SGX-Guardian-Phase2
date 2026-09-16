@@ -175,6 +175,31 @@ describe("live topology node model", () => {
     });
   });
 
+  it("maps verified peer attestation onto CoT nodes by nodeId", () => {
+    const nodes = mergeLiveNodes(
+      [],
+      [
+        peer({
+          peerId: "did:guardian:node-a-runtime",
+          nodeId: "nodeA",
+          status: "verified",
+          ip: "192.168.100.1",
+        }),
+      ],
+      [{
+        records: [{ node: "nodeA", overlayIp: "192.168.100.1", active: true, relayEnabled: false, lighthouseEnabled: true }],
+        roles: ["lighthouse"],
+      }],
+    );
+
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]).toMatchObject({
+      id: "nodea",
+      attestation: "verified",
+    });
+    expect(nodes[0].roles).toEqual(expect.arrayContaining(["lighthouse"]));
+  });
+
   it("builds active mesh, relay, and verified-attestation links around the primary lighthouse", () => {
     expect(buildTopologyLinks([])).toEqual([]);
     const nodes: CircleTopologyNode[] = [

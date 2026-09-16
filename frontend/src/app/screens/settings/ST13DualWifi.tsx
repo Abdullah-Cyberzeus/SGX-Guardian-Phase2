@@ -121,6 +121,15 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   return <label className="mb-1.5 block text-xs font-medium text-muted-foreground">{children}</label>;
 }
 
+function FieldLabelWithTooltip({ children, tooltip }: { children: React.ReactNode; tooltip: React.ReactNode }) {
+  return (
+    <div className="mb-1.5 flex items-center gap-1.5">
+      <span className="text-xs font-medium text-muted-foreground">{children}</span>
+      <InfoTooltip label={`About ${children}`}>{tooltip}</InfoTooltip>
+    </div>
+  );
+}
+
 const inputClass = "h-11 w-full rounded-lg border bg-input-background px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15";
 
 export function ST13DualWifi() {
@@ -398,15 +407,39 @@ export function ST13DualWifi() {
           {showHotspot && (
             <Section title="Hotspot configuration · uap0">
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="sm:col-span-2"><FieldLabel>SSID</FieldLabel><input className={inputClass} value={hotspotSsid} onChange={(event) => setHotspotSsid(event.target.value)} placeholder="SGX_Hotspot" maxLength={32} /></div>
+                <div className="sm:col-span-2">
+                  <FieldLabelWithTooltip tooltip="The hotspot network name broadcast by Guardian on uap0. Nearby devices see this name when joining the local Guardian Wi-Fi.">
+                    SSID
+                  </FieldLabelWithTooltip>
+                  <input className={inputClass} value={hotspotSsid} onChange={(event) => setHotspotSsid(event.target.value)} placeholder="SGX_Hotspot" maxLength={32} />
+                </div>
                 <div className="sm:col-span-2">
                   <FieldLabel>Secure password</FieldLabel>
                   <div className="relative"><input className={`${inputClass} pr-11`} type={showHotspotPassword ? "text" : "password"} value={hotspotPassword} onChange={(event) => setHotspotPassword(event.target.value)} placeholder="8+ characters with at least one symbol" autoComplete="new-password" /><button type="button" className="absolute right-3 top-3 text-muted-foreground" onClick={() => setShowHotspotPassword((value) => !value)}>{showHotspotPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
                   <p className="mt-1.5 text-[11px] text-muted-foreground">Common passwords are rejected by Guardian.</p>
                 </div>
-                <div><FieldLabel>Band</FieldLabel><div className="flex gap-2">{(["2.4GHz", "5GHz"] as WifiBand[]).map((value) => <button key={value} onClick={() => setBand(value)} className={`h-11 flex-1 rounded-lg border text-sm font-medium ${band === value ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted"}`}>{value}</button>)}</div></div>
-                <div><FieldLabel>Channel</FieldLabel><select className={inputClass} value={channel} onChange={(event) => setChannel(Number(event.target.value))}>{(band === "2.4GHz" ? [1, 6, 11] : [36, 40, 44, 48]).map((value) => <option key={value} value={value}>{value}</option>)}</select></div>
-                <label className="flex items-center justify-between gap-4 rounded-lg border p-3 sm:col-span-2"><span><span className="block text-sm font-medium">Client isolation</span><span className="block text-xs text-muted-foreground">Prevent hotspot clients from directly reaching one another.</span></span><input type="checkbox" checked={clientIsolation} onChange={(event) => setClientIsolation(event.target.checked)} className="h-4 w-4 accent-primary" /></label>
+                <div>
+                  <FieldLabelWithTooltip tooltip="The radio frequency used by the hotspot. 2.4GHz has broader compatibility and range; 5GHz can be faster but needs client support.">
+                    Band
+                  </FieldLabelWithTooltip>
+                  <div className="flex gap-2">{(["2.4GHz", "5GHz"] as WifiBand[]).map((value) => <button key={value} onClick={() => setBand(value)} className={`h-11 flex-1 rounded-lg border text-sm font-medium ${band === value ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted"}`}>{value}</button>)}</div>
+                </div>
+                <div>
+                  <FieldLabelWithTooltip tooltip="The Wi-Fi channel uap0 broadcasts on. Use a less crowded channel when nearby networks interfere with hotspot stability.">
+                    Channel
+                  </FieldLabelWithTooltip>
+                  <select className={inputClass} value={channel} onChange={(event) => setChannel(Number(event.target.value))}>{(band === "2.4GHz" ? [1, 6, 11] : [36, 40, 44, 48]).map((value) => <option key={value} value={value}>{value}</option>)}</select>
+                </div>
+                <div className="flex items-center justify-between gap-4 rounded-lg border p-3 sm:col-span-2">
+                  <span>
+                    <span className="flex items-center gap-1.5 text-sm font-medium">
+                      Client isolation
+                      <InfoTooltip label="About Client isolation">Blocks hotspot clients from connecting directly to each other while still allowing Guardian-managed network access.</InfoTooltip>
+                    </span>
+                    <span className="block text-xs text-muted-foreground">Prevent hotspot clients from directly reaching one another.</span>
+                  </span>
+                  <input type="checkbox" checked={clientIsolation} onChange={(event) => setClientIsolation(event.target.checked)} className="h-4 w-4 accent-primary" />
+                </div>
               </div>
             </Section>
           )}

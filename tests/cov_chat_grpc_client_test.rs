@@ -185,6 +185,7 @@ async fn push_receipt_to_peer_succeeds_against_a_mock_server() {
         reader_did: "did:guardian:reader".to_string(),
         timestamp: 1_700_000_000,
         group_id: String::new(),
+        reader_node_id: "node-reader".to_string(),
     };
     push_receipt_to_peer("did:guardian:reader".to_string(), addr, request)
         .await
@@ -204,6 +205,7 @@ async fn push_receipt_to_peer_surfaces_a_grpc_error() {
         reader_did: "did:guardian:reader".to_string(),
         timestamp: 1_700_000_000,
         group_id: String::new(),
+        reader_node_id: "node-reader".to_string(),
     };
     let err = push_receipt_to_peer("did:guardian:reader".to_string(), addr, request)
         .await

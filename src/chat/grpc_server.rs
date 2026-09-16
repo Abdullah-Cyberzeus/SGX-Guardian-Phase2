@@ -147,8 +147,20 @@ impl ChatService for MyChatService {
     ) -> Result<tonic::Response<crate::proto::sgx::PushReceiptResponse>, tonic::Status> {
         let req = request.into_inner();
 
-        // 0. Verify the sender is in our trusted circle (VC Membership Check)
-        verify_peer_is_trusted(&self.state, &req.reader_did).await?;
+        // 0. Verify the Guardian that relayed the receipt is trusted. Older
+        // receipts only carry reader_did, so keep that as the primary path;
+        // newer receipts also include reader_node_id for peers whose DID
+        // metadata is stale or absent in this node's registry.
+        if let Err(did_error) = verify_peer_is_trusted(&self.state, &req.reader_did).await {
+            let reader_node_id = req.reader_node_id.trim();
+            if reader_node_id.is_empty()
+                || verify_peer_is_trusted(&self.state, reader_node_id)
+                    .await
+                    .is_err()
+            {
+                return Err(did_error);
+            }
+        }
 
         let group_id = if req.group_id.is_empty() {
             None
@@ -194,19 +206,34 @@ impl ChatService for MyChatService {
         } else {
             1
         };
-        let _ = crate::chat::storage::update_message_read_by(
+        let updated_record = crate::chat::storage::update_message_read_by(
             is_group,
             target_id,
             &req.message_id,
             &req.reader_did,
             min_reader_count,
         )
-        .await;
+        .await
+        .ok()
+        .flatten();
+
+        let updated_record = if updated_record.is_none() && !is_group {
+            update_direct_receipt_by_message_id(&req.message_id, &req.reader_did, min_reader_count)
+                .await
+        } else {
+            updated_record
+        };
 
         let _ = self
             .state
             .chat_events
             .send(crate::chat::models::ChatEvent::ReadReceipt(receipt.clone()));
+        if let Some(record) = updated_record {
+            let _ = self
+                .state
+                .chat_events
+                .send(crate::chat::models::ChatEvent::MessageStatus(record));
+        }
 
         tracing::info!(
             "✅ Received and logged read receipt for message {} from peer {}",
@@ -420,6 +447,46 @@ fn attachment_id_from_payload(payload: &str) -> Option<String> {
         .as_str()
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
+}
+
+async fn update_direct_receipt_by_message_id(
+    message_id: &str,
+    reader_did: &str,
+    min_reader_count: usize,
+) -> Option<ChatMessageRecord> {
+    for conversation_id in crate::chat::storage::list_p2p_conversation_ids().await {
+        let Ok(history) = crate::chat::storage::read_p2p_history(&conversation_id).await else {
+            continue;
+        };
+        if !history
+            .iter()
+            .any(|message| message.message_id == message_id)
+        {
+            continue;
+        }
+        match crate::chat::storage::update_message_read_by(
+            false,
+            &conversation_id,
+            message_id,
+            reader_did,
+            min_reader_count,
+        )
+        .await
+        {
+            Ok(Some(record)) => return Some(record),
+            Ok(None) => continue,
+            Err(error) => {
+                tracing::warn!(
+                    message_id,
+                    conversation_id,
+                    %error,
+                    "failed to apply direct read receipt by message-id fallback"
+                );
+                return None;
+            }
+        }
+    }
+    None
 }
 
 fn verify_relayed_actor(

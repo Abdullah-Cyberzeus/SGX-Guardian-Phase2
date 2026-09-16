@@ -14,6 +14,8 @@ pub enum XferError {
     PeerNotFound(String),
     #[error("source not found: {0}")]
     SourceNotFound(String),
+    #[error("source unavailable: {0}")]
+    SourceUnavailable(String),
     #[error("transfer not found: {0}")]
     TransferNotFound(String),
     #[error("hash mismatch: expected {expected}, got {got}")]

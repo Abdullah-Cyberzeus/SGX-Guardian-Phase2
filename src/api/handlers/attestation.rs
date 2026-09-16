@@ -4,6 +4,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -74,6 +75,133 @@ pub struct AttestationQuery {
     pub result: Option<String>,
 }
 
+async fn read_log_json(state: &AppState, filename: &str) -> Option<String> {
+    match read_json_from_dir(&state.log_dir_primary, filename).await {
+        Ok(text) => Some(text),
+        Err(_) => read_json_from_dir(&state.log_dir_fallback, filename)
+            .await
+            .ok(),
+    }
+}
+
+fn attestation_result_from_status(status: &str) -> String {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "verified" | "success" | "succeeded" | "pass" | "passed" | "attested" => {
+            "success".to_string()
+        }
+        "failed" | "failure" | "error" | "rejected" => "failed".to_string(),
+        _ => "pending".to_string(),
+    }
+}
+
+fn str_field(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn trusted_peer_record(value: &Value) -> Option<ApiLastAttestation> {
+    let peer_id = str_field(
+        value,
+        &["node_id", "nodeId", "peer_id", "peerId", "ip", "did"],
+    )?;
+    let status = str_field(value, &["status", "result"]).unwrap_or_else(|| "pending".to_string());
+    Some(ApiLastAttestation {
+        peer_id,
+        policy_digest: str_field(value, &["policy_digest", "policyDigest"]).unwrap_or_default(),
+        result: attestation_result_from_status(&status),
+        timestamp: str_field(
+            value,
+            &[
+                "last_attested_at",
+                "lastAttestedAt",
+                "timestamp",
+                "attested_at",
+                "attestedAt",
+            ],
+        )
+        .unwrap_or_default(),
+        peer_did: str_field(value, &["did", "peer_did", "peerDid"]),
+        virtual_id: str_field(value, &["virtual_id", "virtualId"]),
+        dkp_pubkey_sha256_b16: str_field(value, &["dkp_pubkey_sha256_b16", "dkpPubkeySha256B16"]),
+        pcr_composite_digest: str_field(value, &["pcr_composite_digest", "pcrCompositeDigest"]),
+        count: 1,
+    })
+}
+
+fn trusted_peer_records(text: &str) -> Vec<ApiLastAttestation> {
+    let Ok(value) = serde_json::from_str::<Value>(text) else {
+        return Vec::new();
+    };
+
+    match value {
+        Value::Array(items) => items.iter().filter_map(trusted_peer_record).collect(),
+        Value::Object(map) => {
+            for key in ["peers", "trusted_peers", "trustedPeers"] {
+                if let Some(Value::Array(items)) = map.get(key) {
+                    return items.iter().filter_map(trusted_peer_record).collect();
+                }
+            }
+            let single = Value::Object(map.clone());
+            if let Some(record) = trusted_peer_record(&single) {
+                return vec![record];
+            }
+            map.values().filter_map(trusted_peer_record).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn last_attestation_records(text: &str) -> Vec<ApiLastAttestation> {
+    let list = if text.trim().is_empty() {
+        Vec::new()
+    } else if let Ok(parsed_list) =
+        serde_json::from_str::<Vec<crate::attestation_service::LastAttestation>>(text)
+    {
+        parsed_list
+    } else if let Ok(single) =
+        serde_json::from_str::<crate::attestation_service::LastAttestation>(text)
+    {
+        let mut migrated = single;
+        migrated.count = 1;
+        vec![migrated]
+    } else {
+        Vec::new()
+    };
+
+    list.into_iter()
+        .map(|item| ApiLastAttestation {
+            peer_id: item.peer_id,
+            policy_digest: item.policy_digest,
+            result: attestation_result_from_status(&item.result),
+            timestamp: item.timestamp,
+            peer_did: item.peer_did,
+            virtual_id: item.virtual_id,
+            dkp_pubkey_sha256_b16: item.dkp_pubkey_sha256_b16,
+            pcr_composite_digest: item.pcr_composite_digest,
+            count: item.count,
+        })
+        .collect()
+}
+
+async fn attestation_records(state: &AppState) -> Vec<ApiLastAttestation> {
+    let mut records = read_log_json(state, "trusted_peers.json")
+        .await
+        .map(|text| trusted_peer_records(&text))
+        .unwrap_or_default();
+
+    if records.is_empty() {
+        if let Some(text) = read_log_json(state, "last_attestation.json").await {
+            records = last_attestation_records(&text);
+        }
+    }
+
+    records.sort_by(|left, right| right.timestamp.cmp(&left.timestamp));
+    records
+}
+
 /// Read a JSON file from a base directory with path-traversal protection.
 async fn read_json_from_dir(base_dir: &str, filename: &str) -> Result<String, ApiError> {
     let base = tokio::fs::canonicalize(Path::new(base_dir))
@@ -95,31 +223,8 @@ pub async fn last(
     State(s): State<Arc<AppState>>,
     Query(q): Query<AttestationQuery>,
 ) -> Result<Json<Vec<ApiLastAttestation>>, ApiError> {
-    let text = match read_json_from_dir(&s.log_dir_primary, "last_attestation.json").await {
-        Ok(t) => t,
-        Err(_) => read_json_from_dir(&s.log_dir_fallback, "last_attestation.json")
-            .await
-            .map_err(|_| ApiError::NotFound("no attestation result recorded yet".into()))?,
-    };
-
-    let list = if text.trim().is_empty() {
-        Vec::new()
-    } else if let Ok(parsed_list) =
-        serde_json::from_str::<Vec<crate::attestation_service::LastAttestation>>(&text)
-    {
-        parsed_list
-    } else if let Ok(single) =
-        serde_json::from_str::<crate::attestation_service::LastAttestation>(&text)
-    {
-        let mut migrated = single;
-        migrated.count = 1;
-        vec![migrated]
-    } else {
-        Vec::new()
-    };
-
     let mut response_list = Vec::new();
-    for item in list {
+    for item in attestation_records(&s).await {
         if let Some(ref peer_did_filter) = q.peer_did {
             match &item.peer_did {
                 Some(did) => {
@@ -137,17 +242,7 @@ pub async fn last(
             }
         }
 
-        response_list.push(ApiLastAttestation {
-            peer_id: item.peer_id,
-            policy_digest: item.policy_digest,
-            result: item.result,
-            timestamp: item.timestamp,
-            peer_did: item.peer_did,
-            virtual_id: item.virtual_id,
-            dkp_pubkey_sha256_b16: item.dkp_pubkey_sha256_b16,
-            pcr_composite_digest: item.pcr_composite_digest,
-            count: item.count,
-        });
+        response_list.push(item);
     }
 
     Ok(Json(response_list))

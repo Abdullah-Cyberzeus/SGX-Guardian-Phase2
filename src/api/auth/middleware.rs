@@ -5,7 +5,7 @@ use crate::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use crate::audit::logger::log_audit;
 use axum::{
     extract::State,
-    http::{header, HeaderMap, Method, Request},
+    http::{header, HeaderMap, Method, Request, Uri},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -168,7 +168,8 @@ pub async fn require_auth(
         }
     }
 
-    if let Some(response) = reject_cross_site_unsafe_request(req.method(), req.headers()) {
+    if let Some(response) = reject_cross_site_unsafe_request(req.method(), req.uri(), req.headers())
+    {
         log_audit(
             &state.node_id,
             AuditCategory::Identity,
@@ -275,7 +276,11 @@ fn is_cors_preflight(method: &Method, headers: &HeaderMap) -> bool {
         && headers.contains_key(header::ACCESS_CONTROL_REQUEST_METHOD)
 }
 
-fn reject_cross_site_unsafe_request(method: &Method, headers: &HeaderMap) -> Option<Response> {
+fn reject_cross_site_unsafe_request(
+    method: &Method,
+    uri: &Uri,
+    headers: &HeaderMap,
+) -> Option<Response> {
     if matches!(method, &Method::GET | &Method::HEAD | &Method::OPTIONS) {
         return None;
     }
@@ -306,9 +311,13 @@ fn reject_cross_site_unsafe_request(method: &Method, headers: &HeaderMap) -> Opt
     else {
         return None;
     };
+    // HTTP/1.1 carries the target authority in Host. HTTP/2 carries it in
+    // :authority, which Hyper exposes through the request URI and does not
+    // always duplicate as a Host header.
     let Some(host) = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
+        .or_else(|| uri.authority().map(|authority| authority.as_str()))
     else {
         return Some(forbidden("request origin could not be verified"));
     };
@@ -661,7 +670,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("sec-fetch-site", "cross-site".parse().unwrap());
 
-        let response = reject_cross_site_unsafe_request(&Method::POST, &headers);
+        let response = reject_cross_site_unsafe_request(&Method::POST, &Uri::default(), &headers);
 
         assert!(response.is_some());
     }
@@ -672,7 +681,18 @@ mod tests {
         headers.insert(header::ORIGIN, "https://guardian.local".parse().unwrap());
         headers.insert(header::HOST, "guardian.local".parse().unwrap());
 
-        let response = reject_cross_site_unsafe_request(&Method::PATCH, &headers);
+        let response = reject_cross_site_unsafe_request(&Method::PATCH, &Uri::default(), &headers);
+
+        assert!(response.is_none());
+    }
+
+    #[test]
+    fn same_origin_http2_authority_is_allowed_without_host_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, "https://192.168.200.1".parse().unwrap());
+        let uri: Uri = "https://192.168.200.1/api/v1/circles".parse().unwrap();
+
+        let response = reject_cross_site_unsafe_request(&Method::POST, &uri, &headers);
 
         assert!(response.is_none());
     }

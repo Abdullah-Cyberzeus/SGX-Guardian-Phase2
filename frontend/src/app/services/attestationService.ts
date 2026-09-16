@@ -3,9 +3,12 @@ import api from './api';
 export interface AttestationResult {
   id: string;
   peerId: string;
+  peerIp?: string;
   peerName: string;
   status: 'passed' | 'failed' | 'pending';
+  result?: 'success' | 'failed' | 'pending';
   timestamp: string;
+  policyDigest?: string;
   enclaveHash: string;
   signerHash: string;
   productId: number;
@@ -40,6 +43,8 @@ interface BackendLastAttestation {
   policyDigest: string;
   result: string;
   timestamp: string;
+  peerDid?: string;
+  virtualId?: string;
 }
 
 export interface PeerAttestationRecord {
@@ -50,20 +55,24 @@ export interface PeerAttestationRecord {
 }
 
 export const attestationService = {
-  // GET /api/attestation - sgx-guardian attest (backend returns single object, UI expects array)
+  // GET /api/attestation - backend returns trusted peer attestation records.
   getResults: async (): Promise<AttestationResult[]> => {
-    try {
-      const res = await api.get<BackendLastAttestation>('/attestation');
-      if (!res.peerId && !res.timestamp) return [];
-      return [{
-        id: 'att_001',
-        peerId: res.peerId,
-        peerIp: res.peerId,
-        peerName: res.peerId,
-        policyDigest: res.policyDigest,
-        result: res.result === 'pass' || res.result === 'success' ? 'success' : 'failed',
-        status: res.result === 'pass' || res.result === 'success' ? 'passed' : 'failed',
-        timestamp: res.timestamp,
+    const res = await api.get<BackendLastAttestation[] | BackendLastAttestation>('/attestation');
+    const records = Array.isArray(res) ? res : res.peerId || res.timestamp ? [res] : [];
+    return records.map((record, index) => {
+      const passed = ["pass", "passed", "success", "verified", "attested"].includes(record.result.toLowerCase());
+      const failed = ["fail", "failed", "failure", "error", "rejected"].includes(record.result.toLowerCase());
+      const status = passed ? "passed" : failed ? "failed" : "pending";
+      const result = passed ? "success" : failed ? "failed" : "pending";
+      return {
+        id: `${record.peerId || record.peerDid || "attestation"}-${index}`,
+        peerId: record.peerId,
+        peerIp: record.peerId,
+        peerName: record.peerId,
+        policyDigest: record.policyDigest,
+        result,
+        status,
+        timestamp: record.timestamp,
         enclaveHash: '',
         signerHash: '',
         productId: 0,
@@ -71,23 +80,22 @@ export const attestationService = {
         attributes: { debug: false, mode64bit: true, provisionKey: false, initToken: false },
         tcbLevel: 'UpToDate',
         details: {
-          pcrMatch: res.result === 'pass' || res.result === 'success',
-          signatureValid: res.result === 'pass' || res.result === 'success',
-          policyMatch: res.result === 'pass' || res.result === 'success',
+          pcrMatch: passed,
+          signatureValid: passed,
+          policyMatch: passed,
         },
-      } as any];
-    } catch (err) {
-      throw err;
-    }
+      } as AttestationResult;
+    });
   },
 
   // GET /api/attestation?peer_did=... - last attestation result for one peer DID.
   // Returns null when the peer has no recorded attestation yet.
   getForPeer: async (peerDid: string): Promise<PeerAttestationRecord | null> => {
     try {
-      const res = await api.get<BackendLastAttestation>('/attestation', { peer_did: peerDid });
-      if (!res.peerId && !res.timestamp) return null;
-      return { peerId: res.peerId, policyDigest: res.policyDigest, result: res.result, timestamp: res.timestamp };
+      const res = await api.get<BackendLastAttestation[] | BackendLastAttestation>('/attestation', { peer_did: peerDid });
+      const record = Array.isArray(res) ? res[0] : res;
+      if (!record || (!record.peerId && !record.timestamp)) return null;
+      return { peerId: record.peerId, policyDigest: record.policyDigest, result: record.result, timestamp: record.timestamp };
     } catch {
       return null;
     }

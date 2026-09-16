@@ -42,6 +42,10 @@ message PushReceiptRequest {
   string reader_did = 2; // The DID of the peer who read the message
   int64 timestamp = 3;   // The UTC epoch timestamp of when it was read
   string group_id = 4;   // Group ID (e.g., "circle"), or empty for P2P
+  // Node identity of the Guardian that relayed this receipt. This lets a
+  // sender authenticate receipts from a peer whose DID metadata is stale or
+  // absent locally, while still recording reader_did as the actual reader.
+  string reader_node_id = 5;
 }
 
 message PushReceiptResponse {

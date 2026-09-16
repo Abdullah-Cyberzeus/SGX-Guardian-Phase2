@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Download,
   Eye,
@@ -14,7 +14,6 @@ import {
   FolderInput,
   Send,
   Clock,
-  History,
   WifiOff,
   X,
 } from "lucide-react";
@@ -33,11 +32,10 @@ import {
 } from "../ui/alert-dialog";
 import { useVault } from "../../contexts/VaultContext";
 import { useAuth } from "../../contexts/AuthContext";
-import { useContactNames } from "../../contexts/ContactNameContext";
 import { iconForKind } from "./FileTypeIcon";
 import { FilePreviewDialog, canPreview } from "./FilePreviewDialog";
 import { formatBytes, kindLabel, type VaultFile } from "./types";
-import { vaultService, type VaultDownloadRecord } from "../../services/vaultService";
+import { vaultService } from "../../services/vaultService";
 import { toast } from "sonner";
 import { useNavigate } from "react-router";
 
@@ -55,7 +53,7 @@ interface FileDetailPanelProps {
 
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-4 py-2.5">
+    <div className="flex flex-col gap-1 py-2.5 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
       <span
         style={{
           fontFamily: "Inter, sans-serif",
@@ -67,7 +65,7 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
         {label}
       </span>
       <span
-        className="min-w-0 text-right"
+        className="min-w-0 text-left sm:text-right"
         style={{
           fontFamily: "Inter, sans-serif",
           fontSize: "var(--text-xs)",
@@ -88,10 +86,9 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
   const navigate = useNavigate();
   const {
     deviceName, encryption, offline, removeFile, renameFile, moveFile, toggleStar,
-    revokeFile, restoreFile, setFileExpiry, getFileHistory, getFolder, folders,
+    revokeFile, restoreFile, setFileExpiry, getFolder, folders,
   } = useVault();
   const { session } = useAuth();
-  const { displayForDid } = useContactNames();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [revokeConfirmOpen, setRevokeConfirmOpen] = useState(false);
   const [restoring, setRestoring] = useState(false);
@@ -101,8 +98,6 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
   const [moving, setMoving] = useState(false);
   const [settingExpiry, setSettingExpiry] = useState(false);
   const [expiryInput, setExpiryInput] = useState("");
-  const [history, setHistory] = useState<VaultDownloadRecord[] | null>(null);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const previewable = canPreview(file);
   const Icon = iconForKind(file.kind);
 
@@ -116,13 +111,6 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
   const folder = getFolder(file.folderId);
   const FolderIcon =
     folder?.kind === "circle" ? Users : folder?.kind === "system" ? Archive : Folder;
-
-  useEffect(() => {
-    if (!historyOpen || !isOwner) return;
-    void getFileHistory(file.id)
-      .then(setHistory)
-      .catch(() => setHistory([]));
-  }, [historyOpen, isOwner, file.id, getFileHistory]);
 
   const handleRemove = async () => {
     try {
@@ -430,6 +418,8 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
           <Button
             onClick={() => navigate(`/storage/transfers?vault_id=${encodeURIComponent(file.id)}`)}
             className="h-11 w-full gap-2"
+            disabled={isUnavailable}
+            title={isUnavailable ? "Unavailable files cannot be sent" : undefined}
           >
             <Send size={16} /> Send to peer
           </Button>
@@ -520,22 +510,13 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
             shared Vault metadata around it. */}
         {isOwner && (
           <div className="flex flex-col gap-2 pt-1" style={{ borderTop: "1px solid var(--border)" }}>
-            <div className="flex gap-2 pt-2">
-              <Button
-                variant="outline"
-                onClick={() => setSettingExpiry((value) => !value)}
-                className="h-11 flex-1 gap-2"
-              >
-                <Clock size={16} /> {file.expiresAt ? "Change expiry" : "Set expiry"}
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setHistoryOpen(true)}
-                className="h-11 flex-1 gap-2"
-              >
-                <History size={16} /> History
-              </Button>
-            </div>
+            <Button
+              variant="outline"
+              onClick={() => setSettingExpiry((value) => !value)}
+              className="h-11 w-full gap-2"
+            >
+              <Clock size={16} /> {file.expiresAt ? "Change expiry" : "Set expiry"}
+            </Button>
             {settingExpiry && (
               <Card className="gap-2 p-3">
                 <Input
@@ -578,35 +559,6 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
           </div>
         )}
       </div>
-
-      {/* Download history — owner-only. */}
-      <AlertDialog open={historyOpen} onOpenChange={setHistoryOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Download history</AlertDialogTitle>
-            <AlertDialogDescription>Who has downloaded "{file.name}" and when.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="flex max-h-64 flex-col gap-2 overflow-y-auto">
-            {history === null ? (
-              <p className="text-xs text-muted-foreground">Loading…</p>
-            ) : history.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No downloads yet.</p>
-            ) : (
-              history.map((entry, index) => (
-                <div key={index} className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-xs">
-                  <span className="truncate" title={entry.downloader_did}>
-                    {displayForDid(entry.downloader_did, entry.downloader_did)}
-                  </span>
-                  <span className="flex-shrink-0 text-muted-foreground">{new Date(entry.downloaded_at).toLocaleString()}</span>
-                </div>
-              ))
-            )}
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Close</AlertDialogCancel>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       {/* Revoke confirmation. */}
       <AlertDialog open={revokeConfirmOpen} onOpenChange={setRevokeConfirmOpen}>

@@ -13,17 +13,24 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 pub(crate) fn get_grpc_addr(ip: &str, peer_id_str: &str) -> String {
-    let parsed_port = peer_id_str
-        .split(':')
-        .nth(1)
-        .and_then(|p| p.parse::<u16>().ok());
+    let route_id = stable_route_id_for_peer(ip, peer_id_str);
+    let route_id = route_id.as_deref().unwrap_or(peer_id_str);
+    let socket_like_peer_id = peer_id_str.parse::<std::net::SocketAddr>().is_ok();
+    let parsed_port = if socket_like_peer_id {
+        None
+    } else {
+        route_id
+            .split(':')
+            .nth(1)
+            .and_then(|p| p.parse::<u16>().ok())
+    };
 
     let chat_port = match parsed_port {
         Some(port) if (50051..=50099).contains(&port) => port + 200,
         Some(port) if (50151..=50199).contains(&port) => port + 100,
         Some(port) if (50251..=50299).contains(&port) => port,
         Some(port) => port + 100,
-        None => match peer_id_str {
+        None => match route_id {
             "nodeA" => 50251,
             "nodeB" => 50252,
             "nodeC" => 50253,
@@ -41,6 +48,32 @@ pub(crate) fn get_grpc_addr(ip: &str, peer_id_str: &str) -> String {
         },
     };
     format!("{}:{}", ip, chat_port)
+}
+
+fn stable_route_id_for_peer(ip: &str, peer_id: &str) -> Option<String> {
+    let peer_id_trimmed = peer_id.trim();
+    if matches!(peer_id_trimmed, "nodeA" | "nodeB" | "nodeC") {
+        return Some(peer_id_trimmed.to_string());
+    }
+    if let Ok(registry) = crate::nebula::overlay_registry::OverlayRegistry::load(
+        crate::nebula::registry_sync::REGISTRY_PATH,
+    ) {
+        for node in ["nodeA", "nodeB", "nodeC"] {
+            if registry.get_ip(node).is_some_and(|overlay| overlay == ip) {
+                return Some(node.to_string());
+            }
+        }
+    }
+    if let Ok(registry) = crate::nebula::lighthouse::LighthouseRegistry::load(
+        crate::nebula::registry_sync::LIGHTHOUSE_REGISTRY_PATH,
+    ) {
+        for entry in registry.lighthouses {
+            if entry.overlay_ip == ip {
+                return Some(entry.node_name);
+            }
+        }
+    }
+    None
 }
 
 /// A peer registry entry counts as trusted enough to chat with. Mirrors
@@ -1069,6 +1102,7 @@ pub async fn mark_as_read(
                 reader_did: reader_did.clone(),
                 timestamp,
                 group_id: req.group_id.clone().unwrap_or_default(),
+                reader_node_id: state.node_id.clone(),
             };
 
             let peer_did = req.original_sender_did.clone();

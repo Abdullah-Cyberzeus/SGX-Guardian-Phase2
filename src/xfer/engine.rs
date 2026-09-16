@@ -313,6 +313,16 @@ async fn stage_vault_record(
         .await
         .map_err(map_vault_error)?
         .ok_or_else(|| XferError::SourceNotFound(format!("vault file not found: {}", vault_id)))?;
+    if record.revoked {
+        return Err(XferError::SourceUnavailable(
+            "access to this file has been revoked by its owner".to_string(),
+        ));
+    }
+    if record.is_expired() {
+        return Err(XferError::SourceUnavailable(
+            "this file has expired".to_string(),
+        ));
+    }
     if record.size_plain > max_file_bytes {
         return Err(XferError::FileTooLarge {
             size: record.size_plain,

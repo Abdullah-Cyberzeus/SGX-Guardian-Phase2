@@ -355,7 +355,7 @@ export function SC02AttestationStatus() {
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-lg)", fontWeight: "var(--font-weight-bold)", color: "var(--chart-2)" }}>
               {successCount}
             </p>
-            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>Passed</p>
+            <p style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>Attested</p>
           </div>
           <div className="rounded-lg border p-3 text-center" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
             <XCircle size={18} style={{ color: failedCount > 0 ? "var(--destructive)" : "var(--muted-foreground)", margin: "0 auto 8px" }} />

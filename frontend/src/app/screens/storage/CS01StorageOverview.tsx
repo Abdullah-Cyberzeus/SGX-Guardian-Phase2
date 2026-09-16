@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type FormEvent,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
@@ -32,7 +33,7 @@ type SizeFilter = "all" | "small" | "medium" | "large" | "very-large";
 
 const MIB = 1024 * 1024;
 
-/** Tracks the desktop (lg+) breakpoint — drives select-in-panel vs navigate. */
+/** Tracks the wide desktop breakpoint — drives select-in-panel vs navigate. */
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches,
@@ -44,6 +45,74 @@ function useIsDesktop() {
     return () => mq.removeEventListener("change", onChange);
   }, []);
   return isDesktop;
+}
+
+function UploadSidePanel({
+  fileCount,
+  folderName,
+  onCancel,
+  onConfirm,
+}: {
+  fileCount: number;
+  folderName: string;
+  onCancel: () => void;
+  onConfirm: (description: string) => Promise<void>;
+}) {
+  const [description, setDescription] = useState("");
+  const [uploading, setUploading] = useState(false);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setUploading(true);
+    try {
+      await onConfirm(description.trim());
+      onCancel();
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="flex h-full w-full flex-col gap-4 overflow-y-auto p-4">
+      <div className="flex shrink-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-foreground">
+            Upload {fileCount} {fileCount === 1 ? "file" : "files"}
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            To "{folderName}". Files are encrypted before being stored in the Guardian Vault.
+          </p>
+        </div>
+        <Button type="button" variant="ghost" size="icon" onClick={onCancel} aria-label="Cancel upload">
+          <X size={18} />
+        </Button>
+      </div>
+
+      <label className="flex flex-col gap-2 text-xs font-medium text-muted-foreground">
+        Description
+        <Input
+          autoFocus
+          value={description}
+          onChange={(event) => setDescription(event.target.value)}
+          placeholder="Optional note for this upload"
+          maxLength={280}
+        />
+      </label>
+
+      <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs leading-relaxed text-muted-foreground">
+        Upload progress appears above the file list. You can keep browsing while the transfer is running.
+      </div>
+
+      <div className="mt-auto flex gap-2 pt-2">
+        <Button type="button" variant="outline" className="h-11 flex-1" onClick={onCancel} disabled={uploading}>
+          Cancel
+        </Button>
+        <Button type="submit" className="h-11 flex-1" disabled={uploading}>
+          {uploading ? "Uploading..." : "Upload"}
+        </Button>
+      </div>
+    </form>
+  );
 }
 
 /** All Files — a Drive-style folder browser over every file on the SGX device. */
@@ -137,6 +206,7 @@ export function CS01StorageOverview() {
 
   const selectedFile = selectedFileId ? vault.getFile(selectedFileId) : undefined;
   const actionFolder = actionFolderId ? vault.getFolder(actionFolderId) ?? null : null;
+  const rightPanelOpen = isDesktop && (Boolean(pendingUpload) || Boolean(selectedFile));
 
   const navigateFolder = (id: string) => {
     setQuery("");
@@ -148,14 +218,17 @@ export function CS01StorageOverview() {
       navigateFolder(entry.folder.id);
       return;
     }
-    if (isDesktop) setSelectedFileId(entry.file.id);
-    else navigate(`/storage/${entry.file.id}`);
+    if (isDesktop) {
+      setPendingUpload(null);
+      setSelectedFileId(entry.file.id);
+    } else navigate(`/storage/${entry.file.id}`);
   };
 
   const handleUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(e.target.files ?? []);
     e.target.value = "";
     if (!selected.length) return;
+    if (isDesktop) setSelectedFileId(null);
     setPendingUpload(selected);
   };
 
@@ -291,7 +364,13 @@ export function CS01StorageOverview() {
         </section>
       )}
 
-      <div className="flex min-h-0 flex-1">
+      <div
+        className={`grid min-h-0 min-w-0 flex-1 ${
+          rightPanelOpen
+            ? "lg:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] xl:grid-cols-[minmax(0,1fr)_440px]"
+            : "grid-cols-1"
+        }`}
+      >
         {/* ── File browser ── */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Toolbar */}
@@ -427,7 +506,7 @@ export function CS01StorageOverview() {
 
           {/* Column header — tablet+ */}
           <div
-            className="hidden items-center gap-3 border-b border-border px-3 py-2 md:flex"
+            className={`hidden items-center gap-3 border-b border-border px-3 py-2 ${rightPanelOpen ? "xl:flex" : "lg:flex"}`}
             style={{ backgroundColor: "var(--card)" }}
           >
             <span style={{ width: "36px" }} className="flex-shrink-0" />
@@ -456,7 +535,7 @@ export function CS01StorageOverview() {
               Owner
             </span>
             <span
-              className="hidden w-32 flex-shrink-0 lg:block"
+              className="hidden w-32 flex-shrink-0 xl:block"
               style={{
                 fontFamily: "Inter, sans-serif",
                 fontSize: "11px",
@@ -533,6 +612,7 @@ export function CS01StorageOverview() {
                         isDesktop &&
                         selectedFileId === entry.file.id
                       }
+                      compact={rightPanelOpen}
                       onOpen={() => openEntry(entry)}
                       onToggleStar={
                         canManageVault && entry.type === "file"
@@ -560,24 +640,33 @@ export function CS01StorageOverview() {
           <StorageBar usedBytes={vault.usedBytes} capacityBytes={vault.capacityBytes} />
         </div>
 
-        {/* ── Detail panel — desktop, when a file is open ── */}
-        {isDesktop && selectedFile && (
-          <div className="hidden w-[380px] flex-shrink-0 border-l border-border lg:flex">
-            <FileDetailPanel
-              key={selectedFile.id}
-              file={selectedFile}
-              canManage={canManageVault}
-              onRemoved={() => setSelectedFileId(null)}
-              onOpenFolder={navigateFolder}
-              onClose={() => setSelectedFileId(null)}
-            />
+        {/* ── Right workspace — desktop upload + file details/actions ── */}
+        {rightPanelOpen && (
+          <div className="hidden min-w-0 border-l border-border bg-background lg:flex">
+            {pendingUpload ? (
+              <UploadSidePanel
+                fileCount={pendingUpload.length}
+                folderName={folder.id === ROOT_ID ? "All Files" : folder.name}
+                onCancel={() => setPendingUpload(null)}
+                onConfirm={handleConfirmUpload}
+              />
+            ) : selectedFile ? (
+              <FileDetailPanel
+                key={selectedFile.id}
+                file={selectedFile}
+                canManage={canManageVault}
+                onRemoved={() => setSelectedFileId(null)}
+                onOpenFolder={navigateFolder}
+                onClose={() => setSelectedFileId(null)}
+              />
+            ) : null}
           </div>
         )}
       </div>
 
       <input ref={uploadRef} type="file" multiple hidden onChange={handleUpload} />
       <UploadDescriptionDialog
-        open={!!pendingUpload}
+        open={!!pendingUpload && !isDesktop}
         onOpenChange={(open) => { if (!open) setPendingUpload(null); }}
         fileCount={pendingUpload?.length ?? 0}
         folderName={folder.id === ROOT_ID ? "All Files" : folder.name}
