@@ -401,6 +401,23 @@ To solve this, the SG-X Guardian system now implements the **W3C Decentralized I
 
 Every Guardian device automatically creates its own permanent, globally unique identity. This identity is calculated directly from the device's physical security chip and internal serial number. It acts like a digital fingerprint that never changes, cannot be stolen or moved to another machine, and can be verified completely offline.
 
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Device powers on] --> B{Identity file exists?}
+    B -- No --> C[Derive DID from the secure chip]
+    C --> D[Create and sign the identity profile]
+    D --> E[Save to protected storage]
+    B -- Yes --> F[Check the chip still matches the saved identity]
+    E --> G[Device is ready to communicate]
+    F --> G
+    G --> H[Look up a peer DID and verify its profile]
+    H --> I{Valid and current?}
+    I -- Yes --> J[Open an encrypted channel]
+    I -- No --> K[Refuse the connection]
+```
+
 ---
 
 ## 1.2 Why We Replaced Email-Based Identities
@@ -614,6 +631,22 @@ The DID Document acts like a **digitally signed passport**:
 - It is verified by a high-speed **DID Resolver** before any secure communication begins.
 - It enables **key rotation**, allowing security keys to be refreshed over time while keeping the device's permanent identity unchanged.
 
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[First boot] --> B{Self document exists?}
+    B -- No --> C[Read hardware key and network endpoints]
+    C --> D[Build DID Document version 1]
+    D --> E[Sign document with operational key]
+    E --> F[Save locally and publish to Circle registry]
+    B -- Yes --> F
+    F --> G[Peer resolves the document]
+    G --> H{Signature valid and version current?}
+    H -- Yes --> I[Peer accepts keys and endpoints]
+    H -- No --> J[Reject document]
+```
+
 ---
 
 ## 2.2 Structure of a DID Document
@@ -804,6 +837,24 @@ The resolution service automatically:
 - Delivers the peer's active public key and verified communication endpoints.
 - Manages an intelligent in-memory cache with a 1-hour Time-to-Live (TTL) and instant cache invalidation on key rotations.
 
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Service needs to reach a peer] --> B[Validate DID format]
+    B --> C{In memory cache?}
+    C -- No --> D{On local disk?}
+    D -- No --> E{In group snapshot?}
+    E -- No --> F[Query registry over network]
+    C -- Yes --> G[Verify signature]
+    D -- Yes --> G
+    E -- Yes --> G
+    F --> G
+    G --> H{Version current and node active?}
+    H -- Yes --> I[Return public key and endpoints]
+    H -- No --> J[Reject with replay or deactivated error]
+```
+
 ---
 
 ## 3.2 The Resolution Workflow (Step-by-Step)
@@ -963,6 +1014,21 @@ A Verifiable Credential acts as a **cryptographically provable digital membershi
 - It defines the device's assigned role (Owner or Member) and explicit network permissions (e.g., mesh joining, policy updates, certificate issuance).
 - It enables **autonomous peer-to-peer verification**: any two Guardian devices can verify each other's credentials directly across a local network without calling home to a cloud identity provider or central database.
 - It supports **instant revocation via W3C Status List 2021**, allowing compromised devices to be barred immediately through a compact, compressed status bitstring.
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Device joins a Circle] --> B[Owner issues membership credential]
+    B --> C[Credential signed and stored on device]
+    C --> D[Device presents credential to a peer]
+    D --> E[Peer verifies issuer signature]
+    E --> F{Listed as revoked in status list?}
+    F -- No --> G[Access granted with stated role]
+    F -- Yes --> H[Access denied]
+    G --> I{Near expiry?}
+    I -- Yes --> B
+```
 
 ---
 
@@ -1170,6 +1236,20 @@ To solve this challenge, SG-X Guardian introduces a **Two-Layer Identity Archite
 
 This hybrid approach establishes **standards-compliant persistent trust** alongside **complete session-level unlinkability**.
 
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Permanent DID] --> C[Compute VirtualID]
+    B[Current attestation state] --> C
+    C --> D[Cache VirtualID for the session]
+    D --> E[Use VirtualID for peer communication]
+    E --> F{Device state changed?}
+    F -- Yes --> G[Invalidate cache and re-attest]
+    G --> C
+    F -- No --> E
+```
+
 ---
 
 ## 5.2 The Two-Layer Identity Architecture
@@ -1350,6 +1430,20 @@ To solve this visibility challenge, the SG-X Guardian daemon integrates **automa
 - It maintains a persistent local inventory using the **`ConnectedDevice`** model.
 - It automatically cross-references every detected device against an **approved whitelist**, immediately flagging rogue or unapproved hardware for administrative approval.
 - It integrates discovery findings into an **automated threat prediction and vulnerability engine**, proactively probing for outdated software (such as vulnerable SSH versions or unpatched web servers).
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Scheduled scan starts] --> B[Discover devices on the network]
+    B --> C[Profile each device: ports, services, OS]
+    C --> D[Record in device inventory]
+    D --> E{On the approved whitelist?}
+    E -- Yes --> F[Mark as trusted]
+    E -- No --> G[Flag as rogue and raise alert]
+    F --> H[Queue for vulnerability review]
+    G --> H
+```
 
 ---
 
@@ -1558,6 +1652,20 @@ To achieve this, the SG-X Guardian system implements a high-performance **Certif
 - It encapsulates all active revocations into a unified, version-controlled **`CertificateRevocationList`** container protected by a SHA-256 Merkle root and monotonic sequence numbers.
 - It enforces a multi-tier authority model where Circle owners possess universal revocation authority and ordinary members can report critical peer compromises without waiting for owner intervention.
 - It provides instant, in-memory binary search gating to terminate unauthorized connections, revoke active communication sessions, and defend the network against compromised hardware.
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Administrator revokes a credential] --> B[Build revocation entry]
+    B --> C[Sign entry with issuer authority key]
+    C --> D[Add to the revocation list]
+    D --> E[Save list to local storage]
+    E --> F[Peer checks a credential]
+    F --> G{Found in revocation list?}
+    G -- Yes --> H[Refuse the connection]
+    G -- No --> I[Allow the connection]
+```
 
 ---
 
@@ -1821,6 +1929,21 @@ To solve this, the SG-X Guardian system implements an **epidemic-style gossip pr
 - Each revocation entry tracks peer acknowledgments in its **`peers_notified`** list, automatically transitioning to **`propagated`** once a configured threshold (e.g., 80% of the Circle) is reached.
 - The system achieves guaranteed **eventual consistency**, ensuring that all healthy nodes converge on an identical revocation state even across network partitions, node reboots, or dropped packets.
 
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Gossip round begins] --> B[Pick a random peer]
+    B --> C[Exchange revocation list summaries]
+    C --> D{Lists identical?}
+    D -- Yes --> E[Nothing to do, wait for next round]
+    D -- No --> F[Request the missing entries]
+    F --> G[Verify each entry signature]
+    G --> H[Merge valid entries into local list]
+    H --> I[Network converges on the same list]
+    E --> A
+```
+
 ---
 
 ## 8.2 The Epidemic Gossip Architecture & Exchange Lifecycle
@@ -2039,6 +2162,18 @@ To neutralize active threats instantly, the SG-X Guardian architecture incorpora
 - Receivers execute a bounded one-hop re-broadcast, achieving verified propagation to **90%+ of the Circle within 30 seconds** (compared to 5–10 minutes for standard epidemic gossip).
 - The system automatically emits structured, durable alert feeds that mobile Progressive Web Apps (PWAs) poll to raise instant user push notifications on administrative mobile devices.
 
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Urgent revocation raised] --> B[Send high-priority broadcast]
+    B --> C[Each peer forwards once, ignoring repeats]
+    C --> D[Peers apply the revocation immediately]
+    D --> E[Terminate active sessions with that device]
+    E --> F[Notify operators by alert and push]
+    D --> G[Routine gossip catches any missed node]
+```
+
 ---
 
 ## 9.2 The Priority Emergency Broadcast Architecture
@@ -2214,6 +2349,22 @@ To solve this operational challenge, the SG-X Guardian architecture implements a
 - A background reachability prober monitors network health; the instant peer connectivity is restored, the engine initiates synchronous, multi-round flush cycles.
 - Nodes exchange **version vectors** to rapidly fetch all revocations published across the Circle while they were isolated.
 - The system resolves state discrepancies using deterministic timestamp precedence ("last writer wins") and cryptographic role hierarchies, ensuring all nodes converge on an identical CRL catalog.
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Network link is down] --> B[Queue revocations to local storage]
+    B --> C[Probe periodically for reachability]
+    C --> D{Link restored?}
+    D -- No --> C
+    D -- Yes --> E[Exchange changes in both directions]
+    E --> F{Conflicting entries?}
+    F -- Yes --> G[Resolve using trust hierarchy]
+    F -- No --> H[Apply updates]
+    G --> H
+    H --> I[Clear the queue]
+```
 
 ---
 
@@ -2430,6 +2581,21 @@ To provide definitive, line-rate protection against network exploits, the SG-X G
 - **Synergy with the Guardian Advisory Engine**: Functions as a deterministic sensor feeding normalized alert vectors directly into Guardian's anomaly correlation engine, advisory risk profiler, and automated rule execution pipeline.
 - **Active Inline Kernel Blocking**: Operates in either passive `AlertOnly` mode or active `InlineBlock` mode, instantaneously dropping malicious packets at the Linux kernel level via dedicated `nftables` chains before packets reach application sockets.
 - **Resilient Lifecycle Management**: Features automated signature updates via `suricata-update`, pre-activation syntax validation gates, live Unix socket reloads, and comprehensive REST API telemetry.
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Traffic captured on monitored interfaces] --> B[Match against threat rule sets]
+    B --> C{Rule matched?}
+    C -- No --> A
+    C -- Yes --> D[Write alert to the event log]
+    D --> E[Parse and classify by severity]
+    E --> F[Dispatch to advisory and rule engines]
+    E --> G{Inline blocking enabled?}
+    G -- Yes --> H[Insert firewall block rule]
+    G -- No --> I[Log and alert only]
+```
 
 ---
 
@@ -2774,6 +2940,23 @@ To solve this critical operational challenge, the SG-X Guardian platform integra
 - **Resilient Health Watchdog & Split Recovery**: Dedicated background supervisors monitor daemon lifecycles (`hostapd`, `dnsmasq`, `wpa_supplicant`, `NetworkManager`). In the event of an upstream Wi-Fi disconnect, the local AP remains fully operational, allowing operators to maintain local dashboard access while the client uplink reconnects autonomously.
 - **Real-Time Telemetry & REST Management**: Comprehensive REST API endpoints and real-time WebSocket streams (`/api/v1/wifi/*`) provide continuous visibility into active operating modes, signal strength, connected client leases, and security health.
 
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Service starts] --> B[Read configured operating mode]
+    B --> C[Bring up uplink radio]
+    B --> D[Bring up local hotspot radio]
+    C --> E[Apply routing, NAT and firewall policy]
+    D --> E
+    E --> F[Serve DHCP and filtered DNS to clients]
+    F --> G[Watchdog monitors link health]
+    G --> H{Radio or service failed?}
+    H -- Yes --> I[Restart it and fail closed if unsafe]
+    I --> G
+    H -- No --> G
+```
+
 ---
 
 ## 12.2 Configurable Operating Modes & State Machine
@@ -3053,6 +3236,23 @@ To solve this critical operational gap while preserving decentralized silicon-ro
 - **Automated Certificate Bootstrap Mesh Enrollment**: Authenticated pairing seamlessly integrates with the CA certificate bootstrap workflow (`src/cert_service.rs`), automatically approving mesh overlay certificates and issuing W3C Verifiable Credentials for newly paired member nodes without requiring manual configuration file editing.
 - **Complete Paired Device Lifecycle Management**: The admin console provides real-time pairing progress polling, full hardware and attestation status visibility across all paired nodes, and secure device deauthorization and unpairing with durable audit logging.
 - **Clean Operational User Flow**: Provides a seamless three-phase administrative experience: Account Creation or Login -> Device Pairing via QR Code or Serial Number -> Comprehensive Management Dashboard.
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Operator opens the console] --> B{Account exists?}
+    B -- No --> C[Create account with hashed password]
+    B -- Yes --> D[Submit login]
+    C --> D
+    D --> E{Credentials valid and not rate limited?}
+    E -- No --> F[Reject and count the failure]
+    E -- Yes --> G[Issue signed session token]
+    G --> H[Pair a device by QR code or serial]
+    H --> I{Proof valid and not replayed?}
+    I -- Yes --> J[Device added to inventory, dashboard opens]
+    I -- No --> F
+```
 
 ---
 
@@ -3612,6 +3812,22 @@ To resolve this challenge, the SG-X Guardian platform implements a **Role-Scoped
 - **Dry-Run Enforcer Backend for Non-Privileged CI**: Leverages the `SGX_DISABLE_POLICY_ENFORCEMENT` runtime gate to enable comprehensive daemon execution and integration testing inside unprivileged container runners without modifying the host machine's firewall rules.
 - **AArch64 Cross-Compilation Subsystem (`docker/Dockerfile.board-builder`)**: Standardizes embedded compilation for Variscite VAR-SOM-MX8M-PLUS (NXP i.MX8MP) hardware inside a containerized Debian Bookworm cross-compiler, enforcing a GLIBC 2.36 symbol ceiling to ensure flawless binary compatibility with the board's Yocto mickledore (GLIBC 2.37) runtime.
 
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Source code commit] --> B[Multi-stage container build]
+    B --> C[Pin base image digests]
+    C --> D[Generate software bill of materials]
+    D --> E{Which role?}
+    E --> F[R1 / R1b: CI and build]
+    E --> G[R2: development cohort]
+    E --> H[R3: production appliance]
+    F --> I[Publish image or native binary]
+    G --> I
+    H --> I
+```
+
 ---
 
 ## 14.2 The Four-Role Architecture Taxonomy (R1, R1b, R2, R3)
@@ -4013,6 +4229,20 @@ To resolve these imperatives, the SG-X Guardian platform implements a native **D
 - **Decentralized Message Synchronization**: Features server-side streaming gRPC catch-up (`SyncMessages`) allowing disconnected or partitioned Guardians to synchronize missed messages and attachments immediately upon network reconnection.
 - **Dynamic Read Receipts & Privacy Safeguards**: Tracks delivery progression and read receipts with group-aware reader thresholds (`min_reader_count`), while honoring user privacy preferences (`hide_read_receipts` and `hide_typing`) to prevent unwanted behavioral telemetry.
 - **Full-Duplex Real-Time WebSocket Channel**: Emits instant message deliveries, status updates, read receipts, and ephemeral typing indicators to connected browser consoles over an authenticated, heartbeat-supervised WebSocket endpoint.
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Member writes a message] --> B[Wrap in a signed envelope]
+    B --> C[Send to Circle members over the mesh]
+    C --> D[Recipient verifies sender and membership]
+    D --> E{Sender in the Circle?}
+    E -- No --> F[Discard the message]
+    E -- Yes --> G[Store to the message log]
+    G --> H[Show in chat and send read receipt]
+    G --> I[Offline members catch up on reconnect]
+```
 
 ---
 
@@ -4426,6 +4656,20 @@ To deliver uncompromising operational voice security, the SG-X Guardian platform
 - **Host Moderation & Granular Mute Controls**: Empowers call hosts with server-enforced moderation (remote participant muting, video suppression, and participant ejection) alongside client-side local mute/unmute and deafen toggles.
 - **Tamper-Evident Call History**: Logs every completed, cancelled, or failed call session atomically to `/var/log/sgx-guardian/call_history.json` using crash-resilient temporary file swaps and a rolling 500-session retention ceiling.
 
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Caller starts a call] --> B[Send signed call offer over the mesh]
+    B --> C{Callee accepts?}
+    C -- No --> D[Call ends as declined or missed]
+    C -- Yes --> E[Exchange media details and keys]
+    E --> F[Encrypted audio flows peer to peer]
+    F --> G[Mute, unmute and moderation controls apply]
+    G --> H[Hang up and write to call history]
+    D --> H
+```
+
 ---
 
 ## 16.2 Direct Peer-to-Peer & Circle Group Calling Topology
@@ -4831,6 +5075,22 @@ To address these tactical requirements, the SG-X Guardian platform implements a 
 - **Dual-Stream Screen Sharing & Presentation Engine**: Enables simultaneous camera video and high-resolution screen sharing using WebRTC multi-stream SDP bundling (`BUNDLE`) and adaptive content hints (`motion` vs `detail`).
 - **Dual-Layer Media Cryptography & Anti-MITM Verification**: Encrypts all video RTP packets end-to-end using SRTP with AES-128-GCM or AES-256-GCM. Derives session keys through in-band DTLS 1.2/1.3 handshakes, cryptographically bound to signaling envelopes via strict SDP certificate fingerprint verification (`dtls_fingerprint_signaled == dtls_fingerprint_confirmed`).
 - **Voice-First Adaptive Bitrate (ABR) & Degraded Mesh Resilience**: Dynamically adjusts video resolution and bitrate based on real-time Transport-Wide Congestion Control (TWCC) and round-trip time (RTT). Under severe mesh degradation (>15% packet loss), automatically suspends video transmission to preserve uninterrupted voice communications.
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Operator starts a video call] --> B[Offer audio and video over the same signaling channel]
+    B --> C{Callee accepts video?}
+    C -- No --> D[Continue as audio only]
+    C -- Yes --> E[Browsers negotiate and encrypt the video streams]
+    E --> F[Camera and optional screen share are sent]
+    F --> G{Host blocks a camera?}
+    G -- Yes --> H[Participant video is suppressed]
+    G -- No --> F
+    F --> I[Call ends and state is cleaned up]
+    D --> I
+```
 
 ---
 
@@ -5239,6 +5499,21 @@ To solve these critical tactical requirements, the SG-X Guardian platform implem
 - **Encrypted File Vault Storage Hierarchy**: Delivered files and local uploads are ingested directly into the Guardian Encrypted File Vault. Data is stored on disk as AES-256-GCM chunked ciphertext. Unique nonces per chunk and Data Encryption Keys (DEKs) wrapped with the NXP SE050 hardware Secure Element (RSA-2048-OAEP) ensure cryptographic confidentiality at rest.
 - **Dual-Namespace Isolation & Quota Management**: Separates data into `Personal` (private to the device/operator) and `Circle` (shared among authenticated Circle members) namespaces. Enforces an 8 GiB global storage ceiling (`DEFAULT_CAPACITY_BYTES`) with configurable per-namespace quotas, protecting flash memory from denial-of-service exhaustion.
 - **Full-Lifecycle Status Tracking & UI Integration**: Tracks transfers across a 7-state finite state machine (`Queued`, `Connecting`, `Sending`, `Receiving`, `Completed`, `Failed`, `Cancelled`). The React operator console provides real-time progress bars, chunk telemetry, and one-click vault browsing and downloads.
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Sender picks a file] --> B[Split into chunks and record a checksum]
+    B --> C[Send chunks to the recipient]
+    C --> D{Transfer interrupted?}
+    D -- Yes --> E[Resume from the last confirmed chunk]
+    E --> C
+    D -- No --> F[Recipient verifies the checksum]
+    F --> G{Integrity check passed?}
+    G -- Yes --> H[Store the file in the encrypted vault]
+    G -- No --> I[Discard and report the failure]
+```
 
 ---
 
@@ -5650,6 +5925,22 @@ In contrast, the SG-X Guardian platform implements the **Circle as a Sovereign C
 - **Automated Network Delivery & Mutual Service Authentication**: For connected nodes across the Slack Nebula overlay, invitations can be pushed directly to the recipient Guardian using cryptographic service authentication (`GuardianService ` scheme with `x-sgx-guardian-*` headers), presenting the operator with a one-click acceptance dialog.
 - **Decentralized Member Snapshots & Synchronization**: The Circle owner periodically publishes signed member snapshots (`CircleMemberSnapshot`). Non-owner Guardians cache and verify these snapshots, maintaining a cryptographically proven directory of peer members for mesh calling and chat without a central directory server.
 
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Owner creates a Circle] --> B[Generate a signed invitation token]
+    B --> C{How is it delivered?}
+    C --> D[QR code in person]
+    C --> E[Over the network to a Guardian]
+    D --> F[Joining device presents the token]
+    E --> F
+    F --> G{Token valid and unused?}
+    G -- No --> H[Reject the join request]
+    G -- Yes --> I[Issue membership credential]
+    I --> J[Sync the member list to all peers]
+```
+
 ---
 
 ## 19.2 The Circle as a Sovereign Communications Container
@@ -6019,6 +6310,20 @@ The storage architecture enforces defense-in-depth:
 4. **Hierarchical Virtual Folders**: Files are organized within virtual folder trees signed with ECDSA-P256 cryptographic proofs, featuring path breadcrumb resolution, recursive subtree operations, and mathematical cycle prevention (`ensure_no_cycle`).
 5. **Fail-Closed Quotas & Proactive Reaping**: Hard physical flash boundaries are enforced via multi-tiered storage quotas (Global, Personal, and Circle) with real-time pre-ingestion checks and an automated 15-minute background garbage collection daemon (`VaultExpiryReaper`).
 6. **Cross-Subsystem Operational Integration**: Seamlessly unifies with In-Circle P2P File Transfers, real-time Text Chat attachments, and DID-authenticated access control, allowing operators to transition files between private vaults, direct messages, and group Circle distributions.
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[User uploads a file] --> B{Within storage quota?}
+    B -- No --> C[Reject the upload]
+    B -- Yes --> D[Encrypt with a hardware-protected key]
+    D --> E[Store in the device vault]
+    E --> F[Browse, preview, star or share the file]
+    F --> G[Authorized download decrypts on the fly]
+    E --> H{Deleted or expired?}
+    H -- Yes --> I[Background cleanup reclaims the space]
+```
 
 ---
 
@@ -6479,6 +6784,21 @@ The architecture establishes a strict separation of concerns:
 5. **Zero-Trust Credential Security**: External OAuth tokens and device credentials are encrypted at rest using AES-256-GCM (`src/integration/crypto.rs`), with background token refresh workers preventing unannounced service drops.
 6. **Cyber-Physical Automation Engine**: Links network cyber defenses directly to physical facility actuators. High-severity intrusion alerts from Suricata IDS or CRL revocations automatically trigger physical smart lock engagements, security lighting illuminations, and siren activations without human latency.
 
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Link a vendor account or USB hub] --> B[Discover smart home devices]
+    B --> C[Record devices and their capabilities]
+    C --> D[Operator or rule sends a command]
+    D --> E{Device supports the command?}
+    E -- No --> F[Reject the command]
+    E -- Yes --> G[Dispatch and confirm the result]
+    G --> H[Collect telemetry and health status]
+    H --> I[Automation rules react to events]
+    I --> D
+```
+
 ---
 
 ## 21.2 Smart Home Vendor Integration Layer (Google Nest & TP-Link Kasa)
@@ -6845,6 +7165,21 @@ The SG-X Guardian **Live Network Topology & Mesh Map** subsystem delivers an end
 4. **Geofence Zone Coordination & Autonomous Countermeasures**: Integrates directly with the Guardian geofence engine (`src/geofence/`, `src/api/handlers/geofence.rs`), anchoring spatial perimeters to specific mesh nodes via `topology_node_ref` and dispatching automated lockdown actions upon perimeter violations.
 5. **Real-Time Event Logging & Cyber-Physical Threat Alerting**: Streams live network events, attestation state changes, and Suricata IDS intrusion alerts (`frontend/src/app/screens/alerts/AL09LiveAttackTopology.tsx`) across rolling HUD log marquees with instant click-to-focus capabilities.
 6. **Hardware Telemetry & Cryptographic Trust Scoring**: Derives real-time trust scores (0–100) and threat severity indices from silicon hardware attestation (NXP SE050 / TPM), certificate lifecycles, and network performance telemetry.
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Collect node and link data] --> B[Add presence and attestation status]
+    B --> C[Build the topology graph]
+    C --> D{Which view?}
+    D --> E[Enterprise multi-zone map]
+    D --> F[Circle identity mesh]
+    E --> G[Overlay geofence zones and locations]
+    F --> G
+    G --> H[Operator pans, zooms and filters]
+    H --> I[Live events and alerts stream onto the map]
+```
 
 ---
 
@@ -7222,6 +7557,20 @@ The geofencing engine departs fundamentally from standard commercial geofencing 
 3. **Temporal Hysteresis & Edge-Jitter Elimination**: Spatial transitions (zone entry and exit) are filtered through a multi-sample state machine (`ZoneRuntimeState`). A transition is committed only after consecutive confirmatory evaluation cycles satisfy configured hysteresis thresholds, preventing false-positive alert cascades caused by GPS multipath reflections or transient signal attenuation.
 4. **Autonomous Cyber-Physical Countermeasures**: Beyond passive alerting, zones configure automated response pipelines (`ZoneAutomation`). In response to perimeter breaches, the system autonomously executes operator notifications, initiates deep vulnerability discovery scans, performs emergency cryptographic key rotation, or triggers hardware-enforced transport network interface locks (`LockNetwork`).
 5. **Suricata IDS Integration & Threat Bridge Forwarding**: Geofence infractions are elevated into formal Suricata-compatible threat alerts assigned dedicated signature IDs (`10_000_900` for entry, `10_000_901` for exit). Alerts are ingested into the system-wide threat ledger (`alerts.jsonl`) and dispatched in real time to the local Threat Analysis Bridge for contextual evaluation.
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Read device location] --> B[Compare against defined zones]
+    B --> C{Inside or outside the zone?}
+    C --> D[Apply hysteresis to ignore jitter]
+    D --> E{Confirmed zone change?}
+    E -- No --> A
+    E -- Yes --> F[Record an entry or exit event]
+    F --> G[Run the configured countermeasure]
+    G --> H[Raise a threat alert to operators]
+```
 
 ---
 
@@ -7657,6 +8006,22 @@ To solve these challenges, SG-X Guardian introduces the **Encrypted Device Backu
 - **Dual Restore Modes**: Supports both `SameDevice` restoration (verifying exact matching of the hardware DID) and `NewDeviceMigration` (allowing configuration and credentials to be migrated to replacement hardware while binding to the new hardware's physical silicon DID).
 - **Post-Commit Operator Undo**: Even after a successful restore has been committed, operators retain the ability to cleanly revert the node to its pre-restore state via `POST /api/v1/restore/undo`.
 
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Backup requested] --> B[Gather system components into a manifest]
+    B --> C[Encrypt the bundle in streamed chunks]
+    C --> D[Store or export the backup]
+    D --> E[Restore requested]
+    E --> F{Preflight checks pass?}
+    F -- No --> G[Abort before touching live state]
+    F -- Yes --> H[Apply the restore as a journaled transaction]
+    H --> I{Any step failed?}
+    I -- Yes --> J[Roll back to the previous state]
+    I -- No --> K[Restore complete]
+```
+
 ---
 
 ## 24.2 Hardware Key Security & Sovereign Silicon Root Isolation
@@ -8078,6 +8443,19 @@ To resolve these vulnerabilities while delivering microsecond-latency event prop
 - **Durable Ring-Buffer Ledger & Cursor Replay**: An append-only JSON Lines ledger (`src/notify/store.rs`) maintains a durable history of the most recent 2,000 events with atomic crash-safe flushing. Reconnecting clients utilize `Last-Event-ID` cursor replay to eliminate event drops across network interruptions.
 - **Role-Based Security Scoping**: The streaming pipeline (`src/api/handlers/notify.rs`) enforces strict role isolation. Standard Circle members are cryptographically restricted to communication events (`Circles` category), completely isolating system threat telemetry (`Alerts`) and device discovery data (`Devices`).
 - **Multi-Channel Browser Delivery**: The frontend architecture integrates Server-Sent Events (SSE), an in-app toast stack with auto-dismiss timers, synthesized Web Audio cues requiring zero external media assets, and desktop Web Push notifications with midnight-wrapping Do Not Disturb (DND) windows.
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Subsystem raises an event] --> B[Classify by category and severity]
+    B --> C{Allowed by the user's preferences and role?}
+    C -- No --> D[Drop the notification]
+    C -- Yes --> E[Append to the notification store]
+    E --> F[Stream live to connected clients]
+    F --> G[Show in app, play a cue or send web push]
+    E --> H[Clients that were offline replay on reconnect]
+```
 
 ---
 
@@ -8527,6 +8905,22 @@ To eliminate these vulnerabilities while providing powerful, reactive edge auton
 - **Inherited Blocker Self-Protection**: Network-blocking actions delegate directly to the kernel threat blocker (`src/threat/blocker.rs`), which strictly enforces exemption whitelists for default gateways, live management LANs, loopbacks, and Nebula mesh tunnels.
 - **Multi-Layer Defensive Safeguards**: The engine operates **safe by default** in dry-run mode (`SGX_RULES_DRYRUN=1`), enforces explicit destructive action opt-ins (`allow_destructive: true`), throttles repeat triggers via target cooldowns (`cooldown_secs`), and enforces hourly execution rate caps (`max_actions_per_hour`).
 - **Hardware-Rooted Signed Registry**: All configured rules are persisted in an atomic JSON document (`src/rules/store.rs`) sealed with a W3C DataIntegrityProof signature generated by the node's hardware Device Key Pair (DKP). Any tampering triggers fail-closed deactivation.
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Event arrives from a subsystem] --> B{Matches a rule trigger?}
+    B -- No --> C[Ignore the event]
+    B -- Yes --> D[Evaluate the rule conditions]
+    D --> E{All conditions met?}
+    E -- No --> C
+    E -- Yes --> F{Action allowed by safety limits?}
+    F -- No --> G[Block the action and log why]
+    F -- Yes --> H[Run the action from the fixed catalog]
+    H --> I[Record the outcome in the history ledger]
+    G --> I
+```
 
 ---
 
@@ -9045,6 +9439,22 @@ The SG-X Guardian architecture solves these limitations by implementing a **hybr
 During architectural grounding, a vital design principle was established: **zero-coupling between accounting and underlying firewall implementation**. The Guardian development roadmap specifies migrating packet-filtering rules from user-space nftables to in-kernel **eBPF (Extended Berkeley Packet Filter)** bytecode programs in future sprints.
 
 If bandwidth accounting were tightly coupled to nftables syntax, that migration would break all bandwidth tracking. By establishing [/sys/class/net](file:///sys/class/net) as the authoritative, durable foundation for aggregate bandwidth, the monitoring engine remains completely unaffected by the transition from iptables/nftables to eBPF XDP/TC hooks.
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Read kernel interface counters] --> B[Correct for counter rollover]
+    B --> C[Attribute usage per category and device]
+    C --> D[Compare against the configured quota]
+    D --> E{Threshold crossed?}
+    E -- Yes --> F[Raise the warning band and enforce the limit]
+    E -- No --> G[Keep accounting normally]
+    F --> H[Write a snapshot to the usage history]
+    G --> H
+    H --> I{Reset period reached?}
+    I -- Yes --> J[Roll over counters for the new period]
+```
 
 ---
 
@@ -9656,6 +10066,23 @@ The Guardian PWA implements a **strict dual-persona role-based access model** se
 ### 28.1.3 Zero-Internet Local Domain & LAN Access (`guardian.local`, `uap0`, `eth0`)
 
 The Guardian node acts as a standalone network gateway. It runs a local DHCP and DNS service (`config/dnsmasq/dnsmasq.conf.template`) that authoritative resolves the local domain `guardian.local` (and `https://guardian.local`) directly to the node's local IP address (`192.168.50.1` on Wi-Fi access point `uap0` or the statically assigned interface address on `eth0`). Operators and members simply connect to the Guardian's Wi-Fi network and open any browser; no internet connectivity, public DNS resolution, or external certification authority is queried.
+
+**Flow Overview**
+
+```mermaid
+flowchart TD
+    A[Browser opens the portal] --> B[Load the pre-cached app shell]
+    B --> C[Pair the browser and sign in]
+    C --> D{Which role?}
+    D --> E[Member view: messages, calls, files]
+    D --> F[Admin console: health, alerts, topology]
+    E --> G[Read and write local browser storage]
+    F --> G
+    G --> H{Guardian reachable?}
+    H -- Yes --> I[Sync changes with the Guardian]
+    H -- No --> J[Keep working offline and sync later]
+    J --> H
+```
 
 ---
 
