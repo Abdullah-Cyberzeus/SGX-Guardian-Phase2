@@ -66,8 +66,19 @@ pub async fn pull_and_apply_aggregate(ca_host: &str) -> Result<Vec<String>, DidE
 /// another authenticated/bootstrap transport (for example the VPS broker).
 pub fn apply_aggregate_json(raw: &str) -> Result<Vec<String>, DidError> {
     let docs: Vec<DidDocument> = serde_json::from_str(raw)?;
+    let self_did = crate::did::doc_persistence::load_self()
+        .ok()
+        .flatten()
+        .map(|doc| doc.id);
     let mut updated_dids = Vec::new();
     for doc in docs {
+        // The CA aggregate can temporarily contain an older copy of our own
+        // document while a publication/rotation is in progress.  It is not a
+        // peer document and must never be replay-checked or cached as one;
+        // the locally signed self document is authoritative for this DID.
+        if self_did.as_deref() == Some(doc.id.as_str()) {
+            continue;
+        }
         let floor = local_floor_version(&doc);
         match verify_with_replay_protection(&doc, floor) {
             Ok(()) => {
@@ -221,6 +232,36 @@ mod tests {
         let vm_ref = doc.verification_method[0].id.clone();
         doc_sign::sign_in_place(&mut doc, km, &vm_ref).expect("sign did doc");
         doc
+    }
+
+    #[test]
+    fn aggregate_skips_stale_copy_of_local_self_document() {
+        let _lock = doc_persistence::lock_test_env();
+        let td = TempDir::new().expect("tempdir");
+        let self_doc_path = td.path().join("identity").join("did_doc.json");
+        let peers_dir = td.path().join("identity").join("peers");
+        let aggregate_path = td.path().join("identity").join("aggregate.json");
+        std::env::set_var(SELF_DOC_PATH_ENV, &self_doc_path);
+        std::env::set_var(PEERS_DOC_DIR_ENV, &peers_dir);
+        std::env::set_var(CA_AGGREGATE_PATH_ENV, &aggregate_path);
+
+        let did = Did::from_id_bytes(&[51u8; 32]).to_string();
+        let current_km =
+            KeyManager::load_or_generate(td.path().join("current.key").to_str().unwrap()).unwrap();
+        let stale_km =
+            KeyManager::load_or_generate(td.path().join("stale.key").to_str().unwrap()).unwrap();
+        let current = signed_doc(&did, &current_km, 6);
+        let stale = signed_doc(&did, &stale_km, 1);
+        doc_persistence::save_self(&current).expect("save current self doc");
+
+        let updated = apply_aggregate_json(&serde_json::to_string(&[stale]).unwrap())
+            .expect("stale self entry is ignored");
+        assert!(updated.is_empty());
+        assert!(doc_persistence::list_peer_docs().unwrap().is_empty());
+
+        std::env::remove_var(SELF_DOC_PATH_ENV);
+        std::env::remove_var(PEERS_DOC_DIR_ENV);
+        std::env::remove_var(CA_AGGREGATE_PATH_ENV);
     }
 
     // Held across .await deliberately: this test mutates process-wide env

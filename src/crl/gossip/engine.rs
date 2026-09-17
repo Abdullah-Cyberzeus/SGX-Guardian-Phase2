@@ -133,6 +133,55 @@ pub fn active_gossip_peers(self_did: &str) -> Vec<GossipPeer> {
     peers
 }
 
+/// Resolve and validate one inbound gossip sender without depending on a
+/// successful scan of every file in the peer directory.  A malformed or
+/// unreadable unrelated directory entry must not make a valid sender appear
+/// absent, and callers need the actual eligibility failure for diagnostics.
+fn active_gossip_peer(self_did: &str, sender_did: &str) -> Result<GossipPeer, String> {
+    if sender_did == self_did {
+        return Err("sender_did equals local DID".to_string());
+    }
+
+    let did = crate::did::Did::parse(sender_did)
+        .map_err(|error| format!("invalid sender DID {}: {}", sender_did, error))?;
+    let mut doc = crate::did::doc_persistence::load_peer(&did)
+        .map_err(|error| format!("load sender DID document {}: {}", sender_did, error))?;
+    if doc.is_none() {
+        doc = crate::did::doc_persistence::load_ca_aggregate()
+            .map_err(|error| format!("load CA DID aggregate: {}", error))?
+            .into_iter()
+            .find(|candidate| candidate.id == sender_did);
+    }
+    let doc = doc.ok_or_else(|| format!("sender not in local peer directory: {}", sender_did))?;
+
+    if doc.sgx_status.as_deref() != Some("active") {
+        return Err(format!(
+            "sender DID document is not active: {} (status={:?})",
+            sender_did, doc.sgx_status
+        ));
+    }
+    if crate::crl::is_revoked(sender_did) {
+        return Err(format!("sender is revoked: {}", sender_did));
+    }
+    let overlay_ip = doc
+        .service
+        .iter()
+        .find(|service| service.svc_type == "SGXNebulaMesh")
+        .and_then(|service| parse_nebula_endpoint(&service.service_endpoint))
+        .ok_or_else(|| {
+            format!(
+                "sender DID document has no valid SGXNebulaMesh endpoint: {}",
+                sender_did
+            )
+        })?;
+
+    Ok(GossipPeer {
+        did: doc.id,
+        node_name: doc.sgx_node_name.unwrap_or_default(),
+        overlay_ip,
+    })
+}
+
 /// `ceil(threshold_pct% x other_members)`, floored at 1.
 /// 3-node cohort -> other_members = 2 -> ceil(1.6) = 2 acks flip `propagated`.
 pub fn threshold_count(other_members: usize, threshold_pct: u8) -> usize {
@@ -494,18 +543,16 @@ async fn handle_inbound(
         reject(&mut write_half, &record.did, &circle_id, &reason).await;
         return Err(reason);
     }
-    let peers = active_gossip_peers(&record.did);
-    let Some(sender) = peers
-        .iter()
-        .find(|peer| peer.did == request.sender_did)
-        .cloned()
-    else {
-        let reason = format!("sender not in local peer directory: {}", request.sender_did);
-        audit_reject(node_id, &request.sender_did, &reason);
-        reject(&mut write_half, &record.did, &circle_id, &reason).await;
-        return Err(reason);
+    let sender = match active_gossip_peer(&record.did, &request.sender_did) {
+        Ok(sender) => sender,
+        Err(reason) => {
+            audit_reject(node_id, &request.sender_did, &reason);
+            reject(&mut write_half, &record.did, &circle_id, &reason).await;
+            return Err(reason);
+        }
     };
-    let other_members = peers.len();
+    let peers = active_gossip_peers(&record.did);
+    let other_members = peers.len().max(1);
 
     // Diff: what they lack / what we lack
     let their_set: HashSet<String> = request.fingerprints.iter().cloned().collect();
@@ -1026,6 +1073,36 @@ mod unit_tests {
         assert_eq!(peers[0].did, "did:guardian:valid0000");
         assert_eq!(peers[0].overlay_ip, "10.0.0.4");
         assert_eq!(peers[0].node_name, "valid-node");
+    }
+
+    #[test]
+    fn active_gossip_peer_loads_exact_sender_document() {
+        let _lock = crate::test_support::blocking_env_lock();
+        let peers_dir = TempDir::new().expect("peers tempdir");
+        let crl_dir = TempDir::new().expect("crl tempdir");
+        let aggregate = peers_dir.path().join("aggregate.json");
+        let _peers_guard = EnvGuard::set(doc_persistence::PEERS_DOC_DIR_ENV, peers_dir.path());
+        let _aggregate_guard = EnvGuard::set(doc_persistence::CA_AGGREGATE_PATH_ENV, &aggregate);
+        let _crl_guard = EnvGuard::set(persistence::CRL_BASE_ENV, crl_dir.path());
+
+        let sender = crate::did::Did::from_id_bytes(&[44u8; 32]);
+        let sender_did = sender.to_string();
+        write_peer_doc(
+            peers_dir.path(),
+            sender.msi(),
+            &sample_peer_doc(
+                &sender_did,
+                Some("active"),
+                Some("192.168.100.2/24"),
+                "nodeC",
+            ),
+        );
+
+        let peer = active_gossip_peer("did:guardian:local", &sender_did)
+            .expect("exact sender document is eligible");
+        assert_eq!(peer.did, sender_did);
+        assert_eq!(peer.node_name, "nodeC");
+        assert_eq!(peer.overlay_ip, "192.168.100.2");
     }
 
     #[test]

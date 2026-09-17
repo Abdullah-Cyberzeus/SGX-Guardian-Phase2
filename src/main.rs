@@ -1807,7 +1807,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let node_key_path_for_init_pub = node_key_path.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                    let ca_host = resolve_ca_ip_from_config_inner().await;
+                    // Honour the same explicit CA override and resolution order used
+                    // by periodic DID synchronization.  The old boot-only resolver
+                    // ignored SGX_CA_HOST and could therefore publish to a stale
+                    // discovery/lighthouse address.
+                    let ca_host = ca_discovery::resolve_ca_ip_for_runtime().await;
                     if let Ok(km_init) = KeyManager::load_or_generate(&node_key_path_for_init_pub) {
                         for attempt in 1..=5 {
                             if let Err(e) = sgx_guardian_client::did::doc_distribution::pull_and_apply_aggregate(&ca_host).await {
@@ -1823,7 +1827,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 &nebula_ip_for_init_pub,
                                 &ca_host,
                                 false,
-                                true,
+                                false,
                             )
                             .await
                             {
@@ -3336,58 +3340,6 @@ async fn refresh_and_publish_did_doc_inner(
         );
     }
     Ok(())
-}
-
-// ── Helper function (add to main.rs as a nested fn or module fn) ─────────
-// Resolves nodeA's IP from environment override, overlay registry, or config files.
-async fn resolve_ca_ip_from_config_inner() -> String {
-    // 1. Explicit environment variable override
-    if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
-        if !env_ip.is_empty() && env_ip != "0.0.0.0" && env_ip != "127.0.0.1" {
-            return env_ip;
-        }
-    }
-    if let Ok(env_ip) = std::env::var("LIGHTHOUSE_IP") {
-        if !env_ip.is_empty() && env_ip != "0.0.0.0" && env_ip != "127.0.0.1" {
-            return env_ip;
-        }
-    }
-
-    // 2. Active Nebula overlay IP for CA/Lighthouse nodeA
-    if std::path::Path::new("/var/lib/sgx-guardian/nebula/ca/ca.crt").exists() {
-        if let Ok(reg) = sgx_guardian_client::nebula::overlay_registry::OverlayRegistry::load(
-            sgx_guardian_client::nebula::registry_sync::REGISTRY_PATH,
-        ) {
-            if let Some(owner_ip) = reg.get_ip("nodeA") {
-                return owner_ip.to_string();
-            }
-        }
-        return "192.168.100.1".to_string();
-    }
-
-    // 3. Config files populated by discovery or deployment
-    for attempt in 1..=20 {
-        for path in &[
-            "/etc/sgx-guardian/config/nodeA.yaml",
-            "/etc/sgx-guardian/nodeA.yaml",
-            "config/nodeA.yaml",
-        ] {
-            if let Ok(cfg) = sgx_guardian_client::config_loader::load_config(path) {
-                if cfg.ip != "0.0.0.0" && cfg.ip != "127.0.0.1" && !cfg.ip.is_empty() {
-                    return cfg.ip;
-                }
-            }
-        }
-        if attempt == 1 {
-            eprintln!("⏳ Waiting for nodeA LAN IP via discovery/config sync...");
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-    eprintln!(
-        "⚠️  Could not find nodeA LAN IP from config files. \
-         Is nodeA running and broadcasting? Falling back to 127.0.0.1 (local test only)."
-    );
-    "127.0.0.1".to_string()
 }
 
 async fn is_lan_ca_reachable(ip: &str) -> bool {

@@ -71,17 +71,25 @@ pub fn ca_address_from_lighthouse_registry(path: &str) -> Option<String> {
         })
 }
 
+fn explicit_ca_address(ca_host: Option<&str>, lighthouse_ip: Option<&str>) -> Option<String> {
+    ca_host
+        .filter(|ip| is_usable_ca_address(ip.trim()))
+        .or_else(|| lighthouse_ip.filter(|ip| is_usable_ca_address(ip.trim())))
+        .map(|ip| ip.trim().to_string())
+}
+
 /// Resolves the CA/lighthouse LAN host using the safest runtime hints first.
 ///
 /// Priority:
-/// 1. `SGX_LIGHTHOUSE_IP`, when explicitly provided.
-/// 2. The learned lighthouse registry.
-/// 3. The existing config-file polling fallback.
+/// 1. `SGX_CA_HOST`, when explicitly provided.
+/// 2. `SGX_LIGHTHOUSE_IP`, when explicitly provided.
+/// 3. The learned lighthouse registry.
+/// 4. The existing config-file polling fallback.
 pub async fn resolve_ca_ip_for_runtime() -> String {
-    if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
-        if is_usable_ca_address(&env_ip) {
-            return env_ip;
-        }
+    let ca_host = std::env::var("SGX_CA_HOST").ok();
+    let lighthouse_ip = std::env::var("SGX_LIGHTHOUSE_IP").ok();
+    if let Some(ip) = explicit_ca_address(ca_host.as_deref(), lighthouse_ip.as_deref()) {
+        return ip;
     }
 
     if let Some(ip) =
@@ -150,6 +158,22 @@ mod tests {
         assert!(!is_usable_ca_address(""));
         assert!(!is_usable_ca_address("0.0.0.0"));
         assert!(!is_usable_ca_address("127.0.0.1"));
+    }
+
+    #[test]
+    fn explicit_ca_host_overrides_lighthouse_address() {
+        assert_eq!(
+            explicit_ca_address(Some(" 192.168.1.252 "), Some("192.168.1.192")).as_deref(),
+            Some("192.168.1.252")
+        );
+    }
+
+    #[test]
+    fn unusable_ca_host_falls_back_to_explicit_lighthouse_address() {
+        assert_eq!(
+            explicit_ca_address(Some("127.0.0.1"), Some("192.168.1.252")).as_deref(),
+            Some("192.168.1.252")
+        );
     }
 
     #[test]
