@@ -1359,6 +1359,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         nebula_base_dir.clone(),
                     ));
 
+                    // The overlay IP above isn't reachable until the Nebula
+                    // tunnel to the VPS lighthouse finishes establishing
+                    // (NAT punch-through / lighthouse failover), which can
+                    // take anywhere from seconds to a couple of minutes. The
+                    // normal periodic publish only fires every
+                    // DID_DOC_REFRESH_INTERVAL_SECS (5 min), so left to that
+                    // alone, a node can sit unpublished — and CRL-GOSSIP/
+                    // CRL-OFFLINE skipped — for multiple missed cycles. Poll
+                    // fast here just for the bootstrap window so the publish
+                    // fires within ~10s of the tunnel actually coming up;
+                    // the periodic tick remains the permanent fallback if
+                    // this window isn't enough.
+                    {
+                        let node_id = node_id.clone();
+                        let km = km.clone();
+                        let ip_cidr = ip_cidr.clone();
+                        let owner_overlay = owner_overlay.clone();
+                        tokio::spawn(async move {
+                            const FAST_RETRY_INTERVAL: std::time::Duration =
+                                std::time::Duration::from_secs(10);
+                            const FAST_RETRY_WINDOW: std::time::Duration =
+                                std::time::Duration::from_secs(180);
+                            let start = std::time::Instant::now();
+                            loop {
+                                match refresh_and_publish_did_doc(
+                                    &node_id,
+                                    &km,
+                                    &ip_cidr,
+                                    &owner_overlay,
+                                    false,
+                                )
+                                .await
+                                {
+                                    Ok(()) => {
+                                        println!(
+                                            "📤 DID Document published over Nebula tunnel after broker enrollment"
+                                        );
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        if start.elapsed() >= FAST_RETRY_WINDOW {
+                                            eprintln!(
+                                                "⚠️  DID doc still unpublished after {}s of fast retries ({}); \
+                                                 falling back to the periodic publish cycle",
+                                                FAST_RETRY_WINDOW.as_secs(),
+                                                e
+                                            );
+                                            break;
+                                        }
+                                        tokio::time::sleep(FAST_RETRY_INTERVAL).await;
+                                    }
+                                }
+                            }
+                        });
+                    }
+
                     log_audit(
                         &node_id,
                         AuditCategory::Network,
