@@ -358,7 +358,11 @@ export function NW04CircleDetail() {
       return;
     }
     const trustedPeer = peerForMember(member);
-    const target = trustedPeer?.peerId || (isBrowserMember ? member.did : "");
+    // Prefer the peer's DID: it's stable, unlike peerId (an ip:port that can
+    // rotate between when this peer list was fetched and when the call is
+    // actually started). Falls back to peerId only for older backends that
+    // haven't populated did on the trusted-peer record yet.
+    const target = trustedPeer?.did || trustedPeer?.peerId || (isBrowserMember ? member.did : "");
     if (!target) { toast.error("This Circle member is not linked to a call target."); return; }
     if (!isBrowserMember && !trustedPeer) { toast.error("This Circle member is not linked to a trusted Guardian peer."); return; }
     const ownCallIds = [currentDevice, session?.browserMemberDid]

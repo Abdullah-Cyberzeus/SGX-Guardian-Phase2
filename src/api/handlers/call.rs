@@ -152,7 +152,15 @@ async fn trusted_call_target(
             serde_json::from_slice(&bytes).map_err(|_| ErrorResponse {
                 error: "Trusted peer registry is malformed".into(),
             })?;
-        if let Some(peer) = peers.into_iter().find(|peer| peer.peer_id == peer_id) {
+        // Match by DID first — the caller's stable identity, same as chat's
+        // resolution. `peer_id` is now recomputed from the peer's fixed
+        // attestation-listener port on every write (see attestation_service.rs),
+        // so matching it directly is safe again too; kept as a fallback for
+        // any caller still passing the legacy raw peer_id value.
+        if let Some(peer) = peers
+            .into_iter()
+            .find(|peer| peer.did.as_deref() == Some(peer_id) || peer.peer_id == peer_id)
+        {
             if !matches!(peer.status.as_str(), "verified" | "trusted" | "success") {
                 return Err(ErrorResponse {
                     error: "Target peer is not currently trusted".into(),

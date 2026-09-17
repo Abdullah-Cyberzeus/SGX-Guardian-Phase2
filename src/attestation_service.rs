@@ -669,11 +669,29 @@ fn write_trusted_peer_with_dirs(
     let rotation_reason =
         rotation_reason.or_else(|| current_rotation_reason_for_peer(&ev.subject_did));
 
+    // `peer_id` must be the peer's fixed, dialable attestation-listener
+    // address (downstream re-attestation and call routing both redial this
+    // field as host:port). When the attestation carries a stable node_id we
+    // ALWAYS recompute it from the well-known listener port for that node,
+    // instead of trusting the raw address the caller passed in — for an
+    // inbound attestation, that raw address is the peer's ephemeral TCP
+    // source port for that one connection, not anything reconnectable, and
+    // it would otherwise silently clobber a previously-correct entry.
+    let canonical_peer_id = if !stable_node_id.is_empty() {
+        format!(
+            "{}:{}",
+            ip,
+            attestation_listener_port_for_node(stable_node_id)
+        )
+    } else {
+        peer_id.to_string()
+    };
+
     let entry = TrustedPeer {
         // Keep the routable endpoint as peer_id: downstream reachability and
         // re-attestation code parses this field as host:port. The stable
         // identity belongs in node_id and DID.
-        peer_id: peer_id.to_string(),
+        peer_id: canonical_peer_id,
         node_id: Some(stable_node_id.to_string()).filter(|s| !s.is_empty()),
         ip: ip.to_string(),
         status: "verified".to_string(),

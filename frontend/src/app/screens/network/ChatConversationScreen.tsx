@@ -917,8 +917,10 @@ export function ChatConversationScreen() {
     }
     // Browser Circle members are routed by DID; peer.peerId for a browser
     // member is a display label (see useCommunicationPeers), not a call
-    // target, so it must never be sent to the call API.
-    const target = peer.memberType === "browser" ? (peer.did || peerDid) : (peer.peerId || peerDid);
+    // target, so it must never be sent to the call API. For Guardian peers,
+    // prefer the stable DID over peerId (an ip:port that can rotate between
+    // when this peer list was fetched and when the call is actually started).
+    const target = peer.memberType === "browser" ? (peer.did || peerDid) : (peer.did || peer.peerId || peerDid);
     const ownCallIds = [currentDevice, localDid, session?.browserMemberDid]
       .map((value) => String(value || "").trim().toLowerCase())
       .filter(Boolean);
