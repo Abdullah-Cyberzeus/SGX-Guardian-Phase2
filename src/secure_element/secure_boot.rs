@@ -30,46 +30,6 @@ use crate::runtime_gates::GATES;
 // the original i.MX8MP bring-up builds. The nvmem driver path remains the
 // production default; this raw register view is compiled on Linux targets
 // where the qualification harness requires exact register-level timing.
-#[cfg(target_os = "linux")]
-fn read_phys_u32_for_freeze_test(address: usize) -> Option<u32> {
-    use std::fs::OpenOptions;
-    use std::os::fd::AsRawFd;
-
-    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-    if page_size <= 0 {
-        return None;
-    }
-    let page_size = page_size as usize;
-    let page_base = address & !(page_size - 1);
-    let page_offset = address - page_base;
-    let dev_mem = OpenOptions::new().read(true).open("/dev/mem").ok()?;
-
-    let mapping = unsafe {
-        libc::mmap(
-            std::ptr::null_mut(),
-            page_size,
-            libc::PROT_READ,
-            libc::MAP_SHARED,
-            dev_mem.as_raw_fd(),
-            page_base as libc::off_t,
-        )
-    };
-    if mapping == libc::MAP_FAILED {
-        return None;
-    }
-
-    let value = unsafe {
-        let register = (mapping as *const u8).add(page_offset) as *const u32;
-        std::ptr::read_volatile(register)
-    };
-    let _ = unsafe { libc::munmap(mapping, page_size) };
-    Some(u32::from_le(value))
-}
-
-#[cfg(not(target_os = "linux"))]
-fn read_phys_u32_for_freeze_test(_address: usize) -> Option<u32> {
-    None
-}
 
 /// Process-wide cache. First caller populates it; every subsequent caller
 /// (PCR loop, AttestationQuote::generate) reads the same snapshot.
@@ -140,47 +100,55 @@ impl BootChainStatus {
             .trim()
             .to_string();
 
-        // === Step 3: OCOTP reads ============================================
+        // === Step 3: Secure Boot state via kernel NVMEM =======================
+        //
+        // i.MX8MP SEC_CONFIG:
+        //   OCOTP Bank 1 Word 3
+        //   Linux NVMEM byte offset: 0x1C
+        //   CLOSED state: bit 25 / mask 0x02000000
+        //
+        // SECURITY:
+        // Raw /dev/mem access is prohibited here because direct OCOTP MMIO
+        // access can hang the i.MX8MP interconnect. Always use kernel NVMEM.
+
+        const IMX8MP_SEC_CONFIG_OFFSET: u64 = 0x1C;
+        const SEC_CONFIG_CLOSED_MASK: u32 = 0x0200_0000;
+
         let mut sec_config_read_ok = false;
 
-        if GATES.read_ocotp {
-            // Freeze-safe OCOTP read: mirrors the historical STEP_06/07 register access
-            // so qualification builds observe identical timing. Do not add a timeout or
-            // swap drivers here without re-running the board matrix (DEV-2041).
-            warn!("Board test: reading OCOTP through raw /dev/mem registers");
+        // Automatically attempt the safe kernel NVMEM interface.
+        // No SGX_READ_OCOTP environment variable is required.
+        //
+        // On i.MX8MP hardware, imx-ocotp0 exposes the fuse image through
+        // the kernel NVMEM subsystem. On systems without this interface,
+        // read_nvmem_u32() safely returns None and the state remains UNKNOWN.
+        info!("BootChain: automatically checking i.MX8MP SEC_CONFIG via kernel NVMEM");
 
-            match read_phys_u32_for_freeze_test(0x3035_0470) {
-                Some(val) => {
-                    sec_config_read_ok = true;
-                    status.device_closed = (val & 0x02000000) != 0; // bit 25
-                    if status.device_closed {
-                        status.hab_enabled = true;
-                    }
-                    info!(
-                        "BootChain: OCOTP SEC_CONFIG ok (val=0x{:08X}, closed={})",
-                        val, status.device_closed
-                    );
-                }
-                None => {
-                    warn!("BootChain: raw OCOTP SEC_CONFIG read failed");
-                }
+        match run_with_timeout(Duration::from_secs(2), || {
+            read_nvmem_u32(IMX8MP_SEC_CONFIG_OFFSET)
+        }) {
+            Some(Some(value)) => {
+                sec_config_read_ok = true;
+
+                status.device_closed = (value & SEC_CONFIG_CLOSED_MASK) != 0;
+
+                status.hab_enabled = status.device_closed;
+
+                info!(
+                    "BootChain: SEC_CONFIG=0x{:08X}, bit25={}, closed={}",
+                    value,
+                    (value >> 25) & 1,
+                    status.device_closed
+                );
             }
 
-            match read_phys_u32_for_freeze_test(0x3035_0630) {
-                Some(val) => {
-                    if val != 0 {
-                        status.hab_enabled = true;
-                        info!("BootChain: SRK fuse present (val=0x{:08X})", val);
-                    } else {
-                        info!("BootChain: SRK fuse empty (val=0x00000000) — board in OPEN mode");
-                    }
-                }
-                None => {
-                    warn!("BootChain: raw SRK fuse read failed");
-                }
+            Some(None) => {
+                warn!("BootChain: i.MX8MP OCOTP NVMEM unavailable; secure-boot state UNKNOWN");
             }
-        } else {
-            info!("BootChain: OCOTP read skipped (SGX_READ_OCOTP not set — safe default)");
+
+            None => {
+                warn!("BootChain: SEC_CONFIG NVMEM read timed out; secure-boot state UNKNOWN");
+            }
         }
 
         // === Step 4: Optional dmesg scan (GATED, unchanged behaviour) =======
@@ -211,13 +179,10 @@ impl BootChainStatus {
             status.hab_description = "HAB: Enabled, device CLOSED, secure boot ENFORCING".into();
         } else if status.hab_enabled && !status.device_closed {
             status.hab_description = "HAB: Enabled but device OPEN".into();
-        } else if GATES.read_ocotp && !sec_config_read_ok {
-            status.hab_description = "HAB: Cannot read OCOTP via raw /dev/mem".into();
-        } else if !GATES.read_ocotp {
-            status.hab_description =
-                "HAB: Unknown (OCOTP read disabled — set SGX_READ_OCOTP=1 to attempt)".into();
+        } else if !sec_config_read_ok {
+            status.hab_description = "HAB: Unknown (kernel NVMEM SEC_CONFIG unavailable)".into();
         } else {
-            status.hab_description = "HAB: Not enabled".into();
+            status.hab_description = "HAB: Device OPEN (SEC_CONFIG CLOSED bit is not set)".into();
         }
         if status.hab_events_found {
             status.hab_description = "HAB EVENTS DETECTED — boot chain compromised!".into();
@@ -240,6 +205,7 @@ impl BootChainStatus {
 
         // === Step 7: Final chain integrity ==================================
         status.boot_chain_intact = status.hab_enabled
+            && status.device_closed
             && !status.hab_events_found
             && !status.device_model.is_empty()
             && !status.kernel_version.is_empty();
@@ -395,7 +361,6 @@ where
 /// SAFETY: This goes through the kernel nvmem-imx-ocotp driver which handles
 /// OCOTP clock gating and bus synchronization. No AXI hangs possible, unlike
 /// the previous /dev/mem mmap approach that caused board freezes.
-#[allow(dead_code)] // Retained for board diagnostics and exercised by its unit test.
 fn read_nvmem_u32(offset: u64) -> Option<u32> {
     let candidates = [
         "/sys/bus/nvmem/devices/imx-ocotp0/nvmem",
