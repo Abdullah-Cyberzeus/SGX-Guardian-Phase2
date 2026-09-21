@@ -71,28 +71,79 @@ impl DegradationPredictor for SimpleDegradationPredictor {
         let mut probability: f64 = 0.05;
         let mut contributors = Vec::new();
 
-        if last.rtt_ms > first.rtt_ms * 1.25 && last.rtt_ms - first.rtt_ms > 10.0 {
+        // D8: evaluate current degradation over a bounded recent window rather
+        // than trusting only the final sample. Real multi-probe measurements
+        // can legitimately alternate between degraded and clean observations.
+        //
+        // Preserve the original first-vs-last semantics for short histories
+        // while making retained production history robust to a single clean
+        // sample immediately following sustained degradation.
+        const RECENT_SIGNAL_WINDOW: usize = 5;
+        const MIN_DEGRADED_SAMPLES: usize = 2;
+
+        let signal_window = &recent[recent.len().saturating_sub(RECENT_SIGNAL_WINDOW)..];
+
+        let elevated_rtt_samples = signal_window
+            .iter()
+            .filter(|entry| {
+                entry.rtt_ms > first.rtt_ms * 1.25 && entry.rtt_ms - first.rtt_ms > 10.0
+            })
+            .count();
+
+        if (last.rtt_ms > first.rtt_ms * 1.25 && last.rtt_ms - first.rtt_ms > 10.0)
+            || elevated_rtt_samples >= MIN_DEGRADED_SAMPLES
+        {
             probability += 0.30;
             contributors.push("rising_rtt".to_string());
         }
 
-        if last.packet_loss_pct > first.packet_loss_pct + 2.0 || last.packet_loss_pct >= 5.0 {
+        let elevated_loss_samples = signal_window
+            .iter()
+            .filter(|entry| {
+                entry.packet_loss_pct > first.packet_loss_pct + 2.0 || entry.packet_loss_pct >= 5.0
+            })
+            .count();
+
+        if last.packet_loss_pct > first.packet_loss_pct + 2.0
+            || last.packet_loss_pct >= 5.0
+            || elevated_loss_samples >= MIN_DEGRADED_SAMPLES
+        {
             probability += 0.25;
             contributors.push("rising_packet_loss".to_string());
         }
 
-        if let (Some(first_throughput), Some(last_throughput)) =
-            (first.throughput_mbps, last.throughput_mbps)
-        {
-            if first_throughput > 0.0 && last_throughput < first_throughput * 0.75 {
-                probability += 0.25;
-                contributors.push("falling_throughput".to_string());
+        if let Some(first_throughput) = first.throughput_mbps {
+            if first_throughput > 0.0 {
+                let falling_throughput_samples = signal_window
+                    .iter()
+                    .filter_map(|entry| entry.throughput_mbps)
+                    .filter(|throughput| *throughput < first_throughput * 0.75)
+                    .count();
+
+                if last
+                    .throughput_mbps
+                    .is_some_and(|throughput| throughput < first_throughput * 0.75)
+                    || falling_throughput_samples >= MIN_DEGRADED_SAMPLES
+                {
+                    probability += 0.25;
+                    contributors.push("falling_throughput".to_string());
+                }
             }
         }
+
+        let high_utilization_samples = signal_window
+            .iter()
+            .filter(|entry| {
+                entry
+                    .bandwidth_utilization_pct
+                    .is_some_and(|utilization| utilization >= 85.0)
+            })
+            .count();
 
         if last
             .bandwidth_utilization_pct
             .is_some_and(|utilization| utilization >= 85.0)
+            || high_utilization_samples >= MIN_DEGRADED_SAMPLES
         {
             probability += 0.20;
             contributors.push("high_relay_utilization".to_string());

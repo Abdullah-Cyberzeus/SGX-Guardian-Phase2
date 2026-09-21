@@ -957,6 +957,11 @@ impl Task3NetworkAiRuntimeService {
 
         let eligible =
             EligibilityFilter.filter_at(topology.route_candidates.clone(), &trust, now_ms);
+        let persisted_route_state_path = self
+            .config
+            .persistence_root
+            .join("current_route_state.json");
+        let persisted_route_state = RuntimeRouteState::load_json(&persisted_route_state_path).ok();
         persist_json(
             self.config.persistence_root.join("route_candidates.json"),
             &serde_json::json!({
@@ -971,12 +976,39 @@ impl Task3NetworkAiRuntimeService {
             self.config.persistence_root.join("eligible_routes.json"),
             &eligible,
         )?;
-        for candidate in &eligible.eligible {
-            if let Some(telemetry) = candidate_telemetry
+        // D8 telemetry attribution boundary:
+        //
+        // probe_overlay_path() measures reachability to the destination Nebula
+        // overlay address. Nebula may satisfy that connection through either
+        // its direct path or an internal relay, so the measurement cannot be
+        // truthfully attributed to every candidate that shares the same
+        // destination.
+        //
+        // Attribute destination-level measured telemetry only to the route
+        // that the production route observer currently confirms as active.
+        // Candidate telemetry is still persisted above for diagnostics, while
+        // inactive alternatives retain their previously measured history
+        // until they are actually observed as the active dataplane route.
+        //
+        // This prevents a direct and relay candidate from receiving duplicate
+        // route-specific RTT/loss samples from one destination-level probe.
+        let route_to_attribute = if observed.confirmed {
+            Some(observed.route_id.as_str())
+        } else {
+            persisted_route_state
+                .as_ref()
+                .map(|state| state.active_route_id.as_str())
+        };
+
+        if let Some(route_id) = route_to_attribute {
+            if let Some(candidate) = topology
+                .route_candidates
                 .iter()
-                .find(|telemetry| telemetry.route_id == candidate.route_id)
+                .find(|candidate| candidate.route_id == route_id)
             {
-                if let Some(observation) = telemetry.to_observation_input() {
+                if let Some(observation) =
+                    measured_observation_for_route(candidate, &candidate_telemetry)
+                {
                     history.record_measured_observation(observation.clone());
                     append_jsonl(
                         self.config.persistence_root.join("route_history.jsonl"),
@@ -1001,13 +1033,6 @@ impl Task3NetworkAiRuntimeService {
         // route when available. This preserves D3 multi-destination discovery
         // while ensuring D7/D8/D9 compare only routes that can reach the same
         // destination.
-        let persisted_route_state_path = self
-            .config
-            .persistence_root
-            .join("current_route_state.json");
-
-        let persisted_route_state = RuntimeRouteState::load_json(&persisted_route_state_path).ok();
-
         let decision_destination = persisted_route_state
             .as_ref()
             .and_then(|state| {
@@ -1097,42 +1122,40 @@ impl Task3NetworkAiRuntimeService {
         // same failure outcome is never learned twice.
         if !current_route_failed {
             if let Some(current_route_id) = current_route_id_for_learning.as_ref() {
-                if let Some(measured) = candidate_telemetry
+                if let Some(current_candidate) = topology
+                    .route_candidates
                     .iter()
-                    .find(|telemetry| telemetry.route_id == *current_route_id)
+                    .find(|candidate| candidate.route_id == *current_route_id)
                 {
-                    let hop_count = topology
-                        .route_candidates
-                        .iter()
-                        .find(|candidate| candidate.route_id == *current_route_id)
-                        .map(|candidate| candidate.hop_count)
-                        .unwrap_or(0);
+                    if let Some(measured) =
+                        measured_observation_for_route(current_candidate, &candidate_telemetry)
+                    {
+                        let reward = RouteReward::from_observed_outcome_with_weights(
+                            &ObservedRewardInput {
+                                route_id: current_route_id.clone(),
+                                rtt_ms: Some(measured.rtt_ms),
+                                packet_loss_pct: Some(measured.packet_loss_pct),
+                                throughput_mbps: measured.throughput_mbps,
+                                bandwidth_utilization_pct: measured.bandwidth_utilization_pct,
+                                hop_count: current_candidate.hop_count,
+                                switched_route: false,
+                                route_failed: false,
+                            },
+                            &network_config.reward_weights,
+                        );
 
-                    let reward = RouteReward::from_observed_outcome_with_weights(
-                        &ObservedRewardInput {
-                            route_id: current_route_id.clone(),
-                            rtt_ms: measured.rtt_ms,
-                            packet_loss_pct: measured.packet_loss_pct,
-                            throughput_mbps: measured.throughput_mbps,
-                            bandwidth_utilization_pct: None,
-                            hop_count,
-                            switched_route: false,
-                            route_failed: false,
-                        },
-                        &network_config.reward_weights,
-                    );
+                        policy.update_with_reward(&reward);
 
-                    policy.update_with_reward(&reward);
-
-                    append_jsonl(
-                        self.config.persistence_root.join("rewards.jsonl"),
-                        &serde_json::json!({
-                            "decision_id": format!("task3-{}-current-route", now_ms),
-                            "ts_ms": now_ms,
-                            "observation_phase": "current_route_observation",
-                            "reward": reward,
-                        }),
-                    )?;
+                        append_jsonl(
+                            self.config.persistence_root.join("rewards.jsonl"),
+                            &serde_json::json!({
+                                "decision_id": format!("task3-{}-current-route", now_ms),
+                                "ts_ms": now_ms,
+                                "observation_phase": "current_route_observation",
+                                "reward": reward,
+                            }),
+                        )?;
+                    }
                 }
             }
         }
@@ -3325,8 +3348,13 @@ fn observe_network(
 async fn collect_overlay_path_telemetry(
     topology: &ProductionTopology,
 ) -> Vec<OverlayPathTelemetry> {
-    let mut observations = Vec::with_capacity(topology.route_candidates.len());
+    let mut observations = Vec::with_capacity(topology.destinations.len());
+    let mut probed_destinations = BTreeSet::new();
     for candidate in &topology.route_candidates {
+        if !probed_destinations.insert(candidate.destination_node.clone()) {
+            continue;
+        }
+
         let overlay_ip = candidate
             .metadata
             .health_note
@@ -3380,6 +3408,19 @@ async fn collect_overlay_path_telemetry(
         observations.push(overlay_path_telemetry(candidate, overlay_ip, probe));
     }
     observations
+}
+
+fn measured_observation_for_route(
+    candidate: &RouteCandidate,
+    telemetry: &[OverlayPathTelemetry],
+) -> Option<RouteObservationInput> {
+    let measured = telemetry
+        .iter()
+        .find(|telemetry| telemetry.destination_node == candidate.destination_node)?;
+    let mut observation = measured.to_observation_input()?;
+    observation.route_id = candidate.route_id.clone();
+    observation.switched_route = false;
+    Some(observation)
 }
 
 fn persist_overlay_path_telemetry(
@@ -3519,16 +3560,14 @@ fn selected_task2_evidence_path(
 }
 
 async fn probe_overlay_path(overlay_ip: &str) -> OverlayPathProbe {
-    // Task3 route health is transport-level evidence.
+    // D8 production path-health evidence.
     //
-    // Do NOT use the Guardian HTTP API as a route probe:
-    // - API request handling/authentication is application-level state.
-    // - HTTP response bodies are not a valid throughput measurement.
-    // - A slow/stuck API handler must never block the optimizer.
-    //
-    // Probe the numeric Nebula overlay address directly with a bounded TCP
-    // connection. Real throughput continues to come from production network
-    // telemetry rather than synthetic HTTP body size.
+    // Use multiple bounded TCP connection attempts so packet loss is measured
+    // from the real Nebula overlay path instead of being represented only as
+    // binary 0%/100% availability. This remains transport-level evidence:
+    // no HTTP request/body is sent and throughput is not synthesized.
+    const PROBE_ATTEMPTS: usize = 4;
+    const PER_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(350);
 
     let unavailable = || OverlayPathProbe {
         route_available: false,
@@ -3543,43 +3582,46 @@ async fn probe_overlay_path(overlay_ip: &str) -> OverlayPathProbe {
     };
 
     let address = std::net::SocketAddr::new(ip, 8443);
-    let started = Instant::now();
+    let mut successful_rtt_ms = Vec::with_capacity(PROBE_ATTEMPTS);
 
-    match timeout(
-        Duration::from_millis(750),
-        tokio::net::TcpStream::connect(address),
-    )
-    .await
-    {
-        Ok(Ok(stream)) => {
-            let rtt_ms = started.elapsed().as_secs_f64() * 1000.0;
+    for _ in 0..PROBE_ATTEMPTS {
+        let started = Instant::now();
 
-            // We only need connection establishment as transport evidence.
-            // Do not send an HTTP request and do not wait for an API body.
-            drop(stream);
-
-            OverlayPathProbe {
-                route_available: true,
-                rtt_ms: Some(rtt_ms),
-                packet_loss_pct: Some(0.0),
-                throughput_mbps: None,
+        match timeout(PER_ATTEMPT_TIMEOUT, tokio::net::TcpStream::connect(address)).await {
+            Ok(Ok(stream)) => {
+                successful_rtt_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+                drop(stream);
+            }
+            Ok(Err(error)) => {
+                tracing::debug!(
+                    overlay_ip = %overlay_ip,
+                    %error,
+                    "Task3 Nebula TCP path probe attempt failed"
+                );
+            }
+            Err(_) => {
+                tracing::debug!(
+                    overlay_ip = %overlay_ip,
+                    "Task3 Nebula TCP path probe attempt timed out"
+                );
             }
         }
-        Ok(Err(error)) => {
-            tracing::debug!(
-                overlay_ip = %overlay_ip,
-                %error,
-                "Task3 Nebula TCP path probe failed"
-            );
-            unavailable()
-        }
-        Err(_) => {
-            tracing::warn!(
-                overlay_ip = %overlay_ip,
-                "Task3 Nebula TCP path probe timed out"
-            );
-            unavailable()
-        }
+    }
+
+    let successful = successful_rtt_ms.len();
+    if successful == 0 {
+        return unavailable();
+    }
+
+    let failed = PROBE_ATTEMPTS - successful;
+    let packet_loss_pct = (failed as f64 / PROBE_ATTEMPTS as f64) * 100.0;
+    let rtt_ms = successful_rtt_ms.iter().sum::<f64>() / successful_rtt_ms.len() as f64;
+
+    OverlayPathProbe {
+        route_available: true,
+        rtt_ms: Some(rtt_ms),
+        packet_loss_pct: Some(packet_loss_pct),
+        throughput_mbps: None,
     }
 }
 
@@ -4328,6 +4370,80 @@ mod tests {
             .expect("partial measured telemetry must be retained");
         assert_eq!(missing_metric_observation.throughput_mbps, None);
         assert_eq!(missing_metric_observation.bandwidth_utilization_pct, None);
+    }
+
+    #[test]
+    fn d8_destination_probe_can_refresh_explicit_active_relay_route_history() {
+        let overlay = overlay_registry_fixture(&["nodeA", "nodeB", "nodeC"]);
+        let relays = relay_registry_fixture(&["nodeC"]);
+        let topology = build_nebula_overlay_topology(
+            "nodeA",
+            vec!["nodeB".to_string()],
+            &overlay,
+            Some(&relays),
+            &[underlay_snapshot("eth0", TransportType::Ethernet)],
+        )
+        .expect("build topology");
+        let direct = candidate(&topology, "direct-nodeA-nodeB");
+        let relay = candidate(&topology, "relay-nodeA-via-nodeC-nodeB");
+        let destination_probe = overlay_path_telemetry(
+            &direct,
+            overlay
+                .get_ip("nodeB")
+                .expect("nodeB overlay IP")
+                .to_string(),
+            OverlayPathProbe {
+                route_available: true,
+                rtt_ms: Some(15.0),
+                packet_loss_pct: Some(0.5),
+                throughput_mbps: Some(20.0),
+            },
+        );
+
+        let attributed = measured_observation_for_route(&relay, &[destination_probe])
+            .expect("destination probe can be attributed to explicit active route");
+
+        assert_eq!(attributed.route_id, "relay-nodeA-via-nodeC-nodeB");
+        assert_eq!(attributed.rtt_ms, 15.0);
+        assert_eq!(attributed.packet_loss_pct, 0.5);
+        assert_eq!(attributed.throughput_mbps, Some(20.0));
+    }
+
+    #[test]
+    fn d8_destination_probe_is_not_recorded_for_every_same_destination_candidate() {
+        let overlay = overlay_registry_fixture(&["nodeA", "nodeB", "nodeC"]);
+        let relays = relay_registry_fixture(&["nodeC"]);
+        let topology = build_nebula_overlay_topology(
+            "nodeA",
+            vec!["nodeB".to_string()],
+            &overlay,
+            Some(&relays),
+            &[underlay_snapshot("eth0", TransportType::Ethernet)],
+        )
+        .expect("build topology");
+        let direct = candidate(&topology, "direct-nodeA-nodeB");
+        let relay = candidate(&topology, "relay-nodeA-via-nodeC-nodeB");
+        let destination_probe = overlay_path_telemetry(
+            &direct,
+            overlay
+                .get_ip("nodeB")
+                .expect("nodeB overlay IP")
+                .to_string(),
+            OverlayPathProbe {
+                route_available: true,
+                rtt_ms: Some(12.0),
+                packet_loss_pct: Some(0.0),
+                throughput_mbps: Some(22.0),
+            },
+        );
+
+        let mut history = RouteHistoryStore::new(0.5, 20);
+        let active_observation = measured_observation_for_route(&relay, &[destination_probe])
+            .expect("active relay observation");
+        history.record_measured_observation(active_observation);
+
+        assert!(history.stats_for(&relay.route_id).is_some());
+        assert!(history.stats_for(&direct.route_id).is_none());
     }
 
     #[test]
