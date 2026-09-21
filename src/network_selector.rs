@@ -54,8 +54,19 @@ pub struct NetworkCandidate {
 }
 
 impl NetworkCandidate {
+    /// Cellular/satellite modem drivers frequently leave `operstate`/`carrier`
+    /// reporting down or unknown while a live data session is actually up —
+    /// the same quirk documented for the transport-status API. Trusting those
+    /// flags for those transports filtered out a live cellular uplink,
+    /// leaving `best_candidate`/`selected_interface` with nothing to return
+    /// and the hotspot running with no NAT at all when cellular was the only
+    /// available uplink. A default route is still required for every
+    /// transport — that's the one signal cellular reports reliably.
     pub fn is_reachable(&self) -> bool {
-        self.oper_up && self.carrier_up && self.has_default_route
+        match self.transport_type {
+            TransportType::Cellular | TransportType::Satellite => self.has_default_route,
+            _ => self.oper_up && self.carrier_up && self.has_default_route,
+        }
     }
 }
 
@@ -799,6 +810,45 @@ mod tests {
         assert!(!candidate_with_transport(
             "ens33",
             TransportType::Ethernet,
+            None,
+            true,
+            true,
+            false
+        )
+        .is_reachable());
+    }
+
+    #[test]
+    fn cellular_and_satellite_are_reachable_despite_a_lying_oper_or_carrier_state() {
+        // A live modem session commonly leaves oper_up/carrier_up reporting
+        // false/unknown — that must not filter it out of selection when it's
+        // the only uplink available (e.g. a single-radio device with no
+        // Ethernet plugged in), as long as it actually has a default route.
+        assert!(candidate_with_transport(
+            "wwan0",
+            TransportType::Cellular,
+            Some(800),
+            false,
+            false,
+            true
+        )
+        .is_reachable());
+        assert!(candidate_with_transport(
+            "sat0",
+            TransportType::Satellite,
+            Some(800),
+            false,
+            false,
+            true
+        )
+        .is_reachable());
+    }
+
+    #[test]
+    fn cellular_without_a_default_route_is_still_unreachable() {
+        assert!(!candidate_with_transport(
+            "wwan0",
+            TransportType::Cellular,
             None,
             true,
             true,

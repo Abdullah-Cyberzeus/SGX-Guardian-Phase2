@@ -466,7 +466,15 @@ impl NebulaSignaling {
                                 "Authenticated WebRTC signaling started".into(),
                             )
                             .await?;
-                    } else if session.state != crate::call::state::CallState::MediaNegotiation {
+                    } else if session.state != crate::call::state::CallState::MediaNegotiation
+                        && session.state != crate::call::state::CallState::Connected
+                    {
+                        // Trickle ICE candidates (and occasionally a trailing
+                        // SDP message) can legitimately keep arriving for a
+                        // short while after the session has already reached
+                        // Connected — that's normal WebRTC behavior, not a
+                        // protocol violation, so it must not be rejected as
+                        // an invalid state transition.
                         return Err(CallError::InvalidStateTransition {
                             from: session.state.to_string(),
                             to: "MediaNegotiation".into(),

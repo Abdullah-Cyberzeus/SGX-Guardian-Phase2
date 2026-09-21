@@ -2189,6 +2189,53 @@ mod tests {
         assert_eq!(body["error"], "A call is already active");
     }
 
+    /// Regression test for the "Target peer is not in the trusted registry"
+    /// bug: peer_id used to be a volatile ip:ephemeral_port that could rotate
+    /// between when the frontend fetched the peer list and when the user
+    /// clicked call. Calling by DID (the peer's stable identity, same as
+    /// chat) must succeed even when the registry's peer_id no longer matches
+    /// whatever stale value a caller might still be holding.
+    #[tokio::test]
+    async fn initiate_browser_call_resolves_target_by_did_even_with_a_stale_peer_id() {
+        let (_temp, state) = test_state("nodeA");
+        let peer_did = "did:guardian:yTgwSt7QZSREfaHF9AbxEpgNgczaaPooQzx1co8r91A";
+        let trusted_peers = serde_json::json!([{
+            "peer_id": "192.168.100.2:50152",
+            "did": peer_did,
+            "ip": "192.168.100.2",
+            "status": "verified",
+            "virtual_id": "1927b9cd7cad0555ad16bc5ea433d6478253a9dba29ee678b5da909547a53bf2",
+        }]);
+        std::fs::write(
+            std::path::Path::new(&state.log_dir_primary).join("trusted_peers.json"),
+            serde_json::to_vec(&trusted_peers).expect("serialize fixture"),
+        )
+        .expect("write trusted_peers.json fixture");
+
+        // Call by DID — must resolve, independent of what peer_id currently is.
+        let target = trusted_call_target(&state, peer_did)
+            .await
+            .expect("DID lookup must succeed");
+        assert_eq!(target.ip, "192.168.100.2");
+
+        // A stale/rotated peer_id that no longer matches the registry must
+        // NOT be the only way in — this is exactly the bug scenario.
+        let stale_result = trusted_call_target(&state, "192.168.100.2:54321").await;
+        assert!(
+            stale_result.is_err(),
+            "a stale peer_id should not resolve on its own"
+        );
+
+        // The current (non-rotated) peer_id must still work too, since
+        // attestation_service.rs now writes it as the fixed listener port
+        // rather than an ephemeral one.
+        let current_peer_id_result = trusted_call_target(&state, "192.168.100.2:50152").await;
+        assert!(
+            current_peer_id_result.is_ok(),
+            "the current canonical peer_id should still resolve"
+        );
+    }
+
     #[tokio::test]
     async fn session_scoped_endpoints_report_an_unknown_session_as_missing() {
         let (_temp, state) = test_state("nodeA");
