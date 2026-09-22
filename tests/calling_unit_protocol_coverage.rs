@@ -176,10 +176,10 @@ async fn replay_protection_is_scoped_by_sender_and_session_and_can_be_forgotten(
     let first = envelope("node-a", "call-a", 2, "nonce-2");
     protector.check_and_record(&first).await.unwrap();
     assert!(protector.check_and_record(&first).await.is_err());
-    assert!(protector
+    protector
         .check_and_record(&envelope("node-a", "call-a", 1, "nonce-1"))
         .await
-        .is_err());
+        .unwrap();
     protector
         .check_and_record(&envelope("node-b", "call-a", 1, "nonce-1"))
         .await

@@ -600,7 +600,7 @@ pub async fn join(
     let propagated = if session.host_device_id == state.node_id {
         state
             .call_nebula_signaling
-            .broadcast_group_snapshot(&session, &state.node_id)
+            .broadcast_group_snapshot(&session, &state.node_id, &state.group_session_manager)
             .await
     } else {
         state
@@ -778,7 +778,7 @@ pub async fn decline(
     if session.host_device_id == state.node_id {
         let _ = state
             .call_nebula_signaling
-            .broadcast_group_snapshot(&session, &state.node_id)
+            .broadcast_group_snapshot(&session, &state.node_id, &state.group_session_manager)
             .await;
     } else {
         let _ = state
@@ -834,7 +834,7 @@ pub async fn leave(
     if session.host_device_id == state.node_id {
         let _ = state
             .call_nebula_signaling
-            .broadcast_group_snapshot(&session, &state.node_id)
+            .broadcast_group_snapshot(&session, &state.node_id, &state.group_session_manager)
             .await;
     } else {
         let _ = state
@@ -879,7 +879,7 @@ pub async fn moderate(
     };
     match state
         .call_nebula_signaling
-        .broadcast_group_snapshot(&session, &state.node_id)
+        .broadcast_group_snapshot(&session, &state.node_id, &state.group_session_manager)
         .await
     {
         Ok(()) => {
@@ -974,7 +974,7 @@ pub async fn end(
     let result = if current.host_device_id == state.node_id {
         state
             .call_nebula_signaling
-            .broadcast_group_snapshot(&session, &state.node_id)
+            .broadcast_group_snapshot(&session, &state.node_id, &state.group_session_manager)
             .await
     } else {
         Ok(())

@@ -581,7 +581,7 @@ impl NebulaSignaling {
                 // entry, so the anchor is the IP this message actually
                 // arrived from — the sender's real, unspoofable Nebula IP.
                 let snapshot = group_sessions.join(&group_id, &device_id, &peer_ip).await?;
-                self.broadcast_group_snapshot(&snapshot, &local_device_id)
+                self.broadcast_group_snapshot(&snapshot, &local_device_id, &group_sessions)
                     .await
             }
             GroupWireMessage::Decline {
@@ -596,7 +596,7 @@ impl NebulaSignaling {
                 let snapshot = group_sessions
                     .decline(&group_id, &device_id, &peer_ip)
                     .await?;
-                self.broadcast_group_snapshot(&snapshot, &local_device_id)
+                self.broadcast_group_snapshot(&snapshot, &local_device_id, &group_sessions)
                     .await
             }
             GroupWireMessage::Leave {
@@ -611,7 +611,7 @@ impl NebulaSignaling {
                 let snapshot = group_sessions
                     .leave(&group_id, &device_id, &peer_ip)
                     .await?;
-                self.broadcast_group_snapshot(&snapshot, &local_device_id)
+                self.broadcast_group_snapshot(&snapshot, &local_device_id, &group_sessions)
                     .await
             }
             GroupWireMessage::End {
@@ -625,7 +625,7 @@ impl NebulaSignaling {
                 }
                 let snapshot = group_sessions.end(&group_id, &device_id).await?;
                 let result = self
-                    .broadcast_group_snapshot(&snapshot, &local_device_id)
+                    .broadcast_group_snapshot(&snapshot, &local_device_id, &group_sessions)
                     .await;
                 group_sessions.remove_ended(&group_id).await;
                 result
@@ -642,7 +642,7 @@ impl NebulaSignaling {
                 let snapshot = group_sessions
                     .heartbeat(&group_id, &device_id, &peer_ip)
                     .await?;
-                self.broadcast_group_snapshot(&snapshot, &local_device_id)
+                self.broadcast_group_snapshot(&snapshot, &local_device_id, &group_sessions)
                     .await
             }
             GroupWireMessage::Snapshot { session } => {
@@ -690,7 +690,11 @@ impl NebulaSignaling {
         &self,
         session: &crate::call::GroupSession,
         local_device_id: &str,
+        group_sessions: &GroupSessionManager,
     ) -> CallResult<()> {
+        let session = group_sessions
+            .advance_snapshot_revision(&session.group_id)
+            .await?;
         let host = session
             .participants
             .get(&session.host_device_id)
@@ -1028,6 +1032,7 @@ mod tests {
             participants,
             created_at: now,
             updated_at: now,
+            revision: 1,
             ended_at: None,
         }
     }
@@ -1528,8 +1533,25 @@ mod tests {
             participant("browser", "", GroupRole::Member, GroupMemberState::Joined);
         local_browser.is_local_browser = true;
         group.participants.insert("browser".into(), local_browser);
+        let group_manager = GroupSessionManager::new(dir.path().join("broadcast-group.log"));
+        let stored_group = group_manager
+            .create(
+                group.title.clone(),
+                group.participants["host"].clone(),
+                group
+                    .participants
+                    .values()
+                    .filter(|participant| {
+                        participant.device_id != "host" && participant.device_id != "declined"
+                    })
+                    .cloned()
+                    .collect(),
+                group.requested_media.clone(),
+            )
+            .await
+            .unwrap();
         signaling
-            .broadcast_group_snapshot(&group, "host")
+            .broadcast_group_snapshot(&stored_group, "host", &group_manager)
             .await
             .unwrap();
 
@@ -1569,7 +1591,7 @@ mod tests {
         let mut missing_host = group;
         missing_host.participants.remove("host");
         assert!(signaling
-            .broadcast_group_snapshot(&missing_host, "host")
+            .broadcast_group_snapshot(&missing_host, "host", &group_manager)
             .await
             .is_err());
     }

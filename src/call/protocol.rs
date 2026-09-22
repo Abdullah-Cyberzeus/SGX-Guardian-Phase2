@@ -5,7 +5,7 @@ use crate::key_manager::KeyManager;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use tokio::sync::Mutex;
 
 pub const CALL_PROTOCOL_VERSION: u16 = 1;
@@ -19,46 +19,33 @@ pub struct ReplayProtector {
 
 #[derive(Default)]
 struct ReplayState {
-    highest_sequence: HashMap<(String, String), u64>,
     seen_nonces: HashSet<(String, String, String)>,
 }
 
 impl ReplayProtector {
-    /// Atomically accept a new sender/session sequence and nonce. Exact or
-    /// older messages fail closed; retries must be handled above this layer.
+    /// Atomically accept a nonce once per sender/session. TCP connections for
+    /// one session are independent and can complete out of sequence, and a
+    /// sender's process-local sequence counter restarts after a reboot. The
+    /// signed, random nonce is therefore the replay identity; sequence remains
+    /// authenticated ordering metadata but is not a delivery-order gate.
     pub async fn check_and_record(&self, envelope: &SignalingEnvelope) -> CallResult<()> {
-        let sender_session = (
-            envelope.sender_device_id.clone(),
-            envelope.session_id.clone(),
-        );
         let nonce_key = (
             envelope.sender_device_id.clone(),
             envelope.session_id.clone(),
             envelope.nonce.clone(),
         );
         let mut state = self.state.lock().await;
-        if state.seen_nonces.contains(&nonce_key)
-            || state
-                .highest_sequence
-                .get(&sender_session)
-                .is_some_and(|highest| envelope.sequence <= *highest)
-        {
+        if state.seen_nonces.contains(&nonce_key) {
             return Err(CallError::NonceReused {
                 nonce: envelope.nonce.clone(),
             });
         }
         state.seen_nonces.insert(nonce_key);
-        state
-            .highest_sequence
-            .insert(sender_session, envelope.sequence);
         Ok(())
     }
 
     pub async fn forget_session(&self, session_id: &str) {
         let mut state = self.state.lock().await;
-        state
-            .highest_sequence
-            .retain(|(_, stored_session), _| stored_session != session_id);
         state
             .seen_nonces
             .retain(|(_, stored_session, _)| stored_session != session_id);
@@ -345,7 +332,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replay_and_out_of_order_sequences_fail() {
+    async fn replay_fails_but_out_of_order_unique_nonces_are_accepted() {
         let replay = ReplayProtector::default();
         let first = SignalingEnvelope::new(
             SignalKind::Heartbeat,
@@ -368,7 +355,7 @@ mod tests {
             "nonce-1",
             json!({}),
         );
-        assert!(replay.check_and_record(&older).await.is_err());
+        assert!(replay.check_and_record(&older).await.is_ok());
 
         replay.forget_session("session").await;
         assert!(replay.check_and_record(&older).await.is_ok());

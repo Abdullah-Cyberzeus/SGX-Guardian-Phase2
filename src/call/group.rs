@@ -80,6 +80,11 @@ pub struct GroupSession {
     pub participants: HashMap<String, GroupParticipant>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Monotonic membership revision assigned by the host immediately before
+    /// broadcasting a snapshot. Unlike `updated_at`, this is not affected by
+    /// participant clocks or participant-local heartbeat state.
+    #[serde(default)]
+    pub revision: u64,
     pub ended_at: Option<DateTime<Utc>>,
 }
 
@@ -267,6 +272,7 @@ impl GroupSessionManager {
             participants,
             created_at: now,
             updated_at: now,
+            revision: 1,
             ended_at: None,
         };
         {
@@ -541,11 +547,16 @@ impl GroupSessionManager {
         let mut sessions = self.sessions.write().await;
         if let Some(existing) = sessions.get(&incoming.group_id) {
             if existing.host_device_id != incoming.host_device_id
-                || incoming.updated_at < existing.updated_at
+                || incoming.revision < existing.revision
             {
                 return Err(CallError::InvalidOffer {
                     reason: "Stale or conflicting group snapshot".into(),
                 });
+            }
+            // Duplicate delivery is idempotent. In particular, never let an
+            // equal revision overwrite participant-local media/liveness state.
+            if incoming.revision == existing.revision {
+                return Ok(existing.clone());
             }
         }
         if incoming.state == GroupCallState::Ended {
@@ -564,6 +575,27 @@ impl GroupSessionManager {
             "membership snapshot applied",
         );
         Ok(incoming)
+    }
+
+    /// Advance and persist the host-authoritative snapshot revision. Callers
+    /// invoke this immediately before fan-out so every accepted snapshot has
+    /// a total order independent of wall clocks on participant nodes.
+    pub async fn advance_snapshot_revision(&self, group_id: &str) -> CallResult<GroupSession> {
+        let snapshot = {
+            let mut sessions = self.sessions.write().await;
+            let session = sessions
+                .get_mut(group_id)
+                .ok_or_else(|| CallError::SessionNotFound {
+                    session_id: group_id.to_string(),
+                })?;
+            session.revision = session.revision.saturating_add(1);
+            session.updated_at = Utc::now();
+            let snapshot = session.clone();
+            self.persist(&sessions);
+            snapshot
+        };
+        self.publish("group_snapshot_advanced", &snapshot);
+        Ok(snapshot)
     }
 
     /// Forget a terminal session after its final snapshot has been sent.
@@ -936,6 +968,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn host_revision_orders_snapshots_independently_of_participant_clock() {
+        let dir = tempdir().unwrap();
+        let host = GroupSessionManager::new(dir.path().join("host.log"));
+        let invite = host
+            .create(
+                "Ops".into(),
+                participant("nodeA", GroupRole::Host),
+                vec![participant("nodeB", GroupRole::Member)],
+                vec![MediaType::Audio],
+            )
+            .await
+            .unwrap();
+        assert_eq!(invite.revision, 1);
+
+        let receiver = GroupSessionManager::new(dir.path().join("receiver.log"));
+        receiver
+            .register_invite(invite.clone(), "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+        // Participant-local activity changes wall-clock state but must not
+        // make a later host revision look stale.
+        receiver
+            .heartbeat(&invite.group_id, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+        let mut participant_copy = receiver.get(&invite.group_id).await.unwrap();
+        participant_copy.updated_at = Utc::now() + Duration::hours(1);
+        {
+            let mut sessions = receiver.sessions.write().await;
+            sessions.insert(invite.group_id.clone(), participant_copy);
+        }
+
+        let authoritative = host
+            .advance_snapshot_revision(&invite.group_id)
+            .await
+            .unwrap();
+        assert_eq!(authoritative.revision, 2);
+        assert!(receiver
+            .apply_snapshot(authoritative.clone(), "nodeB", "192.168.100.2")
+            .await
+            .is_ok());
+
+        let mut stale = authoritative;
+        stale.revision = 1;
+        assert!(receiver
+            .apply_snapshot(stale, "nodeB", "192.168.100.2")
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
     async fn host_can_create_join_moderate_and_end() {
         let dir = tempdir().unwrap();
         let manager = GroupSessionManager::new(dir.path().join("group.log"));
@@ -1168,6 +1251,10 @@ mod tests {
         let stale = created.clone();
         manager
             .join(&created.group_id, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+        manager
+            .advance_snapshot_revision(&created.group_id)
             .await
             .unwrap();
         assert!(manager

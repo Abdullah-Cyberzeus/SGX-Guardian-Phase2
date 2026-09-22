@@ -1283,7 +1283,6 @@ pub async fn get_history(
         // guess at the other's DID matches the other's literally.
         if history.is_empty() {
             if let Some(target_peer) = find_trusted_peer_for_did(&state, &peer_did).await {
-                let node_hint = member_node_hint_for_did(&state, &peer_did);
                 let candidates = crate::chat::storage::list_p2p_conversation_ids().await;
                 eprintln!(
                     "💬 History: canonical retry also empty for peer_did={}, scanning {} existing conversation file(s) against matched registry entry {:?}",
@@ -1295,7 +1294,17 @@ pub async fn get_history(
                     if candidate_did == peer_did {
                         continue;
                     }
-                    if peer_matches_identity(&target_peer, &candidate_did, node_hint.as_deref()) {
+                    // Match the candidate using the candidate's own Circle
+                    // identity metadata. Reusing the requested peer's
+                    // node_hint here makes every candidate match the already
+                    // selected target registry entry, leaking the first
+                    // non-empty conversation into unrelated threads.
+                    let candidate_node_hint = member_node_hint_for_did(&state, &candidate_did);
+                    if peer_matches_identity(
+                        &target_peer,
+                        &candidate_did,
+                        candidate_node_hint.as_deref(),
+                    ) {
                         let alt_conversation_id =
                             local_pair_conversation_id(&state, &own_did, &candidate_did);
                         let found = crate::chat::storage::read_p2p_history(&alt_conversation_id)
@@ -1889,6 +1898,26 @@ mod tests {
             local_pair_conversation_id(&state, "did:guardian:bbb", "did:guardian:aaa"),
             "pair-did:guardian:aaa-did:guardian:bbb"
         );
+    }
+
+    #[test]
+    fn conversation_candidate_must_not_reuse_the_requested_peers_node_hint() {
+        let target_c = serde_json::json!({
+            "did": "did:guardian:c",
+            "node_id": "nodeC",
+            "peer_id": "192.168.100.2:50153"
+        });
+        let candidate_b = "did:guardian:b";
+
+        // The old history fallback passed nodeC here while testing B's file,
+        // which made the unrelated candidate match solely through route_id.
+        assert!(peer_matches_identity(&target_c, candidate_b, Some("nodeC")));
+        assert!(!peer_matches_identity(
+            &target_c,
+            candidate_b,
+            Some("nodeB")
+        ));
+        assert!(!peer_matches_identity(&target_c, candidate_b, None));
     }
 
     #[test]

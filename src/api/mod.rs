@@ -666,7 +666,11 @@ pub async fn serve(
             {
                 if let Err(error) = presence_state
                     .call_nebula_signaling
-                    .broadcast_group_snapshot(&session, &presence_state.node_id)
+                    .broadcast_group_snapshot(
+                        &session,
+                        &presence_state.node_id,
+                        &presence_state.group_session_manager,
+                    )
                     .await
                 {
                     tracing::warn!(

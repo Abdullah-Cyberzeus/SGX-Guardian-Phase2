@@ -885,7 +885,7 @@ async fn replay_protector_allows_same_sequence_for_different_sender() {
 }
 
 #[tokio::test]
-async fn replay_protector_rejects_new_nonce_with_lower_sequence() {
+async fn replay_protector_accepts_new_nonce_with_lower_sequence() {
     let replay = ReplayProtector::default();
     let first = SignalingEnvelope::new(
         SignalKind::Heartbeat,
@@ -906,10 +906,7 @@ async fn replay_protector_rejects_new_nonce_with_lower_sequence() {
         serde_json::json!({}),
     );
     replay.check_and_record(&first).await.unwrap();
-    assert!(matches!(
-        replay.check_and_record(&older).await,
-        Err(CallError::NonceReused { .. })
-    ));
+    replay.check_and_record(&older).await.unwrap();
 }
 
 #[tokio::test]
