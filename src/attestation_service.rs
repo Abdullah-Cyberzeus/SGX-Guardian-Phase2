@@ -716,10 +716,17 @@ fn write_trusted_peer_with_dirs(
             data = parsed;
         }
     }
+    let local_overlay_ip = overlay_ip_from_local_registry(node);
     data.retain(|p| {
-        let is_self = p.peer_id == node || p.node_id.as_deref() == Some(node);
+        let is_self = is_self_trusted_peer(p, node, local_overlay_ip.as_deref());
         let stale_same_endpoint = p.ip == ip && p.did.as_deref() != entry.did.as_deref();
-        !is_self && !stale_same_endpoint
+        // A node's DID is derived from its non-rotating DIK, so a different
+        // DID under the same node label is an old identity of that node.
+        let stale_same_node = entry.node_id.is_some()
+            && p.node_id == entry.node_id
+            && entry.did.is_some()
+            && p.did.as_deref() != entry.did.as_deref();
+        !is_self && !stale_same_endpoint && !stale_same_node
     });
 
     // Upsert by DID first, then fall back to peer_id for legacy records
@@ -784,7 +791,7 @@ fn write_trusted_peer_with_dirs(
             node
         );
     }
-    merge_parent_peer_file_with_dirs(primary_dir, fallback_dir);
+    merge_parent_peer_file_with_dirs(node, primary_dir, fallback_dir);
 }
 
 fn remove_trusted_peer(peer_id: &str) {
@@ -814,7 +821,7 @@ fn remove_trusted_peer(peer_id: &str) {
             );
         }
     }
-    merge_parent_peer_file_with_dirs(&primary_dir, &fallback_dir);
+    merge_parent_peer_file_with_dirs(&node, &primary_dir, &fallback_dir);
 }
 /// Writes the most recent attestation outcome for a peer.
 /// `ev` is the *peer's* evidence (so DID/VID/DKP/PCR reflect THEM, not us).
@@ -873,22 +880,18 @@ fn write_last_attestation(
         eprintln!("⚠️ Failed to write last_attestation.json");
     }
 }
-fn merge_parent_peer_file_with_dirs(primary_dir: &Path, fallback_dir: &Path) {
+fn merge_parent_peer_file_with_dirs(node: &str, primary_dir: &Path, fallback_dir: &Path) {
     let mut merged: HashMap<String, TrustedPeer> = HashMap::new();
+    let local_overlay_ip = overlay_ip_from_local_registry(node);
 
-    for dir in [primary_dir, fallback_dir] {
-        let Ok(entries) = fs::read_dir(dir) else {
-            continue;
-        };
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-                continue;
-            };
-            if !(name.starts_with("trusted_peers_node") && name.ends_with(".json")) {
-                continue;
-            }
+    // Only this node's own per-node file is merged. Other
+    // `trusted_peers_node*.json` files on disk are leftovers from earlier
+    // identities, cloned images or restores, and merging them injected stale
+    // entries into the view the Peers and Chat pages read.
+    let (primary_node_file, fallback_node_file) =
+        trusted_peer_node_paths(node, primary_dir, fallback_dir);
+    for path in [primary_node_file, fallback_node_file] {
+        {
             let Ok(text) = fs::read_to_string(&path) else {
                 continue;
             };
@@ -896,17 +899,24 @@ fn merge_parent_peer_file_with_dirs(primary_dir: &Path, fallback_dir: &Path) {
                 continue;
             };
             for peer in peers {
-                if peer.peer_id.is_empty() {
+                if peer.peer_id.is_empty()
+                    || is_self_trusted_peer(&peer, node, local_overlay_ip.as_deref())
+                {
                     continue;
                 }
                 let candidate_did = peer.did.as_deref().filter(|did| !did.is_empty());
                 let merge_key = merged
                     .iter()
                     .find(|(_, existing)| {
-                        existing.peer_id == peer.peer_id
-                            || candidate_did
-                                .map(|did| existing.did.as_deref() == Some(did))
-                                .unwrap_or(false)
+                        let existing_did = existing.did.as_deref().filter(|did| !did.is_empty());
+                        match (existing_did, candidate_did) {
+                            // Two DIDs are two identities, even if they once
+                            // shared an endpoint: never fold one into the
+                            // other (that paired nodeB's DID with nodeA's
+                            // address and misrouted chat sync).
+                            (Some(a), Some(b)) => a == b,
+                            _ => existing.peer_id == peer.peer_id,
+                        }
                     })
                     .map(|(key, _)| key.clone())
                     .unwrap_or_else(|| {
@@ -956,7 +966,6 @@ fn merge_trusted_peer(existing: &mut TrustedPeer, candidate: TrustedPeer) {
 
     if candidate_is_newer {
         existing.peer_id = candidate.peer_id.clone();
-        existing.node_id = candidate.node_id.clone();
         existing.ip = candidate.ip.clone();
         existing.status = candidate.status.clone();
         existing.timestamp = candidate.timestamp.clone();
@@ -964,33 +973,44 @@ fn merge_trusted_peer(existing: &mut TrustedPeer, candidate: TrustedPeer) {
             existing.last_attested_at = candidate.last_attested_at.clone();
         }
     }
-    if candidate.node_id.is_some() {
-        existing.node_id = candidate.node_id.clone();
+
+    // A newer attestation replaces every field it carries. An older record
+    // may only fill fields that are still missing: letting it overwrite
+    // node_id / VID / DKP / PCR produced entries labelled with the wrong
+    // node (e.g. nodeC recorded as "nodeA"), which hid the peer as "self"
+    // on the Peers page and routed chat to the wrong port.
+    fn take<T: Clone>(existing: &mut Option<T>, candidate: &Option<T>, newer: bool) {
+        if candidate.is_some() && (newer || existing.is_none()) {
+            *existing = candidate.clone();
+        }
     }
-    if candidate.did.is_some() {
-        existing.did = candidate.did.clone();
-    }
-    if candidate.virtual_id.is_some() {
-        existing.virtual_id = candidate.virtual_id.clone();
-    }
-    if candidate.dkp_pubkey_sha256_b16.is_some() {
-        existing.dkp_pubkey_sha256_b16 = candidate.dkp_pubkey_sha256_b16.clone();
-    }
-    if candidate.pcr_composite_digest.is_some() {
-        existing.pcr_composite_digest = candidate.pcr_composite_digest.clone();
-    }
-    if candidate.policy_digest.is_some() {
-        existing.policy_digest = candidate.policy_digest.clone();
-    }
-    if candidate.rotation_reason.is_some() {
-        existing.rotation_reason = candidate.rotation_reason.clone();
-    }
-    if candidate.nonce_i.is_some() {
-        existing.nonce_i = candidate.nonce_i.clone();
-    }
-    if candidate.nonce_r.is_some() {
-        existing.nonce_r = candidate.nonce_r.clone();
-    }
+    let newer = candidate_is_newer;
+    take(&mut existing.node_id, &candidate.node_id, newer);
+    take(&mut existing.did, &candidate.did, newer);
+    take(&mut existing.virtual_id, &candidate.virtual_id, newer);
+    take(
+        &mut existing.dkp_pubkey_sha256_b16,
+        &candidate.dkp_pubkey_sha256_b16,
+        newer,
+    );
+    take(
+        &mut existing.pcr_composite_digest,
+        &candidate.pcr_composite_digest,
+        newer,
+    );
+    take(&mut existing.policy_digest, &candidate.policy_digest, newer);
+    take(&mut existing.rotation_reason, &candidate.rotation_reason, newer);
+    take(&mut existing.nonce_i, &candidate.nonce_i, newer);
+    take(&mut existing.nonce_r, &candidate.nonce_r, newer);
+}
+
+/// True for registry entries that describe this node itself: labelled with
+/// our node_id, or pointing at our own overlay IP (a leftover from an earlier
+/// identity of this board, e.g. nodeB holding a "nodeC" entry at 192.168.100.2).
+fn is_self_trusted_peer(peer: &TrustedPeer, node: &str, local_overlay_ip: Option<&str>) -> bool {
+    peer.peer_id == node
+        || peer.node_id.as_deref() == Some(node)
+        || local_overlay_ip.is_some_and(|ip| peer.ip == ip)
 }
 
 fn load_trusted_peers_from_global() -> Vec<TrustedPeer> {
@@ -4955,6 +4975,124 @@ mod tests {
         assert_eq!(existing2.peer_id, "A");
         // ...but present Option fields are still merged in unconditionally.
         assert_eq!(existing2.did.as_deref(), Some("did:guardian:late"));
+    }
+
+    #[test]
+    fn older_duplicate_cannot_relabel_a_fresh_trusted_peer() {
+        let now = Utc::now();
+        let peer = |node: &str, vid: &str, ts: String| TrustedPeer {
+            peer_id: "192.168.100.3:50153".into(),
+            node_id: Some(node.into()),
+            ip: "192.168.100.3".into(),
+            status: "verified".into(),
+            timestamp: ts.clone(),
+            did: Some("did:guardian:node-c".into()),
+            virtual_id: Some(vid.into()),
+            last_attested_at: Some(ts),
+            dkp_pubkey_sha256_b16: Some(format!("dkp-{vid}")),
+            pcr_composite_digest: Some(format!("pcr-{vid}")),
+            policy_digest: None,
+            rotation_reason: None,
+            nonce_i: None,
+            nonce_r: None,
+        };
+        let mut fresh = peer("nodeC", "vid-fresh", now.to_rfc3339());
+        let stale = peer(
+            "nodeA",
+            "vid-stale",
+            (now - chrono::Duration::hours(2)).to_rfc3339(),
+        );
+        merge_trusted_peer(&mut fresh, stale);
+        assert_eq!(fresh.node_id.as_deref(), Some("nodeC"));
+        assert_eq!(fresh.virtual_id.as_deref(), Some("vid-fresh"));
+        assert_eq!(fresh.dkp_pubkey_sha256_b16.as_deref(), Some("dkp-vid-fresh"));
+        assert_eq!(fresh.pcr_composite_digest.as_deref(), Some("pcr-vid-fresh"));
+    }
+
+    #[test]
+    fn global_merge_ignores_other_nodes_leftover_peer_files() {
+        let base = temp_test_dir("trusted-peer-merge-own-file-only");
+        let primary_dir = base.join("primary");
+        let fallback_dir = base.join("logs");
+        fs::create_dir_all(&primary_dir).expect("create primary dir");
+        fs::create_dir_all(&fallback_dir).expect("create fallback dir");
+
+        // Leftover from another identity of this board: it must not leak into
+        // nodeA's merged view.
+        fs::write(
+            fallback_dir.join("trusted_peers_nodeB.json"),
+            serde_json::to_string(&serde_json::json!([{
+                "peer_id": "192.168.100.2:39876",
+                "ip": "192.168.100.2",
+                "status": "verified",
+                "timestamp": "2026-09-16T10:20:28+00:00",
+                "did": "did:guardian:leftover"
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut ev = make_test_evidence("allow: all", &"ab".repeat(16));
+        ev.node_id = "nodeC".into();
+        ev.subject_did = "did:guardian:node-c".into();
+        write_trusted_peer_with_dirs(
+            "nodeA",
+            &primary_dir,
+            &fallback_dir,
+            "192.168.100.3:50153",
+            "192.168.100.3",
+            &ev,
+            None,
+        );
+
+        let merged: Vec<TrustedPeer> = serde_json::from_str(
+            &fs::read_to_string(primary_dir.join("trusted_peers.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].did.as_deref(), Some("did:guardian:node-c"));
+        assert_eq!(merged[0].node_id.as_deref(), Some("nodeC"));
+    }
+
+    #[test]
+    fn a_new_did_for_the_same_node_replaces_its_old_identity() {
+        let base = temp_test_dir("trusted-peer-same-node-new-did");
+        let primary_dir = base.join("primary");
+        let fallback_dir = base.join("logs");
+        fs::create_dir_all(&primary_dir).expect("create primary dir");
+        fs::create_dir_all(&fallback_dir).expect("create fallback dir");
+
+        let mut old = make_test_evidence("allow: all", &"cd".repeat(16));
+        old.node_id = "nodeC".into();
+        old.subject_did = "did:guardian:old-c".into();
+        write_trusted_peer_with_dirs(
+            "nodeB",
+            &primary_dir,
+            &fallback_dir,
+            "192.168.100.9:50153",
+            "192.168.100.9",
+            &old,
+            None,
+        );
+        let mut current = make_test_evidence("allow: all", &"ef".repeat(16));
+        current.node_id = "nodeC".into();
+        current.subject_did = "did:guardian:current-c".into();
+        write_trusted_peer_with_dirs(
+            "nodeB",
+            &primary_dir,
+            &fallback_dir,
+            "192.168.100.3:50153",
+            "192.168.100.3",
+            &current,
+            None,
+        );
+
+        let per_node: Vec<TrustedPeer> = serde_json::from_str(
+            &fs::read_to_string(primary_dir.join("trusted_peers_nodeB.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(per_node.len(), 1);
+        assert_eq!(per_node[0].did.as_deref(), Some("did:guardian:current-c"));
     }
 
     #[test]

@@ -1860,7 +1860,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if node_id != "nodeA" {
                 let node_for_init_pub = node_id.clone();
                 let nebula_ip_for_init_pub = nebula_ip.clone();
-                let node_key_path_for_init_pub = node_key_path.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                     // Honour the same explicit CA override and resolution order used
@@ -1868,7 +1867,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // ignored SGX_CA_HOST and could therefore publish to a stale
                     // discovery/lighthouse address.
                     let ca_host = ca_discovery::resolve_ca_ip_for_runtime().await;
-                    if let Ok(km_init) = KeyManager::load_or_generate(&node_key_path_for_init_pub) {
+                    // Use the same runtime (SE050/TPM) signer as Circle, VC and
+                    // periodic DID refresh. `KeyManager::load_or_generate` always
+                    // returns the software attestation key, so the boot publish
+                    // used to build a DID document around that software key: the
+                    // CA rejected it as a key change, while the local copy
+                    // (already saved) broke Circle-registry verification with
+                    // DerivSignatureInvalid until the next periodic refresh.
+                    if let Ok(km_init) =
+                        sgx_guardian_client::vc::issue::load_runtime_key_manager(&node_for_init_pub)
+                    {
                         for attempt in 1..=5 {
                             if let Err(e) = sgx_guardian_client::did::doc_distribution::pull_and_apply_aggregate(&ca_host).await {
                                 tracing::warn!(
@@ -3318,7 +3326,13 @@ async fn refresh_and_publish_did_doc_inner(
         if let Some(existing) = prev.as_ref() {
             if existing.substantively_equal(&doc) {
                 if !is_ca {
-                    let _ = doc_distribution::publish_to_ca(ca_host, node_id, existing).await;
+                    // Surface CA rejection: ignoring it made a retry after a
+                    // rejected publish report "published successfully".
+                    doc_distribution::publish_to_ca(ca_host, node_id, existing)
+                        .await
+                        .map_err(|e| {
+                            audit_failed(format!("DID Document publish_to_ca failed: {}", e))
+                        })?;
                 }
                 return Ok(());
             }
@@ -3332,6 +3346,14 @@ async fn refresh_and_publish_did_doc_inner(
         .ok_or_else(|| audit_failed("DID Document missing verification method".to_string()))?;
     doc_sign::sign_in_place(&mut doc, signing_km, &vm_ref)
         .map_err(|e| audit_failed(format!("DID Document signing failed: {}", e)))?;
+    // Members persist the new document only after the CA accepts it, so a
+    // rejected document never replaces the local copy that Circle-registry
+    // and peer verification rely on.
+    if !is_ca {
+        doc_distribution::publish_to_ca(ca_host, node_id, &doc)
+            .await
+            .map_err(|e| audit_failed(format!("DID Document publish_to_ca failed: {}", e)))?;
+    }
     doc_persistence::save_self(&doc)
         .map_err(|e| audit_failed(format!("DID Document save_self failed: {}", e)))?;
     doc_persistence::write_self_floor_version(doc.sgx_version_id)
@@ -3349,10 +3371,6 @@ async fn refresh_and_publish_did_doc_inner(
                 .map_err(|e| audit_failed(format!("VC issuer DID load failed: {}", e)))?;
         sgx_guardian_client::vc::issue::ensure_owner_vc(&issuer, signing_km)
             .map_err(|e| audit_failed(format!("Owner VC ensure failed: {}", e)))?;
-    } else {
-        doc_distribution::publish_to_ca(ca_host, node_id, &doc)
-            .await
-            .map_err(|e| audit_failed(format!("DID Document publish_to_ca failed: {}", e)))?;
     }
 
     if active {
