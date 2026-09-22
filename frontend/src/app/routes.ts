@@ -30,6 +30,7 @@ const OB06AccountSetup = screen(() => import("./screens/onboarding/OB06AccountSe
 const OB07DIDIntroduction = screen(() => import("./screens/onboarding/OB07DIDIntroduction"), "OB07DIDIntroduction");
 const OB08CreateFirstCircle = screen(() => import("./screens/onboarding/OB08CreateFirstCircle"), "OB08CreateFirstCircle");
 const OB09OnboardingComplete = screen(() => import("./screens/onboarding/OB09OnboardingComplete"), "OB09OnboardingComplete");
+const OB10GuardianMode = screen(() => import("./screens/onboarding/OB10GuardianMode"), "OB10GuardianMode");
 
 // Home
 const HM01Dashboard = screen(() => import("./screens/home/HM01Dashboard"), "HM01Dashboard");
@@ -139,6 +140,7 @@ export const router = createBrowserRouter([
           {
             Component: AuthenticatedOnboardingRoute,
             children: [
+              { path: "mode", Component: OB10GuardianMode },
               { path: "pairing", Component: OB02HardwarePairing },
               { path: "connecting", Component: OB03Connecting },
               { path: "success", Component: OB04PairingSuccess },

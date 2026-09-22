@@ -112,7 +112,7 @@ interface AuthPayload {
   valid?: boolean;
 }
 
-interface LoginBypassProbe {
+interface StartupStatusProbe {
   nodeId?: string;
   hostname?: string;
   displayHostname?: string;
@@ -174,7 +174,7 @@ export function cachedOfflineModeEnabled() {
 
 async function refreshOfflineMode() {
   try {
-    const probe = await api.request<LoginBypassProbe>("/node/status", {
+    const probe = await api.request<StartupStatusProbe>("/node/status", {
       method: "GET",
       cache: "no-store",
       timeoutMs: 1500,
@@ -201,26 +201,6 @@ async function persistOfflineMembership(session: Session) {
   });
 }
 
-function makeLoginBypassSession(probe?: LoginBypassProbe): Session {
-  const nodeId = probe?.nodeId?.trim() || "guardian-local";
-  const hostname = probe?.displayHostname?.trim() || probe?.deviceName?.trim() || probe?.hostname?.trim() || nodeId;
-  return {
-    token: "",
-    scopes: ["admin:*"],
-    circleIds: [],
-    user: {
-      id: nodeId,
-      email: `${hostname.toLowerCase()}@local.guardian`,
-      name: hostname,
-      role: "owner",
-      user_metadata: {
-        name: hostname,
-        role: "Guardian Admin",
-      },
-    },
-  };
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [initialToken] = useState(() => {
     const token = sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY) ?? "";
@@ -239,7 +219,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const handleDisplayUpdated = (event: Event) => {
-      const detail = event instanceof CustomEvent ? event.detail as LoginBypassProbe | undefined : undefined;
+      const detail = event instanceof CustomEvent ? event.detail as StartupStatusProbe | undefined : undefined;
       const name = detail?.displayHostname?.trim()
         || detail?.deviceName?.trim()
         || detail?.hostname?.trim();
@@ -295,18 +275,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
-    const probeLoginBypass = async () => {
+    const probeStartupStatus = async () => {
       try {
-        const probe = await api.request<LoginBypassProbe>("/node/status", {
+        const probe = await api.request<StartupStatusProbe>("/node/status", {
           method: "GET",
           cache: "no-store",
           timeoutMs: 1500,
+          suppressUnauthorizedEvent: true,
         });
         if (cancelled) return;
         rememberOfflineMode(probe.offlineMode);
-        const bypassSession = makeLoginBypassSession(probe);
         injectToken(null);
-        setSession(bypassSession);
+        setSession(null);
       } catch {
         if (!cancelled) {
           injectToken(null);
@@ -353,7 +333,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     if (!initialToken) {
-      void probeLoginBypass();
+      void probeStartupStatus();
       return () => {
         cancelled = true;
       };
@@ -371,7 +351,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch((error) => {
         console.warn("AuthContext: no active session found.", error.message);
-        void probeLoginBypass();
+        void probeStartupStatus();
       });
     return () => {
       cancelled = true;

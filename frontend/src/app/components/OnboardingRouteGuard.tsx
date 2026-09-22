@@ -20,7 +20,7 @@ export function OnboardingEntryRoute() {
   }
 
   if (session) {
-    return <Navigate to="/onboarding/pairing" replace />;
+    return <Navigate to="/onboarding/mode" replace />;
   }
 
   return <Outlet />;

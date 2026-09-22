@@ -108,7 +108,7 @@ export function OB06AccountSetup() {
         localStorage.setItem("sgx_onboarded", "1");
         navigate(homePathForRole(createdRole), { replace: true });
       } else {
-        navigate("/onboarding/pairing", { replace: true });
+        navigate("/onboarding/mode", { replace: true });
       }
     } else {
       const { error, role: authenticatedRole } = await signIn(email, password);

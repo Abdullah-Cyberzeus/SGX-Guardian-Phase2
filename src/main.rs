@@ -805,7 +805,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let node_key_path_for_reattest = node_key_path.clone();
 
     step(9, "Guardian Mesh subsystem gate");
-    if !GATES.disable_nebula {
+    let nebula_base_dir_for_gate =
+        std::env::var("SGX_NEBULA_DIR").unwrap_or("/var/lib/sgx-guardian/nebula".to_string());
+    let mesh_pending_enrollment = node_id != "nodeA"
+        && !member_mesh_credentials_available(&nebula_base_dir_for_gate, &node_id);
+    if mesh_pending_enrollment {
+        println!(
+            "⚠️ Guardian Mesh credentials are not present for {}. Starting frontend/API in setup mode and deferring CA enrollment.",
+            node_id
+        );
+        log_audit(
+            &node_id,
+            AuditCategory::Network,
+            AuditSeverity::Warning,
+            AuditAction::Started,
+            "Guardian Mesh enrollment pending; REST/frontend startup will continue",
+        );
+        spawn_deferred_member_mesh_bootstrap(node_id.clone(), pubkey_b64.clone());
+    }
+    let guardian_mesh_enabled = !GATES.disable_nebula && !mesh_pending_enrollment;
+    if guardian_mesh_enabled {
         // === Nebula Installation Verification ===
         println!("\n🔎 Verifying Guardian Mesh Installation...");
 
@@ -2222,8 +2241,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // === Start Expiry Monitor ===
         use sgx_guardian_client::nebula::cert_lifecycle::ExpiryMonitor;
         ExpiryMonitor::start(nebula_base_dir.clone(), node_id.clone());
-    } else {
+    } else if GATES.disable_nebula {
         tracing::warn!("STEP_09–14 SKIPPED: Guardian Mesh disabled by SGX_DISABLE_NEBULA");
+    } else {
+        tracing::warn!(
+            "STEP_09–14 SKIPPED: Guardian Mesh enrollment pending; frontend/API remain available"
+        );
     }
 
     // === CoT Deliverable Integration Start ===
@@ -3444,16 +3467,17 @@ async fn discover_lan_node_a(
                 "/etc/sgx-guardian/nodeA.yaml",
                 "config/nodeA.yaml",
             ] {
-                if let Ok(cfg) = sgx_guardian_client::config_loader::load_config(path) {
-                    let ip = cfg.ip.trim();
-                    if !ip.is_empty()
-                        && ip != "0.0.0.0"
-                        && ip != "127.0.0.1"
-                        && is_lan_ca_reachable(ip).await
-                    {
-                        println!("✅ Found Node A at {} via {}", ip, path);
-                        return Some(ip.to_string());
-                    }
+                let ip = sgx_guardian_client::config_loader::load_config(path)
+                    .ok()
+                    .map(|cfg| cfg.ip.trim().to_string())
+                    .unwrap_or_default();
+                if !ip.is_empty()
+                    && ip != "0.0.0.0"
+                    && ip != "127.0.0.1"
+                    && is_lan_ca_reachable(&ip).await
+                {
+                    println!("✅ Found Node A at {} via {}", ip, path);
+                    return Some(ip);
                 }
             }
 
@@ -3468,4 +3492,83 @@ async fn discover_lan_node_a(
         }
     }
     None
+}
+
+fn member_mesh_credentials_available(nebula_base_dir: &str, node_id: &str) -> bool {
+    let cert_path = format!("{}/nodes/{}.crt", nebula_base_dir, node_id);
+    let key_path = format!("{}/nodes/{}.key", nebula_base_dir, node_id);
+    let ca_path = format!("{}/ca/ca.crt", nebula_base_dir);
+    Path::new(&cert_path).exists()
+        && Path::new(&key_path).exists()
+        && Path::new(&ca_path)
+            .metadata()
+            .map(|metadata| metadata.len() > 0)
+            .unwrap_or(false)
+        && sgx_guardian_client::cert_client::broker_trust_material_available()
+}
+
+fn spawn_deferred_member_mesh_bootstrap(node_id: String, pubkey_b64: String) {
+    tokio::spawn(async move {
+        const RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(20);
+        loop {
+            if let Some(ca_lan_ip) =
+                discover_lan_node_a(1, std::time::Duration::from_secs(10)).await
+            {
+                println!(
+                    "🌐 Deferred enrollment found Node A at {} — requesting Guardian Mesh certificate",
+                    ca_lan_ip
+                );
+                let pubkey_prefix = &pubkey_b64[..20.min(pubkey_b64.len())];
+                let ip_cidr = sgx_guardian_client::nebula::registry_sync::resolve_overlay_ip(
+                    &node_id,
+                    &ca_lan_ip,
+                    pubkey_prefix,
+                )
+                .await;
+                let ca_address = format!("{}:50061", ca_lan_ip);
+                let wants_lh = std::env::var("SGX_WANTS_LIGHTHOUSE")
+                    .map(|value| matches!(value.to_lowercase().as_str(), "1" | "true" | "yes"))
+                    .unwrap_or(false);
+                let wants_relay = std::env::var("SGX_WANTS_RELAY")
+                    .map(|value| matches!(value.to_lowercase().as_str(), "1" | "true" | "yes"))
+                    .unwrap_or(false);
+                sgx_guardian_client::cert_client::request_certificate_from_ca(
+                    node_id.clone(),
+                    ca_address,
+                    ip_cidr,
+                    pubkey_b64.clone(),
+                    wants_lh,
+                    wants_relay,
+                    None,
+                )
+                .await;
+            } else {
+                let vps_cfg = sgx_guardian_client::config_loader::resolve_vps_config(&node_id);
+                if let Some(broker_url) = vps_cfg.broker_url.filter(|url| !url.trim().is_empty()) {
+                    println!(
+                        "☁️ Deferred enrollment using VPS Cloud Broker at {}",
+                        broker_url
+                    );
+                    sgx_guardian_client::cert_client::request_certificate_via_broker(
+                        node_id.clone(),
+                        broker_url,
+                        pubkey_b64.clone(),
+                    )
+                    .await;
+                }
+            }
+
+            let nebula_base_dir = std::env::var("SGX_NEBULA_DIR")
+                .unwrap_or("/var/lib/sgx-guardian/nebula".to_string());
+            if member_mesh_credentials_available(&nebula_base_dir, &node_id) {
+                println!(
+                    "✅ Guardian Mesh credentials are ready for {}. Restart this Guardian to bring up the mesh.",
+                    node_id
+                );
+                return;
+            }
+
+            tokio::time::sleep(RETRY_DELAY).await;
+        }
+    });
 }
