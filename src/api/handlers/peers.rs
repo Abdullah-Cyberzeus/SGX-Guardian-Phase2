@@ -120,7 +120,7 @@ async fn call_peer_online(ip: &str) -> bool {
     false
 }
 
-fn stable_node_id_for_ip(ip: &str) -> Option<String> {
+pub(crate) fn stable_node_id_for_ip(ip: &str) -> Option<String> {
     if let Ok(registry) = crate::nebula::overlay_registry::OverlayRegistry::load(
         crate::nebula::registry_sync::REGISTRY_PATH,
     ) {

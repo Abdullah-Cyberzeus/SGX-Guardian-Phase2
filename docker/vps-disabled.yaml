@@ -1,0 +1,6 @@
+# Dev-only: run the Guardian without any VPS broker / VPS lighthouse.
+# Empty values (rather than missing ones) are what tell resolve_vps_config()
+# "explicitly unconfigured" — a missing value falls back to the real droplet.
+vps:
+  broker_url: ""
+  vps_public_ip: ""

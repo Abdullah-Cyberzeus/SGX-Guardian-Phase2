@@ -43,33 +43,6 @@ x-guardian-common: &guardian-common
   restart: unless-stopped
 
 services:
-  # ── VPS Cloud Enrollment Broker (Lighthouse + Relay for remote nodes) ──
-  broker:
-    <<: *guardian-common
-    container_name: sgx-broker
-    hostname: broker.guardian
-    command: ["broker"]
-    networks:
-      sgxnet:
-        ipv4_address: 172.31.250.20
-      remotenet:
-        ipv4_address: 172.31.251.20
-    ports:
-      - "8080:8080"
-    environment:
-      <<: *guardian-env
-      NODE_ID: broker
-      RUST_LOG: info
-      SGX_BROKER_PORT: 8080
-      SGX_BROKER_TOKEN: "test-broker-secret-token"
-    volumes:
-      - broker-nebula:/etc/nebula
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
   nodeA:
     <<: *guardian-common
     container_name: sgx-nodeA
@@ -77,10 +50,6 @@ services:
     environment:
       <<: *guardian-env
       NODE_ID: nodeA
-      SGX_BROKER_URL: "http://172.31.250.20:8080"
-      SGX_BROKER_TOKEN: "test-broker-secret-token"
-      SGX_VPS_PUBLIC_IP: "172.31.250.20"
-      SGX_VPS_OVERLAY_IP: "192.168.100.10"
       # Per-node TPM handles: 0x10 spacing leaves headroom for dkp.rs::rotate()
       # (new_handle = base + version - 1) before colliding with the next node's base.
       SGX_TPM_DKP_HANDLE_BASE: "0x81000010"
@@ -102,6 +71,10 @@ services:
       - nodeA-lib:/var/lib/sgx-guardian
       - nodeA-log:/var/log/sgx-guardian
       - ./ha-dev-config:/ha-config
+      # No VPS in this stack: without this, nodeA registers a VPS lighthouse
+      # at the real droplet address, stops acting as lighthouse/relay itself,
+      # and B<->C can never find each other.
+      - ./docker/vps-disabled.yaml:/etc/sgx-guardian/config.yaml:ro
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:8443/api/v1/health"]
       interval: 10s
@@ -116,8 +89,10 @@ services:
     environment:
       <<: *guardian-env
       NODE_ID: nodeB
-      SGX_BROKER_URL: "http://172.31.250.20:8080"
       SGX_LIGHTHOUSE_IP: 172.31.250.10
+      # Unroutable placeholder (RFC 5737) so a restart never falls back to the real droplet.
+      SGX_BROKER_URL: "http://192.0.2.1:8080"
+      SGX_VPS_PUBLIC_IP: "192.0.2.1"
       SGX_TPM_DKP_HANDLE_BASE: "0x81000020"
       SGX_TPM_DIK_HANDLE: "0x81000110"
       SGX_TPM_KEY_AUTH: "${NODEB_TPM_KEY_AUTH:-}"
@@ -145,42 +120,27 @@ services:
     environment:
       <<: *guardian-env
       NODE_ID: nodeC
-      SGX_BROKER_URL: "http://172.31.251.20:8080"
+      SGX_LIGHTHOUSE_IP: 172.31.250.10
+      # Unroutable placeholder (RFC 5737) so a restart never falls back to the real droplet.
+      SGX_BROKER_URL: "http://192.0.2.1:8080"
+      SGX_VPS_PUBLIC_IP: "192.0.2.1"
       SGX_TPM_DKP_HANDLE_BASE: "0x81000030"
       SGX_TPM_DIK_HANDLE: "0x81000120"
       SGX_TPM_KEY_AUTH: "${NODEC_TPM_KEY_AUTH:-}"
       SGX_CALL_SIGNALING_PORT: "50065"
       SGX_CYLENIUM_OIDC_REDIRECT_URI: "${NODEC_CYLENIUM_REDIRECT_URI:-https://nodec.guardian/auth/callback}"
     networks:
-      remotenet:
-        ipv4_address: 172.31.251.12
+      sgxnet:
+        ipv4_address: 172.31.250.12
     ports:
       - "127.0.0.1:38443:8443"
     volumes:
       - nodeC-etc:/etc/sgx-guardian
       - nodeC-lib:/var/lib/sgx-guardian
       - nodeC-log:/var/log/sgx-guardian
-
-  caddy:
-    image: caddy:2-alpine
-    container_name: sgx-guardian-lan-tls
-    restart: unless-stopped
-    ports:
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - ./docker/Caddyfile.dev:/etc/caddy/Caddyfile:ro
-      - guardian-caddy-data:/data
-      - guardian-caddy-config:/config
-    networks:
-      - sgxnet
     depends_on:
       nodeA:
         condition: service_healthy
-      nodeB:
-        condition: service_started
-      nodeC:
-        condition: service_started
 
 networks:
   sgxnet:
@@ -188,14 +148,8 @@ networks:
     ipam:
       config:
         - subnet: 172.31.250.0/24
-  remotenet:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.31.251.0/24
 
 volumes:
-  broker-nebula: {}
   nodeA-etc: {}
   nodeA-lib: {}
   nodeA-log: {}
@@ -205,5 +159,3 @@ volumes:
   nodeC-etc: {}
   nodeC-lib: {}
   nodeC-log: {}
-  guardian-caddy-data: {}
-  guardian-caddy-config: {}

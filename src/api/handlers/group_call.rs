@@ -83,12 +83,41 @@ pub struct GroupCallsResponse {
 #[derive(Debug, Deserialize)]
 struct TrustedGroupPeer {
     peer_id: String,
+    #[serde(default, alias = "nodeId")]
+    node_id: Option<String>,
     #[serde(default)]
     did: Option<String>,
     ip: String,
     status: String,
     #[serde(default)]
     virtual_id: Option<String>,
+}
+
+impl TrustedGroupPeer {
+    /// The peers API hands the UI a node name (e.g. "nodeB") in place of an
+    /// address-shaped `peer_id`, and 1:1 calls send the DID, so a requested
+    /// member can arrive as any of these — match all three, not just the raw
+    /// `peer_id` from trusted_peers.json.
+    fn is_requested(&self, member_ids: &[String]) -> bool {
+        let node_id = self
+            .node_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| crate::api::handlers::peers::stable_node_id_for_ip(&self.ip));
+        member_ids.iter().any(|id| {
+            let id = id.trim();
+            id == self.peer_id
+                || node_id
+                    .as_deref()
+                    .is_some_and(|node| node.eq_ignore_ascii_case(id))
+                || self
+                    .did
+                    .as_deref()
+                    .is_some_and(|did| did.eq_ignore_ascii_case(id))
+        })
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -300,7 +329,7 @@ pub async fn create(
         // requirement on top of it.
         let unauthorized_requested = !request.call_all
             && (trusted.iter().any(|peer| {
-                request.member_ids.contains(&peer.peer_id)
+                peer.is_requested(&request.member_ids)
                     && !peer.did.as_ref().is_some_and(|did| contacts.contains(did))
             }) || request
                 .member_ids
@@ -325,7 +354,7 @@ pub async fn create(
         .filter(|peer| {
             peer.peer_id != actor_id
                 && (peer.did.as_ref() != Some(&actor_id))
-                && (request.call_all || request.member_ids.contains(&peer.peer_id))
+                && (request.call_all || peer.is_requested(&request.member_ids))
                 && member_contacts.as_ref().is_none_or(|contacts| {
                     peer.did.as_ref().is_some_and(|did| contacts.contains(did))
                 })
@@ -1392,6 +1421,29 @@ mod tests {
         let response = active(State(state.clone()), None).await.into_response();
         let body = response_json(response).await;
         assert_eq!(body["total"], 1);
+    }
+
+    // --- member matching -----------------------------------------------------
+
+    /// The peers API shows the UI "nodeB" in place of an address-shaped
+    /// peer_id, and the UI sends that back as the group member id. Matching
+    /// only the raw peer_id made every group call fail with "Select at least
+    /// one trusted member".
+    #[test]
+    fn group_member_matches_by_node_id_did_or_peer_id() {
+        let peer = TrustedGroupPeer {
+            peer_id: "192.168.100.2:50152".into(),
+            node_id: Some("nodeB".into()),
+            did: Some("did:guardian:abc".into()),
+            ip: "192.168.100.2".into(),
+            status: "verified".into(),
+            virtual_id: Some("vid".into()),
+        };
+        assert!(peer.is_requested(&["nodeB".into()]));
+        assert!(peer.is_requested(&["did:guardian:abc".into()]));
+        assert!(peer.is_requested(&["192.168.100.2:50152".into()]));
+        assert!(!peer.is_requested(&["nodeC".into()]));
+        assert!(!peer.is_requested(&[]));
     }
 
     // --- create ------------------------------------------------------------
