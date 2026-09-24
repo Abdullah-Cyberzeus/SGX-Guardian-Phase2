@@ -91,7 +91,8 @@ impl NebulaHealth {
     }
 
     fn get_cert_days_remaining(cert_path: &str) -> Option<i64> {
-        let output = Command::new("nebula-cert")
+        let output = crate::nebula::bin::nebula_cert_command()
+            .ok()?
             .arg("print")
             .arg("-json")
             .arg("-path")

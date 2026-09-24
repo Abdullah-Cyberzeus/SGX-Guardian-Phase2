@@ -63,7 +63,9 @@ fn default_rule_update_hours() -> u64 {
 }
 
 fn default_exempt() -> Vec<String> {
-    vec!["127.0.0.0/8".into(), "192.168.100.0/24".into()]
+    // P0.6: the circle's own overlay is exempt from threat blocking by
+    // default, whatever subnet this circle was created with.
+    vec!["127.0.0.0/8".into(), crate::mesh::overlay_cidr_or_default()]
 }
 
 impl Default for SuricataConfig {

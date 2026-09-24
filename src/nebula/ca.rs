@@ -8,12 +8,58 @@
 // The enforce_single_ca() helper hard-panics if a member tries to
 // generate its own CA — catching the bug early in development.
 
+use super::bin::nebula_cert_command;
 use super::models::CircleMembership;
 use super::utils::validate_circle_membership;
 use std::fs;
 use std::io::Error;
 use std::path::Path;
-use std::process::Command;
+
+/// Subject name of the CA certificate, and the validity and groups stamped on
+/// the member certificates it signs.
+///
+/// Before Phase 0 these were three literals inside `generate_ca`/`issue_node_cert`,
+/// so every circle's CA shared the subject name `guardian-circle-ca`. That makes
+/// two circles indistinguishable in `nebula-cert print` output and in the §4.5
+/// fingerprint pin the operator is asked to compare. Phase 2 supplies per-circle
+/// values; Phase 0 only threads the parameter through, with
+/// [`CaIdentity::legacy_default`] preserving today's behaviour exactly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaIdentity {
+    /// `-name` on the CA certificate.
+    pub ca_name: String,
+    /// `-duration` on issued member certificates.
+    pub node_cert_duration: String,
+    /// `-groups` on issued member certificates.
+    pub node_groups: String,
+}
+
+impl CaIdentity {
+    /// The values every pre-Phase-0 install used. Keeping these byte-identical
+    /// means a migrated circle keeps signing certificates indistinguishable
+    /// from the ones it signed before the upgrade.
+    pub fn legacy_default() -> Self {
+        Self {
+            ca_name: "guardian-circle-ca".to_string(),
+            node_cert_duration: "8600h".to_string(),
+            node_groups: "guardian,member".to_string(),
+        }
+    }
+
+    /// A named circle's identity, for Phase 2's Create Mesh Circle flow.
+    pub fn for_circle(circle_name: &str) -> Self {
+        Self {
+            ca_name: format!("{circle_name}-ca"),
+            ..Self::legacy_default()
+        }
+    }
+}
+
+impl Default for CaIdentity {
+    fn default() -> Self {
+        Self::legacy_default()
+    }
+}
 
 pub struct NebulaCA;
 
@@ -25,7 +71,15 @@ impl NebulaCA {
     /// a different CA and break the Circle of Trust.
     ///
     /// Returns Ok(()) if the CA already exists (idempotent).
+    ///
+    /// Uses [`CaIdentity::legacy_default`]; call [`NebulaCA::generate_ca_with`]
+    /// to name the CA after its circle.
     pub fn generate_ca(base_dir: &str) -> Result<(), Error> {
+        Self::generate_ca_with(base_dir, &CaIdentity::legacy_default())
+    }
+
+    /// [`NebulaCA::generate_ca`] with an explicit CA identity.
+    pub fn generate_ca_with(base_dir: &str, identity: &CaIdentity) -> Result<(), Error> {
         let ca_dir = format!("{}/ca", base_dir);
         let ca_key = format!("{}/ca.key", ca_dir);
         let ca_crt = format!("{}/ca.crt", ca_dir);
@@ -47,10 +101,12 @@ impl NebulaCA {
 
         fs::create_dir_all(&ca_dir)?;
 
-        let output = Command::new("nebula-cert")
+        // NOTE: no `-curve` flag, so the CA is Nebula's default (25519). Member
+        // keygen must match — see `issue_node_cert_from_pub`.
+        let output = nebula_cert_command()?
             .arg("ca")
             .arg("-name")
-            .arg("guardian-circle-ca")
+            .arg(&identity.ca_name)
             .current_dir(&ca_dir)
             .output()?;
 
@@ -138,9 +194,9 @@ impl NebulaCA {
         }
 
         // Try nebula-cert print -json
-        if let Ok(out) = Command::new("nebula-cert")
-            .args(["print", "-json", "-path", &ca_crt])
-            .output()
+        if let Some(out) = nebula_cert_command()
+            .ok()
+            .and_then(|mut c| c.args(["print", "-json", "-path", &ca_crt]).output().ok())
         {
             if out.status.success() {
                 let s = String::from_utf8_lossy(&out.stdout);
@@ -170,7 +226,8 @@ impl NebulaCA {
     /// Issue a Nebula certificate for a member node.
     ///
     /// Called ONLY on the CA node (nodeA).
-    /// `ip` should be the overlay IP with CIDR (e.g. "192.168.100.2/24").
+    /// `ip` should be the overlay IP with CIDR (e.g. "10.20.0.2/24") — whatever
+    /// the circle's own overlay subnet is.
     pub fn issue_node_cert(
         base_dir: &str,
         membership: &CircleMembership,
@@ -240,16 +297,17 @@ impl NebulaCA {
             ));
         }
 
-        let output = Command::new("nebula-cert")
+        let identity = CaIdentity::legacy_default();
+        let output = nebula_cert_command()?
             .arg("sign")
             .arg("-name")
             .arg(&membership.node_name)
             .arg("-ip")
             .arg(ip)
             .arg("-duration")
-            .arg("8600h")
+            .arg(&identity.node_cert_duration)
             .arg("-groups")
-            .arg("guardian,member")
+            .arg(&identity.node_groups)
             .arg("-ca-crt")
             .arg(&ca_crt)
             .arg("-ca-key")
@@ -280,5 +338,275 @@ impl NebulaCA {
             membership.node_name, ip
         );
         Ok(())
+    }
+
+    /// Sign a member certificate from a **public key the member generated
+    /// itself**, so no private key is ever created on — or transmitted by —
+    /// the CA. This is the P0.1 hotfix for blocker B1.
+    ///
+    /// `nebula_public_key_pem` is the contents of the member's
+    /// `nebula-cert keygen -out-pub` file. The member keeps the matching
+    /// `-out-key` private key and never sends it anywhere.
+    ///
+    /// Differences from [`NebulaCA::issue_node_cert`], all deliberate:
+    ///
+    /// * `-in-pub` replaces `-out-key`, so `nebula-cert` writes only a `.crt`.
+    /// * **No partial-state guard.** `issue_node_cert` errors when a `.crt`
+    ///   exists without a matching `.key`, which was a sound corruption check
+    ///   while the CA held both. Here that state is the *normal* one, so the
+    ///   same guard would reject every certificate this function ever issues.
+    /// * The caller's idempotency check must key off the `.crt` and the stored
+    ///   public-key fingerprint, never the absent `.key` (see `cert_service`).
+    ///
+    /// The curve is not specified, matching `generate_ca`, which also takes
+    /// Nebula's default (25519). A member that ran `keygen -curve P256` while
+    /// the CA is 25519 produces a key `nebula-cert sign` refuses; that shows up
+    /// here as a signing error naming the curve mismatch.
+    pub fn issue_node_cert_from_pub(
+        base_dir: &str,
+        membership: &CircleMembership,
+        ip: &str,
+        nebula_public_key_pem: &str,
+    ) -> Result<(), Error> {
+        Self::issue_node_cert_from_pub_with(
+            base_dir,
+            membership,
+            ip,
+            nebula_public_key_pem,
+            &CaIdentity::legacy_default(),
+        )
+    }
+
+    /// [`NebulaCA::issue_node_cert_from_pub`] with an explicit CA identity.
+    pub fn issue_node_cert_from_pub_with(
+        base_dir: &str,
+        membership: &CircleMembership,
+        ip: &str,
+        nebula_public_key_pem: &str,
+        identity: &CaIdentity,
+    ) -> Result<(), Error> {
+        if !validate_circle_membership(membership) {
+            return Err(Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Circle membership validation failed",
+            ));
+        }
+        validate_node_name(&membership.node_name)?;
+
+        if nebula_public_key_pem.trim().is_empty() {
+            return Err(Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Nebula public key PEM is empty — cannot sign without a member public key",
+            ));
+        }
+        // A private key here would mean the member sent us material it must
+        // never send, or that a caller passed the wrong file. Refuse rather
+        // than write it to disk: `nebula-cert sign -in-pub` would reject it
+        // anyway, but only after it had been persisted to the temp path.
+        if nebula_public_key_pem.contains("PRIVATE KEY") {
+            return Err(Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "refusing to sign: the supplied PEM contains a PRIVATE KEY, not a public key",
+            ));
+        }
+
+        let ca_dir = format!("{}/ca", base_dir);
+        let nodes_dir = format!("{}/nodes", base_dir);
+        fs::create_dir_all(&nodes_dir)?;
+
+        let cert_path = format!("{}/{}.crt", nodes_dir, membership.node_name);
+
+        let ca_crt = format!("{}/ca.crt", ca_dir);
+        let ca_key = format!("{}/ca.key", ca_dir);
+        if !Path::new(&ca_crt).exists() || !Path::new(&ca_key).exists() {
+            return Err(Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("CA cert/key not found in {}. Create the circle first.", ca_dir),
+            ));
+        }
+
+        // `nebula-cert` reads the public key from a path, so it is staged in
+        // the CA's own nodes/ directory (same filesystem, predictable
+        // permissions) and removed on every exit path below.
+        let pub_path = format!("{}/{}.pub.tmp", nodes_dir, membership.node_name);
+        fs::write(&pub_path, nebula_public_key_pem.as_bytes())?;
+
+        let signed = nebula_cert_command()?
+            .arg("sign")
+            .arg("-name")
+            .arg(&membership.node_name)
+            .arg("-ip")
+            .arg(ip)
+            .arg("-duration")
+            .arg(&identity.node_cert_duration)
+            .arg("-groups")
+            .arg(&identity.node_groups)
+            .arg("-ca-crt")
+            .arg(&ca_crt)
+            .arg("-ca-key")
+            .arg(&ca_key)
+            .arg("-in-pub")
+            .arg(&pub_path)
+            .arg("-out-crt")
+            .arg(&cert_path)
+            .output();
+
+        let _ = fs::remove_file(&pub_path);
+        let output = signed?;
+
+        if !output.status.success() {
+            return Err(Error::other(format!(
+                "Certificate signing failed for {} (from public key): {}",
+                membership.node_name,
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+
+        // The whole point of this function: assert no private key was produced.
+        // A future `nebula-cert` that changed `-in-pub` semantics would trip
+        // this rather than silently reintroducing B1.
+        let key_path = format!("{}/{}.key", nodes_dir, membership.node_name);
+        if Path::new(&key_path).exists() {
+            let _ = fs::remove_file(&key_path);
+            return Err(Error::other(format!(
+                "nebula-cert wrote a private key for {} despite -in-pub; \
+                 the key was deleted and the certificate is not trusted",
+                membership.node_name
+            )));
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&cert_path, fs::Permissions::from_mode(0o644));
+        }
+
+        println!(
+            "✅ Certificate issued for {} at {} from its own public key (no key on the CA)",
+            membership.node_name, ip
+        );
+        Ok(())
+    }
+}
+
+/// Node names reach file paths and Nebula certificate subjects, so they are
+/// restricted to the same conservative set the mesh profile uses.
+fn validate_node_name(node_name: &str) -> Result<(), Error> {
+    if node_name.is_empty()
+        || !node_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Invalid node name '{node_name}': must be alphanumeric with - or _ only"),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn membership(name: &str) -> CircleMembership {
+        CircleMembership {
+            node_name: name.to_string(),
+            circle_id: "circle-7f3c1a".to_string(),
+            vc_hash: "abc123".to_string(),
+            is_valid: true,
+        }
+    }
+
+    #[test]
+    fn signing_from_a_public_key_refuses_an_empty_pem() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = NebulaCA::issue_node_cert_from_pub(
+            &dir.path().display().to_string(),
+            &membership("nodeB"),
+            "192.168.100.2/24",
+            "   ",
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn signing_from_a_public_key_refuses_a_private_key_pem() {
+        // Guards against a caller wiring up the wrong keygen output file and
+        // silently reintroducing B1 from the other direction.
+        let dir = tempfile::tempdir().unwrap();
+        let err = NebulaCA::issue_node_cert_from_pub(
+            &dir.path().display().to_string(),
+            &membership("nodeB"),
+            "192.168.100.2/24",
+            "-----BEGIN NEBULA X25519 PRIVATE KEY-----\nAAAA\n-----END NEBULA X25519 PRIVATE KEY-----\n",
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(err.to_string().contains("PRIVATE KEY"));
+    }
+
+    #[test]
+    fn signing_from_a_public_key_requires_the_ca_material() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = NebulaCA::issue_node_cert_from_pub(
+            &dir.path().display().to_string(),
+            &membership("nodeB"),
+            "192.168.100.2/24",
+            "-----BEGIN NEBULA X25519 PUBLIC KEY-----\nAAAA\n-----END NEBULA X25519 PUBLIC KEY-----\n",
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn signing_from_a_public_key_rejects_a_traversing_node_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = NebulaCA::issue_node_cert_from_pub(
+            &dir.path().display().to_string(),
+            &membership("../../etc/shadow"),
+            "192.168.100.2/24",
+            "-----BEGIN NEBULA X25519 PUBLIC KEY-----\nAAAA\n-----END NEBULA X25519 PUBLIC KEY-----\n",
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn signing_from_a_public_key_leaves_no_staged_pub_file_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().display().to_string();
+        // No CA material, so signing fails early — the staged file must still
+        // be cleaned up, since the member's public key should not linger.
+        let _ = NebulaCA::issue_node_cert_from_pub(
+            &base,
+            &membership("nodeB"),
+            "192.168.100.2/24",
+            "-----BEGIN NEBULA X25519 PUBLIC KEY-----\nAAAA\n-----END NEBULA X25519 PUBLIC KEY-----\n",
+        );
+        let staged = dir.path().join("nodes/nodeB.pub.tmp");
+        assert!(!staged.exists(), "staged public key was left at {staged:?}");
+    }
+
+    #[test]
+    fn the_legacy_ca_identity_matches_what_pre_phase_0_installs_used() {
+        // A migrated circle must keep signing byte-identical certificates.
+        let identity = CaIdentity::legacy_default();
+        assert_eq!(identity.ca_name, "guardian-circle-ca");
+        assert_eq!(identity.node_cert_duration, "8600h");
+        assert_eq!(identity.node_groups, "guardian,member");
+        assert_eq!(CaIdentity::default(), identity);
+    }
+
+    #[test]
+    fn a_named_circle_gets_a_distinguishable_ca_name() {
+        let identity = CaIdentity::for_circle("SGX-Alpha");
+        assert_eq!(identity.ca_name, "SGX-Alpha-ca");
+        // Validity and groups are unchanged from the legacy defaults.
+        assert_eq!(
+            identity.node_cert_duration,
+            CaIdentity::legacy_default().node_cert_duration
+        );
     }
 }

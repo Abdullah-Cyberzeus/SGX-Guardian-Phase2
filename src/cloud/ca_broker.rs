@@ -31,7 +31,15 @@ const SIGNED_POLICY_PATH: &str = "/etc/sgx-guardian/policies/policy.sig";
 struct EnrollmentRequest {
     circle_id: String,
     node_id: String,
+    /// The joiner's **device** P-256 identity key, Base64 DER. Despite the
+    /// name it is not a Nebula key and never was: it binds the request to the
+    /// DID document that signed it (see `validate_enrollment_did`).
     public_key_pem: String,
+    /// P0.1/B1: the joiner's **Nebula** public key, from its local
+    /// `nebula-cert keygen`. When present the CA signs with `-in-pub` and the
+    /// response carries no private key.
+    #[serde(default)]
+    nebula_public_key_pem: String,
     #[serde(default)]
     did_doc_json: String,
 }
@@ -144,7 +152,7 @@ fn issue_member_vc_for_subject(
 ) -> Result<crate::vc::credential::VerifiableCredential, String> {
     let issuer = crate::did::DidRecord::load(crate::did::DEFAULT_DID_PATH)
         .map_err(|error| format!("CA DID load failed: {}", error))?;
-    let km = crate::vc::issue::load_runtime_key_manager("nodeA")
+    let km = crate::vc::issue::load_runtime_key_manager(&crate::mesh::ca_guardian_id())
         .map_err(|error| format!("VC key manager failed: {}", error))?;
     crate::vc::issue::issue_membership_vc_with_outcome(
         &issuer,
@@ -203,7 +211,7 @@ async fn build_trust_material(
 pub async fn start_ca_broker_worker(vps_url: String, circle_id: String, auth_token: String) {
     println!("☁️  CA broker worker starting (VPS: {})", vps_url);
     log_event(
-        "nodeA",
+        &crate::mesh::ca_guardian_id(),
         &format!("CA broker worker connecting to {}", vps_url),
     );
 
@@ -249,7 +257,7 @@ async fn connect_and_serve(vps_url: &str, circle_id: &str, auth_token: &str) -> 
         .map_err(|e| format!("WebSocket connect failed: {}", e))?;
 
     println!("✅ CA broker WebSocket connected");
-    log_event("nodeA", "CA broker WebSocket connected to VPS");
+    log_event(&crate::mesh::ca_guardian_id(), "CA broker WebSocket connected to VPS");
 
     let (mut ws_sink, mut ws_stream_rx) = ws_stream.split();
 
@@ -375,7 +383,7 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
     let key_path = format!("{}/nodes/{}.key", NEBULA_BASE_DIR, request.node_id);
     let ca_path = format!("{}/ca/ca.crt", NEBULA_BASE_DIR);
     let yaml_path = format!("{}/{}.yaml", requests_dir, request.node_id);
-    if request.circle_id != crate::vc::issue::DEFAULT_CIRCLE_ID {
+    if request.circle_id != crate::mesh::circle_id() {
         return EnrollmentResponse {
             status: "REJECTED".to_string(),
             overlay_ip: String::new(),
@@ -412,15 +420,17 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
     };
 
     // ── 1. Fast-path: Already approved and issued on disk ────────────────
-    if std::path::Path::new(&cert_path).exists()
-        && std::path::Path::new(&key_path).exists()
-        && std::path::Path::new(&ca_path).exists()
-    {
-        if let (Ok(cert), Ok(key), Ok(ca_cert)) = (
+    // P0.1a: the fast path used to require `key_path`. Once P0.1 stopped the CA
+    // writing member keys, that condition could never hold again, so every
+    // already-enrolled remote node was pushed back through a fresh approval.
+    // `key` is read best-effort and is empty for `-in-pub` certificates, which
+    // is what the member expects — it holds its own.
+    if std::path::Path::new(&cert_path).exists() && std::path::Path::new(&ca_path).exists() {
+        if let (Ok(cert), Ok(ca_cert)) = (
             std::fs::read_to_string(&cert_path),
-            std::fs::read_to_string(&key_path),
             std::fs::read_to_string(&ca_path),
         ) {
+            let key = std::fs::read_to_string(&key_path).unwrap_or_default();
             if let Err(message) = ingest_enrollment_did(request).await {
                 return EnrollmentResponse {
                     status: "REJECTED".to_string(),
@@ -458,13 +468,13 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
             };
             let reg = OverlayRegistry::load_or_create(
                 REGISTRY_PATH,
-                "guardian-circle-alpha",
-                "192.168.100",
-                "nodeA",
+                &crate::mesh::circle_id(),
+                &crate::mesh::overlay_prefix(),
+                &crate::mesh::ca_guardian_id(),
             );
             let overlay_ip = reg
                 .get_ip_cidr(&request.node_id)
-                .unwrap_or("192.168.100.2/24")
+                .unwrap_or(&crate::mesh::overlay_host_cidr(2))
                 .to_string();
             let config = generate_remote_node_config(&request.node_id, &overlay_ip);
 
@@ -488,9 +498,9 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
     // ── 2. Allocate or retrieve assigned overlay IP ──────────────────────
     let mut reg = OverlayRegistry::load_or_create(
         REGISTRY_PATH,
-        "guardian-circle-alpha",
-        "192.168.100",
-        "nodeA",
+        &crate::mesh::circle_id(),
+        &crate::mesh::overlay_prefix(),
+        &crate::mesh::ca_guardian_id(),
     );
 
     let overlay_ip = match reg.get_ip_cidr(&request.node_id) {
@@ -534,6 +544,11 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
             public_key_fingerprint: fingerprint,
             requested_role: "member".to_string(),
             approve: crate::cert_service::ApprovalDecision::False,
+            // The WAN path authenticates the joiner through its signed DID
+            // document rather than a LAN pairing challenge, so there is no
+            // pairing proof to report here. Phase 6 adds the join code.
+            pairing_verified: false,
+            member_supplied_key: !request.nebula_public_key_pem.trim().is_empty(),
         };
 
         if let Ok(yaml_string) = serde_yaml::to_string(&yaml_data) {
@@ -557,7 +572,7 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
         println!("Save the file to trigger approval.");
 
         log_event(
-            "nodeA",
+            &crate::mesh::ca_guardian_id(),
             &format!(
                 "Broker enrollment request created for {} — awaiting admin approval",
                 request.node_id
@@ -702,7 +717,48 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
                 is_valid: true,
             };
 
-            if let Err(e) = NebulaCA::issue_node_cert(NEBULA_BASE_DIR, &membership, &overlay_ip) {
+            // P0.1/B1: the WAN leg shipped the member's private key through a
+            // public VPS broker, which was the worst instance of the blocker.
+            // With a supplied public key nothing secret transits the broker.
+            let member_nebula_pub = request.nebula_public_key_pem.trim();
+            let wan_sign_result = if member_nebula_pub.is_empty() {
+                if !crate::cert_service::legacy_keygen_allowed() {
+                    return EnrollmentResponse {
+                        status: "REJECTED".to_string(),
+                        overlay_ip: String::new(),
+                        cert: String::new(),
+                        key: String::new(),
+                        ca_cert: String::new(),
+                        config: String::new(),
+                        member_vc_json: String::new(),
+                        status_list_json: String::new(),
+                        did_doc_aggregate_json: String::new(),
+                        signing_pubkey_der_b64: String::new(),
+                        signed_policy_b64: String::new(),
+                        message: format!(
+                            "{} did not supply a Nebula public key. CA-side key generation is \
+                             disabled — upgrade the Guardian, or set SGX_ALLOW_LEGACY_KEYGEN=1 \
+                             on the CA for one migration window.",
+                            request.node_id
+                        ),
+                    };
+                }
+                eprintln!(
+                    "⚠️ [Broker] {} requested legacy CA-side key generation; its private key \
+                     will transit the broker — upgrade it.",
+                    request.node_id
+                );
+                NebulaCA::issue_node_cert(NEBULA_BASE_DIR, &membership, &overlay_ip)
+            } else {
+                NebulaCA::issue_node_cert_from_pub(
+                    NEBULA_BASE_DIR,
+                    &membership,
+                    &overlay_ip,
+                    member_nebula_pub,
+                )
+            };
+
+            if let Err(e) = wan_sign_result {
                 return EnrollmentResponse {
                     status: "REJECTED".to_string(),
                     overlay_ip: String::new(),
@@ -739,24 +795,31 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
                 }
             };
 
-            let node_key = match std::fs::read_to_string(&key_path) {
-                Ok(k) => k,
-                Err(e) => {
-                    return EnrollmentResponse {
-                        status: "REJECTED".to_string(),
-                        overlay_ip: String::new(),
-                        cert: String::new(),
-                        key: String::new(),
-                        ca_cert: String::new(),
-                        config: String::new(),
-                        member_vc_json: String::new(),
-                        status_list_json: String::new(),
-                        did_doc_aggregate_json: String::new(),
-                        signing_pubkey_der_b64: String::new(),
-                        signed_policy_b64: String::new(),
-                        message: format!("Failed to read node key: {}", e),
-                    };
+            // P0.1/B1: on the `-in-pub` path there is no key on the CA and the
+            // member already holds its own, so `key` goes back empty. Reading
+            // one here is only correct on the legacy path.
+            let node_key = if member_nebula_pub.is_empty() {
+                match std::fs::read_to_string(&key_path) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        return EnrollmentResponse {
+                            status: "REJECTED".to_string(),
+                            overlay_ip: String::new(),
+                            cert: String::new(),
+                            key: String::new(),
+                            ca_cert: String::new(),
+                            config: String::new(),
+                            member_vc_json: String::new(),
+                            status_list_json: String::new(),
+                            did_doc_aggregate_json: String::new(),
+                            signing_pubkey_der_b64: String::new(),
+                            signed_policy_b64: String::new(),
+                            message: format!("Failed to read node key: {}", e),
+                        };
+                    }
                 }
+            } else {
+                String::new()
             };
 
             let ca_cert = match std::fs::read_to_string(&ca_path) {
@@ -804,7 +867,7 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
             };
 
             log_event(
-                "nodeA",
+                &crate::mesh::ca_guardian_id(),
                 &format!(
                     "Remote enrollment approved and issued via broker: node={} ip={}",
                     request.node_id, overlay_ip
@@ -837,13 +900,13 @@ async fn process_enrollment(request: &EnrollmentRequest) -> EnrollmentResponse {
 /// The config points to the VPS as the lighthouse and relay,
 /// using env vars SGX_VPS_PUBLIC_IP and SGX_VPS_OVERLAY_IP.
 fn generate_remote_node_config(node_id: &str, overlay_ip: &str) -> String {
-    let vps_cfg = crate::config_loader::resolve_vps_config("nodeA");
+    let vps_cfg = crate::config_loader::resolve_vps_config(&crate::mesh::ca_guardian_id());
     let vps_public_ip = vps_cfg
         .vps_public_ip
         .unwrap_or_else(|| "159.203.186.55".to_string());
     let vps_overlay_ip = vps_cfg
         .vps_overlay_ip
-        .unwrap_or_else(|| "192.168.100.10".to_string());
+        .unwrap_or_else(|| crate::mesh::overlay_host(10));
 
     format!(
         r#"# Auto-generated by SGX Guardian CA Broker
@@ -945,6 +1008,7 @@ mod tests {
                 circle_id: crate::vc::issue::DEFAULT_CIRCLE_ID.into(),
                 node_id: node_id.into(),
                 public_key_pem: general_purpose::STANDARD.encode(der),
+                nebula_public_key_pem: String::new(),
                 did_doc_json: serde_json::to_string(&doc).unwrap(),
             },
         }

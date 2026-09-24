@@ -1791,19 +1791,19 @@ fn push_unique_endpoint(endpoints: &mut Vec<String>, endpoint: String) {
     }
 }
 
+/// Adds the dev-cohort container endpoints for `node_name`, if it is one.
+///
+/// P0.6: the name→port and name→address maps moved to `mesh::legacy`, which is
+/// where facts about the three named dev containers belong. A Guardian outside
+/// that cohort adds no container endpoints, exactly as before.
 fn push_container_host_port(endpoints: &mut Vec<String>, node_name: &str) {
-    let port = match node_name {
-        "nodeA" => std::env::var("NODEA_REST_PORT").unwrap_or_else(|_| "18443".to_string()),
-        "nodeB" => std::env::var("NODEB_REST_PORT").unwrap_or_else(|_| "28443".to_string()),
-        "nodeC" => std::env::var("NODEC_REST_PORT").unwrap_or_else(|_| "38443".to_string()),
-        _ => return,
+    let Some((port_env, default_port, container_url)) =
+        crate::mesh::legacy::dev_cohort_container(node_name)
+    else {
+        return;
     };
-    match node_name {
-        "nodeA" => push_unique_endpoint(endpoints, "http://172.31.250.10:8443".to_string()),
-        "nodeB" => push_unique_endpoint(endpoints, "http://172.31.250.11:8443".to_string()),
-        "nodeC" => push_unique_endpoint(endpoints, "http://172.31.250.12:8443".to_string()),
-        _ => {}
-    }
+    let port = std::env::var(port_env).unwrap_or_else(|_| default_port.to_string());
+    push_unique_endpoint(endpoints, container_url.to_string());
     for host in container_host_candidates() {
         push_unique_endpoint(endpoints, format!("http://{}:{}", host, port));
     }
@@ -1820,16 +1820,13 @@ fn container_endpoint_fallbacks(endpoint: &str) -> Vec<String> {
         return Vec::new();
     };
     let Some(last) = host
-        .strip_prefix("192.168.100.")
+        .strip_prefix(&format!("{}.", crate::mesh::overlay_prefix()))
         .and_then(|value| value.parse::<u8>().ok())
     else {
         return Vec::new();
     };
-    let node_name = match last {
-        1 => "nodeA",
-        2 => "nodeB",
-        3 => "nodeC",
-        _ => return Vec::new(),
+    let Some(node_name) = crate::mesh::legacy::dev_cohort_member_at_overlay_host(last) else {
+        return Vec::new();
     };
     let mut endpoints = Vec::new();
     push_unique_endpoint(&mut endpoints, format!("http://sgx-{}:8443", node_name));

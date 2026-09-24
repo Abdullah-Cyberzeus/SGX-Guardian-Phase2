@@ -124,9 +124,11 @@ pub(crate) fn stable_node_id_for_ip(ip: &str) -> Option<String> {
     if let Ok(registry) = crate::nebula::overlay_registry::OverlayRegistry::load(
         crate::nebula::registry_sync::REGISTRY_PATH,
     ) {
-        for node in ["nodeA", "nodeB", "nodeC"] {
-            if registry.get_ip(node).is_some_and(|overlay| overlay == ip) {
-                return Some(node.to_string());
+        // P0.7: walks whatever the registry holds instead of three fixed names,
+        // so a fourth Guardian resolves to a stable id like any other.
+        for (node, record) in &registry.allocations {
+            if record.overlay_ip == ip {
+                return Some(node.clone());
             }
         }
     }

@@ -28,9 +28,12 @@ pub fn is_usable_ca_address(ip: &str) -> bool {
 
 /// Reads the CA address from whichever config file already carries one.
 pub fn ca_address_from_configs(paths: &GuardianPaths) -> Option<String> {
+    // P0.6: reads the CA's config by whoever the profile says the CA is,
+    // rather than by a fixed name.
+    let ca_id = crate::mesh::ca_guardian_id();
     for candidate in [
-        paths.node_config("nodeA"),
-        paths.node_config_mirror("nodeA"),
+        paths.node_config(&ca_id),
+        paths.node_config_mirror(&ca_id),
     ] {
         let Some(path) = candidate.to_str() else {
             continue;
@@ -62,7 +65,7 @@ pub fn ca_address_from_lighthouse_registry(path: &str) -> Option<String> {
     registry
         .lighthouses
         .iter()
-        .find(|entry| entry.node_name == "nodeA" && entry.is_lighthouse)
+        .find(|entry| entry.node_name == crate::mesh::ca_guardian_id() && entry.is_lighthouse)
         .and_then(|entry| host_from_endpoint(&entry.physical_endpoint))
         .or_else(|| {
             registry

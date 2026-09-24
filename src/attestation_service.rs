@@ -231,8 +231,9 @@ fn spawn_signer_warmup() {
     let _ = std::thread::Builder::new()
         .name("attest-signer-warmup".into())
         .spawn(|| {
-            let node_id = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
-            if node_id == "nodeA" {
+            // The CA does not run the member attestation signer.
+            let node_id = crate::mesh::local_guardian_id();
+            if crate::mesh::is_ca() {
                 return;
             }
             let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
@@ -289,13 +290,13 @@ pub fn attestation_listener_port_for_base(base_port: u16) -> u16 {
     base_port.saturating_add(100)
 }
 
+/// The attestation listener port for `node_id` (P0.7).
+///
+/// Was a `match` on the name, so every Guardian outside the fixed cohort
+/// collided on the CA's listener. Now resolved from that node's configuration,
+/// with the legacy name map as the fallback for pre-P0.7 config files.
 pub fn attestation_listener_port_for_node(node_id: &str) -> u16 {
-    match node_id {
-        "nodeA" => attestation_listener_port_for_base(50051),
-        "nodeB" => attestation_listener_port_for_base(50052),
-        "nodeC" => attestation_listener_port_for_base(50053),
-        _ => attestation_listener_port_for_base(50051),
-    }
+    crate::startup::config::attest_port_for(node_id)
 }
 
 // Trusted Peer JSON Logging Helpers ===
@@ -977,7 +978,7 @@ fn merge_trusted_peer(existing: &mut TrustedPeer, candidate: TrustedPeer) {
     // A newer attestation replaces every field it carries. An older record
     // may only fill fields that are still missing: letting it overwrite
     // node_id / VID / DKP / PCR produced entries labelled with the wrong
-    // node (e.g. nodeC recorded as "nodeA"), which hid the peer as "self"
+    // node (e.g. a member recorded as the CA), which hid the peer as "self"
     // on the Peers page and routed chat to the wrong port.
     fn take<T: Clone>(existing: &mut Option<T>, candidate: &Option<T>, newer: bool) {
         if candidate.is_some() && (newer || existing.is_none()) {
@@ -1031,7 +1032,7 @@ fn load_node_config_for_attestation(node_id: &str) -> Result<NodeConfig> {
 
     for path in candidates {
         if let Ok(mut conf) = load_config(&path) {
-            if node_id == "nodeA" {
+            if node_id == crate::mesh::ca_guardian_id() {
                 if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
                     if !env_ip.is_empty() && env_ip != "0.0.0.0" && env_ip != "127.0.0.1" {
                         conf.ip = env_ip;
@@ -1042,22 +1043,29 @@ fn load_node_config_for_attestation(node_id: &str) -> Result<NodeConfig> {
         }
     }
 
-    if node_id == "nodeA" {
+    if node_id == crate::mesh::ca_guardian_id() {
         if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
             if !env_ip.is_empty() && env_ip != "0.0.0.0" && env_ip != "127.0.0.1" {
+                let (grpc, chat, attest) =
+                    crate::startup::config::port_set_for(node_id);
                 return Ok(NodeConfig {
-                    node_id: "nodeA".to_string(),
+                    node_id: node_id.to_string(),
                     device_name: None,
-                    hostname: "nodea.guardian".to_string(),
+                    hostname: crate::lan_name::fqdn(node_id),
                     display_hostname: None,
                     ip: env_ip,
-                    port: 50051,
+                    port: grpc,
                     public_key: String::new(),
                     offline_mode: 0,
                     metrics: None,
                     relay: None,
                     api: None,
                     vps: None,
+                    ports: Some(crate::config_loader::NodePorts {
+                        grpc: Some(grpc),
+                        chat: Some(chat),
+                        attest: Some(attest),
+                    }),
                 });
             }
         }
@@ -1069,21 +1077,42 @@ fn load_node_config_for_attestation(node_id: &str) -> Result<NodeConfig> {
     )
 }
 
+/// The Guardians this node may attest against (P0.7).
+///
+/// The overlay registry is the authoritative membership list for the circle and
+/// grows with it, so it is preferred. Only a node that has never synced a
+/// registry falls back to the legacy cohort names, which is what every call site
+/// used unconditionally before Phase 0 — and is why a fourth Guardian was
+/// invisible to attestation.
+fn known_peer_ids() -> Vec<String> {
+    if let Ok(reg) = crate::nebula::overlay_registry::OverlayRegistry::load(
+        crate::nebula::registry_sync::REGISTRY_PATH,
+    ) {
+        let mut ids: Vec<String> = reg.allocations.keys().cloned().collect();
+        if !ids.is_empty() {
+            ids.sort();
+            return ids;
+        }
+    }
+    crate::mesh::legacy::LEGACY_COHORT
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
 fn allowed_attestation_targets(local_node_id: &str) -> HashSet<String> {
     let mut targets = HashSet::new();
-    for node in ["nodeA", "nodeB", "nodeC"] {
+    // P0.7: the peer set and their ports both came from hardcoded names. The
+    // overlay registry is the authoritative list of circle members, so it is
+    // consulted first and the legacy cohort is only the fallback for a node
+    // that has not synced a registry yet.
+    for node in known_peer_ids() {
         if node == local_node_id {
             continue;
         }
-        let base_port = match node {
-            "nodeA" => 50051,
-            "nodeB" => 50052,
-            "nodeC" => 50053,
-            _ => 50051,
-        };
-        let attest_port = attestation_listener_port_for_base(base_port);
+        let attest_port = attestation_listener_port_for_node(&node);
 
-        if let Ok(conf) = load_node_config_for_attestation(node) {
+        if let Ok(conf) = load_node_config_for_attestation(&node) {
             if crate::dynamic_config::is_routable_ip(&conf.ip) {
                 targets.insert(format!(
                     "{}:{}",
@@ -1092,7 +1121,7 @@ fn allowed_attestation_targets(local_node_id: &str) -> HashSet<String> {
                 ));
             }
         }
-        if let Some(overlay_ip) = overlay_ip_from_local_registry(node) {
+        if let Some(overlay_ip) = overlay_ip_from_local_registry(&node) {
             targets.insert(format!("{}:{}", overlay_ip, attest_port));
         }
     }
@@ -1132,25 +1161,29 @@ fn load_attestation_policy_material() -> AttestationPolicyMaterial {
     }
 }
 
-fn infer_node_id_from_base_port(base_port: u16) -> Option<&'static str> {
-    match base_port {
-        50051 => Some("nodeA"),
-        50052 => Some("nodeB"),
-        50053 => Some("nodeC"),
-        _ => None,
+/// Identifies a peer from the port it answered on.
+///
+/// P0.7: this was a fixed port→name map, which mislabels any Guardian outside
+/// the legacy cohort — two circles on one LAN would both claim 50051. It now
+/// matches against the ports the configs actually declare, and only falls back
+/// to the legacy mapping for a node whose config predates the `ports:` block.
+fn infer_node_id_from_base_port(base_port: u16) -> Option<String> {
+    for node in known_peer_ids() {
+        if crate::startup::config::default_port_for(&node) == base_port {
+            return Some(node);
+        }
     }
+    crate::mesh::legacy::LEGACY_COHORT
+        .iter()
+        .find(|node| {
+            crate::mesh::legacy::legacy_ports_for(node).map(|(g, _)| g) == Some(base_port)
+        })
+        .map(|node| node.to_string())
 }
 
 fn infer_node_id_from_peer(peer_ip: &str, base_port: u16) -> Option<String> {
     if let Some(node_id) = infer_node_id_from_base_port(base_port) {
-        return Some(node_id.to_string());
-    }
-
-    match peer_ip {
-        "192.168.100.1" => return Some("nodeA".to_string()),
-        "192.168.100.2" => return Some("nodeB".to_string()),
-        "192.168.100.3" => return Some("nodeC".to_string()),
-        _ => {}
+        return Some(node_id);
     }
 
     if let Ok(reg) = crate::nebula::overlay_registry::OverlayRegistry::load(
@@ -1163,8 +1196,8 @@ fn infer_node_id_from_peer(peer_ip: &str, base_port: u16) -> Option<String> {
         }
     }
 
-    for node in ["nodeA", "nodeB", "nodeC"] {
-        if let Ok(conf) = load_node_config_for_attestation(node) {
+    for node in known_peer_ids() {
+        if let Ok(conf) = load_node_config_for_attestation(&node) {
             if conf.port == base_port && conf.ip == peer_ip {
                 return Some(node.to_string());
             }
@@ -1188,15 +1221,15 @@ async fn resolve_overlay_ip_for_node(node_id: &str) -> Option<String> {
 
     // On member nodes, ask nodeA's registry service for authoritative mapping.
     let ca_ip = if std::path::Path::new("/var/lib/sgx-guardian/nebula/ca/ca.crt").exists() {
-        "192.168.100.1".to_string()
+        crate::mesh::overlay_host(1)
     } else if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
         if !env_ip.is_empty() && env_ip != "0.0.0.0" && env_ip != "127.0.0.1" {
             env_ip
         } else {
-            load_node_config_for_attestation("nodeA").ok()?.ip
+            load_node_config_for_attestation(&crate::mesh::ca_guardian_id()).ok()?.ip
         }
     } else {
-        load_node_config_for_attestation("nodeA").ok()?.ip
+        load_node_config_for_attestation(&crate::mesh::ca_guardian_id()).ok()?.ip
     };
     if !crate::dynamic_config::is_routable_ip(&ca_ip) {
         return None;
@@ -1458,13 +1491,13 @@ fn resolve_ca_host_for_vc() -> String {
         if let Ok(reg) = crate::nebula::overlay_registry::OverlayRegistry::load(
             crate::nebula::registry_sync::REGISTRY_PATH,
         ) {
-            if let Some(owner_ip) = reg.get_ip("nodeA") {
+            if let Some(owner_ip) = reg.get_ip(&crate::mesh::ca_guardian_id()) {
                 return owner_ip.to_string();
             }
         }
-        return "192.168.100.1".to_string();
+        return crate::mesh::overlay_host(1);
     }
-    load_node_config_for_attestation("nodeA")
+    load_node_config_for_attestation(&crate::mesh::ca_guardian_id())
         .ok()
         .map(|cfg| cfg.ip)
         .filter(|ip| crate::dynamic_config::is_routable_ip(ip))
@@ -2145,7 +2178,7 @@ impl AttestationService {
         km: &KeyManager,
         policy_yaml: &str,
     ) -> Result<AttestationEvidence> {
-        let node_id = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
+        let node_id = crate::mesh::local_guardian_id();
         let policy_digest = hex::encode(Sha256::digest(policy_yaml.as_bytes()));
         let baseline_status = Some(compute_local_baseline_status(&node_id, km));
         let dkp_pub = km.pubkey_der()?;
@@ -2411,14 +2444,14 @@ impl AttestationService {
     /// The quote contains current PCR values, boot chain status, and device metadata.
     /// Signed by SE050 DKP (or software key if SE050 unavailable).
     pub fn generate_quote(challenge_nonce: &str, km: &KeyManager) -> Result<SignedQuote> {
-        let node_id = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
+        let node_id = crate::mesh::local_guardian_id();
         let quote = AttestationQuote::generate(challenge_nonce, &node_id, km)?;
         quote.sign(km)
     }
 
     /// Handle an incoming challenge request: generate quote and return response.
     pub fn handle_challenge(req: &ChallengeRequest, km: &KeyManager) -> Result<ChallengeResponse> {
-        let node_id = std::env::args().nth(1).unwrap_or_else(|| "nodeA".into());
+        let node_id = crate::mesh::local_guardian_id();
         let signed_quote = Self::generate_quote(&req.nonce, km)?;
 
         // Optional: generate counter-challenge for mutual attestation
@@ -2611,7 +2644,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
     println!("🛰️ Attestation Service background task started (listening for new peers)");
     let node_id_env = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "nodeA".to_string());
+        .unwrap_or_else(crate::mesh::local_guardian_id);
     let node_conf = load_node_config_for_attestation(&node_id_env)?;
     let listen_port: u16 = attestation_listener_port_for_base(node_conf.port);
     let local_ip = node_conf.ip.clone();
@@ -2650,7 +2683,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
                 continue;
             };
             let peer_target = format!("{}:{}", ip, port);
-            let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
+            let node_id = crate::mesh::local_guardian_id();
             let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
             match KeyManager::load_or_generate(&key_path) {
                 Ok(km) => {
@@ -2691,7 +2724,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
 
     // === Periodic re-attestation timer (every 60 seconds) ===
     tokio::spawn(async move {
-        let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
+        let node_id = crate::mesh::local_guardian_id();
         let local_conf = match load_node_config_for_attestation(&node_id) {
             Ok(c) => c,
             Err(e) => {
@@ -2723,7 +2756,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
                     };
                     let peer_target = format!("{}:{}", ip, port);
                     println!("🔁 Re-attesting trusted peer: {}", peer_target);
-                    let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
+                    let node_id = crate::mesh::local_guardian_id();
                     let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
                     match KeyManager::load_or_generate(&key_path) {
                         Ok(km) => {
@@ -2772,7 +2805,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
 
     let local_node_id = node_id_env.clone();
 
-    if local_node_id != "nodeA" {
+    if !crate::mesh::is_ca() {
         tokio::spawn(async move {
             let mut last_lh: Option<String> = None;
             loop {
@@ -2829,7 +2862,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
             continue;
         }
 
-        if local_node_id != "nodeA" {
+        if !crate::mesh::is_ca() {
             let reachable_lh = crate::dynamic_config::reachable_lighthouse_name().await;
             if let Some(lh_name) = reachable_lh {
                 if LIGHTHOUSE_WARNING_PRINTED.swap(false, Ordering::SeqCst) {
@@ -2896,7 +2929,7 @@ pub async fn run(mut rx: Receiver<String>) -> Result<()> {
 
         println!("🔐 Attesting discovered peer over overlay: {}", target_key);
 
-        let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
+        let node_id = crate::mesh::local_guardian_id();
         let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
         match crate::key_manager::KeyManager::load_or_generate(&key_path) {
             Ok(km) => {
@@ -2973,7 +3006,7 @@ pub async fn start_attestation_listener(bind_ip: String, listen_port: u16) -> Re
                 };
 
                 // Verify peer evidence
-                let node_id = std::env::args().nth(1).unwrap_or("nodeA".into());
+                let node_id = crate::mesh::local_guardian_id();
                 let key_path = format!("{}/device_{}.key", ATTESTATION_KEY_DIR, node_id);
                 let km = KeyManager::load_or_generate(&key_path)?;
                 let policy = load_attestation_policy_material();
@@ -3636,9 +3669,9 @@ mod tests {
         assert!(!is_hex_digest_64(&"a".repeat(63)));
         assert!(!is_hex_digest_64(&"z".repeat(64)));
 
-        assert_eq!(infer_node_id_from_base_port(50051), Some("nodeA"));
-        assert_eq!(infer_node_id_from_base_port(50052), Some("nodeB"));
-        assert_eq!(infer_node_id_from_base_port(50053), Some("nodeC"));
+        assert_eq!(infer_node_id_from_base_port(50051), Some("nodeA".to_string()));
+        assert_eq!(infer_node_id_from_base_port(50052), Some("nodeB".to_string()));
+        assert_eq!(infer_node_id_from_base_port(50053), Some("nodeC".to_string()));
         assert_eq!(infer_node_id_from_base_port(50099), None);
         assert_eq!(
             infer_node_id_from_peer("203.0.113.1", 50051).as_deref(),
@@ -4660,7 +4693,7 @@ mod tests {
         // candidate path resolves relative to the crate root (cargo test's
         // working directory).
         let conf =
-            load_node_config_for_attestation("nodeA").expect("repo config/nodeA.yaml should load");
+            load_node_config_for_attestation(&crate::mesh::ca_guardian_id()).expect("repo config/nodeA.yaml should load");
         assert_eq!(conf.node_id, "nodeA");
         assert_eq!(conf.ip, "127.0.0.1");
 

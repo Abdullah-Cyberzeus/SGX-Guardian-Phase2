@@ -19,9 +19,22 @@ pub struct EnrollmentRequest {
     pub circle_id: String,
     /// Requesting node name (e.g. "nodeC")
     pub node_id: String,
-    /// Nebula public key PEM generated on the requesting node
+    /// P0.1c: **the requesting Guardian's device P-256 identity key, as
+    /// Base64-encoded DER** — despite the field name, this is not and never was
+    /// a Nebula key. The CA decodes it as DER and checks it against the key
+    /// that signed `did_doc_json` (`ca_broker::validate_enrollment_did`). The
+    /// name is kept for wire compatibility with deployed brokers.
     pub public_key_pem: String,
-    /// The requesting Guardian's signed DID Document. Node A verifies this
+    /// P0.1/B1: the requesting Guardian's **Nebula** public key PEM, produced
+    /// by `nebula-cert keygen` on that Guardian. When present the CA signs it
+    /// with `-in-pub`, so `EnrollmentResponse::key` comes back empty and no
+    /// private key ever transits this broker.
+    ///
+    /// `#[serde(default)]` for pre-P0.1 Guardians, which the CA accepts only
+    /// while `SGX_ALLOW_LEGACY_KEYGEN` is set.
+    #[serde(default)]
+    pub nebula_public_key_pem: String,
+    /// The requesting Guardian's signed DID Document. The CA verifies this
     /// before issuing circle-membership trust material.
     #[serde(default)]
     pub did_doc_json: String,
@@ -38,7 +51,10 @@ pub struct EnrollmentResponse {
     /// Signed Nebula certificate PEM
     #[serde(default)]
     pub cert: String,
-    /// Nebula private key PEM
+    /// DEPRECATED (P0.1/B1): the Nebula private key PEM. Empty whenever the
+    /// request carried `nebula_public_key_pem`, which is the supported path —
+    /// the Guardian generates and keeps its own key. Only the legacy path,
+    /// gated by `SGX_ALLOW_LEGACY_KEYGEN` on the CA, still populates it.
     #[serde(default)]
     pub key: String,
     /// CA certificate PEM (shared trust anchor)

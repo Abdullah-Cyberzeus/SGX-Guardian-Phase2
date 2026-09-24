@@ -18,7 +18,8 @@ pub struct NebulaCertCommand;
 
 impl CertPrinter for NebulaCertCommand {
     fn print(&self, cert_path: &str) -> Option<String> {
-        let output = std::process::Command::new("nebula-cert")
+        let output = crate::nebula::bin::nebula_cert_command()
+            .ok()?
             .args(["print", "-path", cert_path])
             .output()
             .ok()?;
@@ -30,7 +31,19 @@ impl CertPrinter for NebulaCertCommand {
 }
 
 /// Private overlay prefixes a Guardian mesh address may use.
-const OVERLAY_PREFIXES: [&str; 3] = ["192.168.100.", "10.", "172.16."];
+///
+/// P0.6: the circle's own prefix is checked first and is read from the mesh
+/// profile at call time — see [`overlay_prefixes`] — rather than being fixed to
+/// the legacy subnet, so a circle created with a different range (Phase 2) is
+/// still recognised. The other two entries are broader private-range fallbacks
+/// for a Guardian that has not loaded a profile yet.
+fn overlay_prefixes() -> [String; 3] {
+    [
+        format!("{}.", crate::mesh::overlay_prefix()),
+        "10.".to_string(),
+        "172.16.".to_string(),
+    ]
+}
 
 /// Extracts the first overlay address in CIDR form from `nebula-cert print`
 /// output.
@@ -42,10 +55,11 @@ pub fn parse_overlay_ip(printed: &str) -> Option<String> {
         // Prefix order matters and is deliberate: the Guardian overlay range
         // is looked for first, so a `10.`-shaped substring elsewhere on the
         // line (a date, a version) cannot mask a real 192.168.100.x address.
+        let prefixes = overlay_prefixes();
         let Some(index) = line
-            .find(OVERLAY_PREFIXES[0])
-            .or_else(|| line.find(OVERLAY_PREFIXES[1]))
-            .or_else(|| line.find(OVERLAY_PREFIXES[2]))
+            .find(prefixes[0].as_str())
+            .or_else(|| line.find(prefixes[1].as_str()))
+            .or_else(|| line.find(prefixes[2].as_str()))
         else {
             continue;
         };
@@ -55,9 +69,7 @@ pub fn parse_overlay_ip(printed: &str) -> Option<String> {
             .unwrap_or(rest.len());
         let candidate = rest[..end].trim();
         if candidate.contains('/')
-            && OVERLAY_PREFIXES
-                .iter()
-                .any(|prefix| candidate.starts_with(prefix))
+            && prefixes.iter().any(|prefix| candidate.starts_with(prefix.as_str()))
         {
             return Some(candidate.to_string());
         }

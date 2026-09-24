@@ -22,7 +22,7 @@ pub const CACHE_PATH: &str = "/var/lib/sgx-guardian/nebula/local_ip_cache.json";
 
 pub type SharedRegistry = Arc<RwLock<OverlayRegistry>>;
 fn is_ca_node() -> bool {
-    std::env::args().nth(1).unwrap_or_default() == "nodeA"
+    crate::mesh::is_ca()
 }
 
 // ── Wire Messages ─────────────────────────────────────────────
@@ -402,7 +402,7 @@ async fn handle_registry_connection(
 
     let response = match request.action.as_str() {
         "assign" => {
-            if std::env::args().nth(1).unwrap_or_default() != "nodeA" {
+            if !crate::mesh::is_ca() {
                 RegistryResponse {
                     success: false,
                     error: Some("Only CA can assign IPs".into()),

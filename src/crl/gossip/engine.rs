@@ -83,7 +83,8 @@ pub struct GossipPeer {
     pub overlay_ip: String,
 }
 
-/// `"nebula://192.168.100.7/24"` -> `Some("192.168.100.7")`
+/// `"nebula://10.20.0.7/24"` -> `Some("10.20.0.7")` (shown with a
+/// placeholder subnet; parses whatever the circle's overlay actually is)
 pub fn parse_nebula_endpoint(endpoint: &str) -> Option<String> {
     endpoint
         .strip_prefix("nebula://")

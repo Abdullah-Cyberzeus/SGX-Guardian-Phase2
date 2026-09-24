@@ -113,11 +113,12 @@ fn ensure_local_membership_vc(member_vc_json: &str) -> Result<Option<String>, St
     }
 }
 
-/// Request a CA-signed Nebula certificate from nodeA.
+/// Request a CA-signed Nebula certificate from the circle CA.
 ///
-/// Blocks until the cert is received.  On success:
+/// Blocks until the cert is received. On success:
+/// - Generates <NEBULA_BASE_DIR>/nodes/<node_id>.key locally (P0.1) and never
+///   transmits it; only the matching `.pub` goes to the CA
 /// - Writes <NEBULA_BASE_DIR>/nodes/<node_id>.crt
-/// - Writes <NEBULA_BASE_DIR>/nodes/<node_id>.key
 /// - Saves   <NEBULA_BASE_DIR>/ca/ca.crt  (CRITICAL — shared CA)
 pub async fn request_certificate_from_ca(
     node_id: String,
@@ -168,6 +169,13 @@ pub async fn request_certificate_from_ca(
         let _ = std::fs::remove_file(&cert_path);
         let _ = std::fs::remove_file(&key_path);
         let _ = std::fs::remove_file(&fp_path);
+        // P0.1b: before P0.1 this path only deleted files, because the CA
+        // minted a replacement key on the next request. Now the key is ours to
+        // make, so a deletion without a regeneration would leave this Guardian
+        // permanently unable to enroll. `ensure_local_keypair` below does the
+        // regenerating; clearing the pub half here forces it to, rather than
+        // reusing the public key of the identity we just discarded.
+        let _ = std::fs::remove_file(format!("{}/nodes/{}.pub", NEBULA_BASE_DIR, node_id));
     }
 
     // Idempotent: cert AND CA cert both present
@@ -183,6 +191,35 @@ pub async fn request_certificate_from_ca(
         );
         return;
     }
+
+    // P0.1/B1: mint our own Nebula keypair before asking for a certificate, so
+    // the CA signs a public key with `-in-pub` and never holds our private key.
+    // Idempotent — an enrollment retry reuses the same pair, because rotating
+    // mid-issuance would invalidate a certificate the CA is already signing.
+    let nebula_public_key_pem = match crate::mesh::enroll::keys::ensure_local_keypair(
+        NEBULA_BASE_DIR,
+        &node_id,
+    ) {
+        Ok(keypair) => keypair.public_key_pem,
+        Err(e) => {
+            // Falling back to CA-generated keys here would silently undo the
+            // hotfix, so this is fatal to the request. The caller retries, and
+            // Phase 1 surfaces it as a lifecycle error instead of a crash.
+            eprintln!("❌ Cannot generate a local Nebula keypair for {}: {}", node_id, e);
+            log_error(
+                &node_id,
+                &format!("Local Nebula keygen failed — enrollment cannot proceed: {}", e),
+            );
+            log_audit(
+                &node_id,
+                AuditCategory::Network,
+                AuditSeverity::Critical,
+                AuditAction::Failed,
+                &format!("Local Nebula keygen failed for {}: {}", node_id, e),
+            );
+            return;
+        }
+    };
 
     println!(
         "📡 Requesting certificate from CA at {} (overlay: {})",
@@ -240,6 +277,7 @@ pub async fn request_certificate_from_ca(
             &current_ca_addr,
             &overlay_ip,
             &public_key_pem,
+            &nebula_public_key_pem,
             wants_lh,
             wants_relay,
             pairing_proof.as_deref(),
@@ -338,7 +376,7 @@ pub async fn request_certificate_from_ca(
                     }
 
                     if resp.assigned_lighthouse {
-                        println!("🗼 This node is now a LIGHTHOUSE in guardian-circle-alpha");
+                        println!("🗼 This node is now a LIGHTHOUSE in {}", crate::mesh::circle_id());
                     }
                     sync_role_marker(
                         "/var/lib/sgx-guardian/nebula/am_lighthouse",
@@ -354,7 +392,7 @@ pub async fn request_certificate_from_ca(
                     }
 
                     if resp.assigned_relay {
-                        println!("🛰️ This node is now a RELAY in guardian-circle-alpha");
+                        println!("🛰️ This node is now a RELAY in {}", crate::mesh::circle_id());
                         if let Err(e) = set_relay_enabled_in_node_config(&node_id) {
                             eprintln!("⚠️  Failed to enable relay in node config: {}", e);
                         }
@@ -497,11 +535,13 @@ pub async fn request_certificate_from_ca(
 }
 
 /// Single gRPC attempt to the CA (PLAINTEXT — bootstrap phase, no TLS yet).
+#[allow(clippy::too_many_arguments)]
 async fn try_request(
     node_id: &str,
     ca_addr: &str,
     overlay_ip: &str,
     public_key_pem: &str,
+    nebula_public_key_pem: &str,
     wants_lh: bool,
     wants_relay: bool,
     pairing_proof: Option<&str>,
@@ -523,6 +563,9 @@ async fn try_request(
         wants_lighthouse: wants_lh,
         wants_relay,
         pairing_proof: pairing_proof.unwrap_or_default().to_string(),
+        // P0.1/B1: the CA signs this with `-in-pub`. Our private key never
+        // leaves this Guardian, and `node_key_pem` comes back empty.
+        nebula_public_key_pem: nebula_public_key_pem.to_string(),
     });
 
     let response = client
@@ -618,7 +661,13 @@ fn set_relay_enabled_in_node_config(node_id: &str) -> Result<(), String> {
 struct BrokerEnrollRequest {
     circle_id: String,
     node_id: String,
+    /// The joiner's **device** P-256 identity key, Base64 DER — not a Nebula
+    /// key. It binds this request to the DID document below.
     public_key_pem: String,
+    /// P0.1/B1: the joiner's **Nebula** public key, generated locally. With
+    /// this set the CA signs `-in-pub` and no private key transits the public
+    /// broker, which was the most exposed instance of the blocker.
+    nebula_public_key_pem: String,
     did_doc_json: String,
 }
 
@@ -685,7 +734,7 @@ async fn install_broker_trust_material(
             .map_err(|error| format!("CA DID snapshot parse failed: {}", error))?;
     if !snapshot.iter().any(|doc| {
         doc.id == vc.issuer_did()
-            && doc.sgx_node_name.as_deref() == Some("nodeA")
+            && doc.sgx_node_name.as_deref() == Some(crate::mesh::ca_guardian_id().as_str())
             && doc.sgx_status.as_deref() == Some("active")
     }) {
         return Err(format!(
@@ -825,6 +874,32 @@ pub async fn request_certificate_via_broker(
         return;
     }
 
+    // P0.1/B1: mint our own Nebula keypair before enrolling, so the CA signs a
+    // public key and nothing secret crosses the public broker. Idempotent, so a
+    // broker retry reuses the same pair.
+    let nebula_public_key_pem =
+        match crate::mesh::enroll::keys::ensure_local_keypair(NEBULA_BASE_DIR, &node_id) {
+            Ok(keypair) => keypair.public_key_pem,
+            Err(e) => {
+                eprintln!(
+                    "❌ Cannot generate a local Nebula keypair for {}: {}",
+                    node_id, e
+                );
+                log_error(
+                    &node_id,
+                    &format!("Local Nebula keygen failed — broker enrollment cannot proceed: {}", e),
+                );
+                log_audit(
+                    &node_id,
+                    AuditCategory::Network,
+                    AuditSeverity::Critical,
+                    AuditAction::Failed,
+                    &format!("Local Nebula keygen failed for {}: {}", node_id, e),
+                );
+                return;
+            }
+        };
+
     println!(
         "☁️  Enrolling via VPS broker at {} (node={})",
         broker_url, node_id
@@ -862,9 +937,10 @@ pub async fn request_certificate_via_broker(
         }
 
         let payload = BrokerEnrollRequest {
-            circle_id: "guardian-circle-alpha".to_string(),
+            circle_id: crate::mesh::profile::circle_id_or(crate::vc::issue::DEFAULT_CIRCLE_ID),
             node_id: node_id.clone(),
             public_key_pem: public_key_pem.clone(),
+            nebula_public_key_pem: nebula_public_key_pem.clone(),
             did_doc_json: did_doc_json.clone(),
         };
 
@@ -929,9 +1005,26 @@ pub async fn request_certificate_via_broker(
                             }
                         }
 
-                        // Save node private key
+                        // P0.1/B1: we generated our own key, so a key in the
+                        // response is either a legacy CA that still mints them
+                        // or a broker injecting one. Either way it must not
+                        // overwrite ours — the certificate we just installed
+                        // was signed for *our* public key.
                         if !resp.key.is_empty() {
-                            if let Err(e) = write_file(&key_path, &resp.key).await {
+                            if Path::new(&key_path).exists() {
+                                eprintln!(
+                                    "⚠️  Broker returned a private key for {} but this Guardian \
+                                     already holds its own — ignoring the returned key.",
+                                    node_id
+                                );
+                                log_audit(
+                                    &node_id,
+                                    AuditCategory::Network,
+                                    AuditSeverity::Warning,
+                                    AuditAction::Failed,
+                                    "Ignored a private key returned by the broker; the local key is authoritative",
+                                );
+                            } else if let Err(e) = write_file(&key_path, &resp.key).await {
                                 eprintln!("⚠️  Save key failed: {}", e);
                             }
                         }
@@ -1289,6 +1382,7 @@ mod tests {
             "[invalid",
             "10.0.0.2",
             "public-key",
+            "nebula-public-key",
             false,
             false,
             None,
@@ -1307,7 +1401,16 @@ mod tests {
         };
         let (addr, handle) = spawn_mock_cert_service(MockCertService { response }).await;
 
-        let result = try_request("nodeB", &addr, "10.0.0.5", "public-key", false, false, None)
+        let result = try_request(
+            "nodeB",
+            &addr,
+            "10.0.0.5",
+            "public-key",
+            "nebula-public-key",
+            false,
+            false,
+            None,
+        )
             .await
             .expect("mock cert service call should succeed");
 
@@ -1325,6 +1428,7 @@ mod tests {
             &addr,
             "10.0.0.10",
             "public-key",
+            "nebula-public-key",
             false,
             false,
             None,

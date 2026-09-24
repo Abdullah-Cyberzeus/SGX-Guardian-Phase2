@@ -31,8 +31,15 @@ pub const VAR_DIRECTORIES: [&str; 9] = [
 pub const DEFAULT_POLICY_SCHEMA: &str = "---\npolicy_id: \"123e4567-e89b-12d3-a456-426614174000\"\nversion: \"1.0.0\"\ndescription: \"Default Guardian Edge Policy\"\nrules:\n  - id: \"rule-001\"\n    action: \"ALLOW\"\n    src: \"10.0.0.0/24\"\n    dst: \"0.0.0.0/0\"\n    protocol: \"TCP\"\n    port: 443\n  - id: \"rule-005\"\n    action: \"DENY\"\n    src: \"0.0.0.0/0\"\n    dst: \"10.0.0.10\"\n    protocol: \"UDP\"\n";
 
 /// Node ids the daemon ships default configuration for, with their gRPC port.
-pub const DEFAULT_NODE_PORTS: [(&str, u16); 3] =
-    [("nodeA", 50051), ("nodeB", 50052), ("nodeC", 50053)];
+///
+/// P0.7: this is first-boot seed data for the legacy cohort only — it is what
+/// `config/node{A,B,C}.yaml` get written with when a board has no config at all.
+/// Nothing derives a running node's ports from it; see
+/// [`crate::config_loader::resolve_ports`]. The names live in
+/// `mesh::legacy` because that is the one module allowed to know them.
+pub fn default_node_ports() -> [(&'static str, u16); 3] {
+    crate::mesh::legacy::legacy_default_node_ports()
+}
 
 /// Every absolute directory that must exist before startup continues.
 pub fn required_directories(paths: &GuardianPaths) -> Vec<PathBuf> {
@@ -73,7 +80,7 @@ pub fn default_node_config_yaml(node_id: &str, port: u16) -> String {
 /// newly created.
 pub fn ensure_default_node_configs(paths: &GuardianPaths) -> Vec<String> {
     let mut created = Vec::new();
-    for (node_id, port) in DEFAULT_NODE_PORTS {
+    for (node_id, port) in default_node_ports() {
         let config_path = paths.node_config(node_id);
         if !config_path.exists() {
             if let Some(parent) = config_path.parent() {
@@ -294,7 +301,7 @@ mod tests {
 
     #[test]
     fn default_node_config_yaml_is_valid_and_node_specific() {
-        for (node_id, port) in DEFAULT_NODE_PORTS {
+        for (node_id, port) in default_node_ports() {
             let yaml = default_node_config_yaml(node_id, port);
             let parsed: crate::config_loader::NodeConfig =
                 serde_yaml::from_str(&yaml).expect("default config must parse");
@@ -326,7 +333,7 @@ mod tests {
         let created = ensure_default_node_configs(&paths);
 
         assert_eq!(created, vec!["nodeA", "nodeB", "nodeC"]);
-        for (node_id, _) in DEFAULT_NODE_PORTS {
+        for (node_id, _) in default_node_ports() {
             assert!(paths.node_config(node_id).is_file());
             assert!(paths.node_config_mirror(node_id).is_file());
         }

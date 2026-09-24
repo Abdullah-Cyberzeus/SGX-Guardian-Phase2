@@ -33,7 +33,10 @@ impl NebulaConfig {
         let lighthouse_config = if is_lighthouse {
             "lighthouse:\n  am_lighthouse: true\n  interval: 60\n".to_string()
         } else {
-            "lighthouse:\n  am_lighthouse: false\n  interval: 60\n  hosts:\n    - \"192.168.100.1\"\n".to_string()
+            format!(
+                "lighthouse:\n  am_lighthouse: false\n  interval: 60\n  hosts:\n    - \"{}\"\n",
+                crate::mesh::overlay_host(1)
+            )
         };
 
         let config_content = format!(
@@ -162,10 +165,14 @@ firewall:
             .lighthouses
             .iter()
             .any(|l| l.node_name == "vps-lighthouse" && l.is_active);
-        let am_lh = (node_name == "nodeA" && !has_vps_relay)
+        // P0.6: "is this Guardian the circle's own lighthouse" — previously
+        // true for whichever node was called nodeA, now for whichever node
+        // signs for the circle.
+        let is_circle_ca = node_name == crate::mesh::ca_guardian_id();
+        let am_lh = (is_circle_ca && !has_vps_relay)
             || std::path::Path::new("/var/lib/sgx-guardian/nebula/am_lighthouse").exists();
         let is_lighthouse = am_lh
-            || (lh_registry.is_lighthouse(node_name) && (!has_vps_relay || node_name != "nodeA"));
+            || (lh_registry.is_lighthouse(node_name) && (!has_vps_relay || !is_circle_ca));
         let active_lighthouses = lh_registry
             .active()
             .iter()
@@ -246,7 +253,7 @@ firewall:
             .lighthouses
             .iter()
             .any(|l| l.node_name == "vps-lighthouse" && l.is_active);
-        let am_relay = if has_vps_relay && node_name == "nodeA" {
+        let am_relay = if has_vps_relay && node_name == crate::mesh::ca_guardian_id() {
             false
         } else {
             forced_relay || explicit_relay_role.unwrap_or(is_lighthouse && lh_also_relay)

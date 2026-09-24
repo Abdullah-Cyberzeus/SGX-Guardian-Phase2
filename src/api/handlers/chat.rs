@@ -30,10 +30,11 @@ pub(crate) fn get_grpc_addr(ip: &str, peer_id_str: &str) -> String {
         Some(port) if (50151..=50199).contains(&port) => port + 100,
         Some(port) if (50251..=50299).contains(&port) => port,
         Some(port) => port + 100,
-        None => match route_id {
-            "nodeA" => 50251,
-            "nodeB" => 50252,
-            "nodeC" => 50253,
+        // P0.7: resolved from that peer's configuration rather than its name.
+        // The last-octet heuristic below stays as the final guess for a peer we
+        // have no configuration for at all.
+        None => match crate::startup::config::chat_grpc_port(route_id) {
+            port if port != crate::mesh::legacy::DEFAULT_CHAT_PORT => port,
             _ => {
                 if let Some(last_octet) = ip
                     .split('.')
@@ -56,15 +57,18 @@ pub(crate) fn get_grpc_addr(ip: &str, peer_id_str: &str) -> String {
 
 fn stable_route_id_for_peer(ip: &str, peer_id: &str) -> Option<String> {
     let peer_id_trimmed = peer_id.trim();
-    if matches!(peer_id_trimmed, "nodeA" | "nodeB" | "nodeC") {
-        return Some(peer_id_trimmed.to_string());
-    }
     if let Ok(registry) = crate::nebula::overlay_registry::OverlayRegistry::load(
         crate::nebula::registry_sync::REGISTRY_PATH,
     ) {
-        for node in ["nodeA", "nodeB", "nodeC"] {
-            if registry.get_ip(node).is_some_and(|overlay| overlay == ip) {
-                return Some(node.to_string());
+        // P0.7: a peer id the registry knows is stable, whatever it is called.
+        // This replaces an allow-list of three names that silently rejected
+        // every other Guardian.
+        if registry.get_ip(peer_id_trimmed).is_some() {
+            return Some(peer_id_trimmed.to_string());
+        }
+        for (node, record) in &registry.allocations {
+            if record.overlay_ip == ip {
+                return Some(node.clone());
             }
         }
     }
@@ -236,7 +240,7 @@ fn get_local_nebula_ip() -> Option<String> {
         if let Ok(json) = std::fs::read_to_string(reg_path) {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json) {
                 if let Some(ip) = val.get(&node_id).and_then(|v| v.as_str()) {
-                    // Strip CIDR suffix if present (e.g., "192.168.100.1/24" -> "192.168.100.1")
+                    // Strip CIDR suffix if present (e.g., "10.20.0.1/24" -> "10.20.0.1")
                     let ip_only = ip.split('/').next().unwrap_or(ip);
                     if ip_only.parse::<IpAddr>().is_ok() {
                         return Some(ip_only.to_string());

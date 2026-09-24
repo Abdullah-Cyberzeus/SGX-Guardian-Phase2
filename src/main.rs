@@ -91,7 +91,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // pruning of approval requests written by an incompatible binary all live
     // in `startup::bootstrap` so each branch is testable against a tempdir.
     let paths = GuardianPaths::production();
-    let report = bootstrap::bootstrap_filesystem(&paths, node_id == "nodeA");
+
+    // === MESH PROFILE (P0.4/P0.5) ===
+    // Must run before anything asks `is_ca()`. On a pre-Phase-0 install this
+    // synthesises a profile from the Nebula material already on disk — holding
+    // `ca/ca.key` is what made a Guardian the CA, so the role survives the
+    // upgrade without anyone re-enrolling. It is idempotent and never
+    // destructive, and a fresh Guardian simply has no profile (UNENROLLED),
+    // which `is_ca()` reports as `false`.
+    match sgx_guardian_client::mesh::legacy::migrate_and_initialize(&paths, &node_id) {
+        Ok(Some(profile)) => println!(
+            "🔗 Mesh profile: guardian={} role={:?} circle={} ({})",
+            profile.guardian_id, profile.role, profile.circle_id, profile.circle_name
+        ),
+        Ok(None) => println!("🔗 No mesh profile — this Guardian is not enrolled in a circle yet"),
+        Err(e) => {
+            // A corrupt profile must not be silently treated as "unenrolled":
+            // that would let the daemon overwrite it and, on a CA, come up
+            // believing it has no circle. Phase 1 turns this into a lifecycle
+            // ERROR with a retry; until then it is fatal, matching how the
+            // pre-Phase-0 code treated unusable Nebula material.
+            eprintln!("❌ Mesh profile could not be loaded: {e}");
+            eprintln!("   Fix or remove /var/lib/sgx-guardian/mesh/profile.json and restart.");
+            std::process::exit(1);
+        }
+    }
+
+    let report = bootstrap::bootstrap_filesystem(&paths, sgx_guardian_client::mesh::is_ca());
     for dir in &report.directory_failures {
         eprintln!(
             "⚠️ Failed to create {} (may cause issues later)",
@@ -112,11 +138,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
     }
 
-    // === Policy Authority key bootstrap (nodeA only) ===
+    // === Policy Authority key bootstrap (CA only) ===
     // Generates /etc/sgx-guardian/policies/pa_admin_{priv,pub}.der on first
     // boot, persists thereafter. Member nodes never run this — they receive
     // the public half through the cert-bootstrap response.
-    if node_id == "nodeA" {
+    if sgx_guardian_client::mesh::is_ca() {
         match sgx_guardian_client::policy_authority::PaKey::load_or_generate() {
             Ok(_) => {
                 println!(
@@ -656,7 +682,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Sanitize configs before load
-    for (node, _) in bootstrap::DEFAULT_NODE_PORTS {
+    for (node, _) in bootstrap::default_node_ports() {
         let yaml_file = paths.node_config(node);
         if let Err(e) = dynamic_config::sanitize_config_ip_if_invalid(&yaml_file.to_string_lossy())
         {
@@ -828,7 +854,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let nebula_base_dir =
             std::env::var("SGX_NEBULA_DIR").unwrap_or("/var/lib/sgx-guardian/nebula".to_string());
-        if node_id != "nodeA" {
+        if !sgx_guardian_client::mesh::is_ca() {
             println!(
                 "ℹ️ {} keeps local read-only relay registry snapshot",
                 node_id
@@ -872,7 +898,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let overlay_pool: OverlayPool;
         let mut lighthouse_registry: LighthouseRegistry;
 
-        if node_id == "nodeA" {
+        if sgx_guardian_client::mesh::is_ca() {
             // ────────────────────────────────────────────────────────────────────
             // nodeA IS the CA + Lighthouse.
             // 1. Generate CA (idempotent).
@@ -904,14 +930,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let registry_path = format!("{}/overlay_registry.json", nebula_base_dir);
             let reg = OverlayRegistry::load_or_create(
                 &registry_path,
-                "guardian-circle-alpha",
-                "192.168.100",
-                "nodeA",
+                &sgx_guardian_client::mesh::circle_id(),
+                &sgx_guardian_client::mesh::overlay_prefix(),
+                &sgx_guardian_client::mesh::ca_guardian_id(),
             );
 
             let ip_cidr = reg
-                .get_ip_cidr("nodeA")
-                .expect("nodeA IP missing from registry")
+                .get_ip_cidr(&sgx_guardian_client::mesh::ca_guardian_id())
+                .expect("the CA's own overlay IP is missing from the registry")
                 .to_string();
 
             println!("🌐 nodeA overlay IP: {}", ip_cidr);
@@ -927,9 +953,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Lighthouse registry (primary lighthouse is always nodeA)
             let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
             let owner_overlay = reg
-                .get_ip("nodeA")
+                .get_ip(&sgx_guardian_client::mesh::ca_guardian_id())
                 .map(|ip| ip.to_string())
-                .unwrap_or_else(|| "192.168.100.1".to_string());
+                .unwrap_or_else(|| sgx_guardian_client::mesh::overlay_host(1));
             let lighthouse_endpoint_ip = if !detected_ip.is_empty() {
                 detected_ip.clone()
             } else if !cohort.node_a.ip.is_empty() && cohort.node_a.ip != "0.0.0.0" {
@@ -940,20 +966,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let lighthouse_endpoint = format!("{}:4242", lighthouse_endpoint_ip);
             let mut lh_reg = LighthouseRegistry::load_or_create(
                 &lh_path,
-                "guardian-circle-alpha",
-                "nodeA",
+                &sgx_guardian_client::mesh::circle_id(),
+                &sgx_guardian_client::mesh::ca_guardian_id(),
                 &owner_overlay,
                 &lighthouse_endpoint,
             );
-            let _ = lh_reg.update_endpoint("nodeA", &lighthouse_endpoint);
-            lh_reg.mark_active("nodeA");
+            let _ = lh_reg.update_endpoint(&sgx_guardian_client::mesh::ca_guardian_id(), &lighthouse_endpoint);
+            lh_reg.mark_active(&sgx_guardian_client::mesh::ca_guardian_id());
 
             let vps_cfg = sgx_guardian_client::config_loader::resolve_vps_config(&node_id);
             if let Some(vps_pub_ip) = vps_cfg.vps_public_ip {
                 if !vps_pub_ip.trim().is_empty() {
                     let vps_ovl_ip = vps_cfg
                         .vps_overlay_ip
-                        .unwrap_or_else(|| "192.168.100.10".to_string());
+                        .unwrap_or_else(|| sgx_guardian_client::mesh::overlay_host(10));
                     let vps_endpoint = format!("{}:4242", vps_pub_ip.trim());
                     lh_reg.upsert_node("vps-lighthouse", &vps_ovl_ip, &vps_endpoint, true, true);
                     lh_reg.mark_active("vps-lighthouse");
@@ -970,10 +996,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("📡 {}", lh_reg.summary());
             lighthouse_registry = lh_reg;
 
-            // 3. Issue nodeA's own certificate
+            // 3. Issue the CA's own certificate
             let membership_a = CircleMembership {
                 node_name: node_id.clone(),
-                circle_id: "guardian-circle-alpha".to_string(),
+                circle_id: sgx_guardian_client::mesh::circle_id(),
                 vc_hash: "ca-self-signed".to_string(),
                 is_valid: true,
             };
@@ -1005,7 +1031,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // 5. Start VPS CA broker worker (if configured)
             if let Some(vps_url) = vps_cfg.broker_url {
                 if !vps_url.is_empty() {
-                    let circle_id = "guardian-circle-alpha".to_string();
+                    let circle_id = sgx_guardian_client::mesh::circle_id();
                     let auth_token = vps_cfg.broker_token.unwrap_or_default();
                     tokio::spawn(async move {
                         sgx_guardian_client::cloud::ca_broker::start_ca_broker_worker(
@@ -1052,7 +1078,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if cert_exists {
                 // ── Fast-Path: Existing valid certificate on disk ────────────────
                 let ip_cidr = read_ip_from_nebula_cert(&nebula_base_dir, &node_id)
-                    .unwrap_or_else(|| "192.168.100.2/24".to_string());
+                    .unwrap_or_else(|| sgx_guardian_client::mesh::overlay_host_cidr(2));
                 println!(
                     "✅ Guardian Mesh certificate + CA cert already present for {} (IP: {})",
                     node_id, ip_cidr
@@ -1063,7 +1089,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 nebula_ip = ip_cidr.clone();
 
                 let ip_only = ip_cidr.split('/').next().unwrap_or("").to_string();
-                let mut pool = OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
+                let mut pool = OverlayPool::new(
+                        &sgx_guardian_client::mesh::circle_id(),
+                        &sgx_guardian_client::mesh::overlay_prefix(),
+                        &sgx_guardian_client::mesh::ca_guardian_id(),
+                    );
                 pool.allocations.insert(node_id.clone(), ip_only);
                 overlay_pool = pool;
 
@@ -1076,16 +1106,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let vps_overlay_ip = vps_cfg
                     .vps_overlay_ip
                     .clone()
-                    .unwrap_or_else(|| "192.168.100.10".to_string());
+                    .unwrap_or_else(|| sgx_guardian_client::mesh::overlay_host(10));
                 let vps_endpoint = format!("{}:4242", vps_public_ip);
                 let owner_overlay = overlay_pool
-                    .get_ip("nodeA")
+                    .get_ip(&sgx_guardian_client::mesh::ca_guardian_id())
                     .cloned()
-                    .unwrap_or_else(|| "192.168.100.1".to_string());
+                    .unwrap_or_else(|| sgx_guardian_client::mesh::overlay_host(1));
                 let mut lh_reg = LighthouseRegistry::load_or_create(
                     &lh_path,
-                    "guardian-circle-alpha",
-                    "nodeA",
+                    &sgx_guardian_client::mesh::circle_id(),
+                    &sgx_guardian_client::mesh::ca_guardian_id(),
                     &owner_overlay,
                     "",
                 );
@@ -1145,25 +1175,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let ip_only = ip_cidr.split('/').next().unwrap_or("").to_string();
                     let mut pool =
-                        OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
+                        OverlayPool::new(
+                        &sgx_guardian_client::mesh::circle_id(),
+                        &sgx_guardian_client::mesh::overlay_prefix(),
+                        &sgx_guardian_client::mesh::ca_guardian_id(),
+                    );
                     pool.allocations.insert(node_id.clone(), ip_only);
                     overlay_pool = pool;
 
                     let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
                     let owner_overlay = overlay_pool
-                        .get_ip("nodeA")
+                        .get_ip(&sgx_guardian_client::mesh::ca_guardian_id())
                         .cloned()
-                        .unwrap_or_else(|| "192.168.100.1".to_string());
+                        .unwrap_or_else(|| sgx_guardian_client::mesh::overlay_host(1));
                     let lighthouse_endpoint = format!("{}:4242", ca_lan_ip);
                     let mut lh_reg = LighthouseRegistry::load_or_create(
                         &lh_path,
-                        "guardian-circle-alpha",
-                        "nodeA",
+                        &sgx_guardian_client::mesh::circle_id(),
+                        &sgx_guardian_client::mesh::ca_guardian_id(),
                         &owner_overlay,
                         &lighthouse_endpoint,
                     );
-                    let _ = lh_reg.update_endpoint("nodeA", &lighthouse_endpoint);
-                    lh_reg.mark_active("nodeA");
+                    let _ = lh_reg.update_endpoint(&sgx_guardian_client::mesh::ca_guardian_id(), &lighthouse_endpoint);
+                    lh_reg.mark_active(&sgx_guardian_client::mesh::ca_guardian_id());
                     if let Err(e) = lh_reg.save(&lh_path) {
                         eprintln!("⚠️ LH registry save failed: {}", e);
                     }
@@ -1313,32 +1347,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     let ip_cidr = read_ip_from_nebula_cert(&nebula_base_dir, &node_id)
-                        .unwrap_or_else(|| "192.168.100.2/24".to_string());
+                        .unwrap_or_else(|| sgx_guardian_client::mesh::overlay_host_cidr(2));
                     println!("🌐 Overlay IP for {}: {}", node_id, ip_cidr);
                     nebula_ip = ip_cidr.clone();
 
                     let ip_only = ip_cidr.split('/').next().unwrap_or("").to_string();
                     let mut pool =
-                        OverlayPool::new("guardian-circle-alpha", "192.168.100", "nodeA");
+                        OverlayPool::new(
+                        &sgx_guardian_client::mesh::circle_id(),
+                        &sgx_guardian_client::mesh::overlay_prefix(),
+                        &sgx_guardian_client::mesh::ca_guardian_id(),
+                    );
                     pool.allocations.insert(node_id.clone(), ip_only);
                     overlay_pool = pool;
 
                     let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
                     let owner_overlay = overlay_pool
-                        .get_ip("nodeA")
+                        .get_ip(&sgx_guardian_client::mesh::ca_guardian_id())
                         .cloned()
-                        .unwrap_or_else(|| "192.168.100.1".to_string());
+                        .unwrap_or_else(|| sgx_guardian_client::mesh::overlay_host(1));
                     let vps_public_ip = vps_cfg
                         .vps_public_ip
                         .unwrap_or_else(|| "159.203.186.55".to_string());
                     let vps_overlay_ip = vps_cfg
                         .vps_overlay_ip
-                        .unwrap_or_else(|| "192.168.100.10".to_string());
+                        .unwrap_or_else(|| sgx_guardian_client::mesh::overlay_host(10));
                     let vps_endpoint = format!("{}:4242", vps_public_ip);
                     let mut lh_reg = LighthouseRegistry::load_or_create(
                         &lh_path,
-                        "guardian-circle-alpha",
-                        "nodeA",
+                        &sgx_guardian_client::mesh::circle_id(),
+                        &sgx_guardian_client::mesh::ca_guardian_id(),
                         &owner_overlay,
                         "",
                     );
@@ -1437,7 +1475,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let vps_ovl = vps_cfg
                             .vps_overlay_ip
                             .clone()
-                            .unwrap_or_else(|| "192.168.100.10".to_string());
+                            .unwrap_or_else(|| sgx_guardian_client::mesh::overlay_host(10));
                         let vps_end = format!("{}:4242", vps_pub.trim());
                         fresh_lh.upsert_node("vps-lighthouse", &vps_ovl, &vps_end, true, true);
                         fresh_lh.mark_active("vps-lighthouse");
@@ -1474,9 +1512,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("🗼 Starting local registry sync server (lighthouse mode)");
                 let reg = OverlayRegistry::load_or_create(
                     registry_sync::REGISTRY_PATH,
-                    "guardian-circle-alpha",
-                    "192.168.100",
-                    "nodeA",
+                    &sgx_guardian_client::mesh::circle_id(),
+                    &sgx_guardian_client::mesh::overlay_prefix(),
+                    &sgx_guardian_client::mesh::ca_guardian_id(),
                 );
                 let shared_reg: SharedRegistry = Arc::new(RwLock::new(reg));
                 tokio::spawn(async move {
@@ -1691,7 +1729,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
 
-        if node_id == "nodeA" {
+        if sgx_guardian_client::mesh::is_ca() {
             let lh_path = format!("{}/lighthouse_registry.json", nebula_base_dir);
             let mut changed = false;
             for (peer_id, cfg) in [("nodeB", &cohort.node_b), ("nodeC", &cohort.node_c)] {
@@ -1718,7 +1756,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        if node_id == "nodeA" {
+        if sgx_guardian_client::mesh::is_ca() {
             let node_for_local_reload = node_id.clone();
             let nebula_dir_for_local_reload = nebula_base_dir.clone();
             let pool_for_local_reload = overlay_pool.clone();
@@ -1753,7 +1791,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 if !vps_pub_ip.trim().is_empty() {
                                     let vps_ovl_ip = vps_cfg
                                         .vps_overlay_ip
-                                        .unwrap_or_else(|| "192.168.100.10".to_string());
+                                        .unwrap_or_else(|| sgx_guardian_client::mesh::overlay_host(10));
                                     let vps_endpoint = format!("{}:4242", vps_pub_ip.trim());
                                     lh.upsert_node(
                                         "vps-lighthouse",
@@ -1857,7 +1895,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ),
             }
 
-            if node_id != "nodeA" {
+            if !sgx_guardian_client::mesh::is_ca() {
                 let node_for_init_pub = node_id.clone();
                 let nebula_ip_for_init_pub = nebula_ip.clone();
                 tokio::spawn(async move {
@@ -1949,11 +1987,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // === Relay Registry SELF-REGISTRATION (STRICT CONTROL FIX) ===
         {
-            if node_id == "nodeA" {
+            if sgx_guardian_client::mesh::is_ca() {
                 let relay_registry_path = format!("{}/relay_registry.json", nebula_base_dir);
 
                 let mut relay_reg =
-                    RelayRegistry::load_or_create(&relay_registry_path, "guardian-circle-alpha");
+                    RelayRegistry::load_or_create(
+                        &relay_registry_path,
+                        &sgx_guardian_client::mesh::circle_id(),
+                    );
 
                 let overlay_ip_only = nebula_ip.split('/').next().unwrap_or("").to_string();
                 let physical_endpoint = format!("{}:4242", detected_ip);
@@ -2066,7 +2107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let node_id_clone = node_id.clone();
 
             tokio::spawn(async move {
-                if node_id_clone != "nodeA" {
+                if !sgx_guardian_client::mesh::is_ca() {
                     return;
                 }
 
@@ -2342,7 +2383,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Step 8: Create circle membership
         let cot_circle = std::sync::Arc::new(CotCircleMembership::new(
-            "guardian-circle-alpha".into(),
+            sgx_guardian_client::mesh::circle_id(),
             cot_identity.device_id().to_string(),
             km.pubkey_der()?,
         ));
@@ -2677,7 +2718,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .ok()
     .and_then(|r| r.get_ip(&node_id).map(|s| s.to_string()))
-    .unwrap_or_else(|| "192.168.100.1".to_string());
+    .unwrap_or_else(|| sgx_guardian_client::mesh::overlay_host(1));
     let san_entries =
         admin_tls::certificate_san(&lan_fqdn, &this_node.hostname, &node_id, &overlay_ip_only);
     let san: Vec<&str> = san_entries.iter().map(String::as_str).collect();
@@ -2904,8 +2945,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         service.start();
         println!("✅ Threat service spawned (SUR-series, Sprint 8)");
     }
-    // === CERT BOOTSTRAP SERVER (nodeA only, plaintext port 50061) ===
-    if node_id == "nodeA" {
+    // === CERT BOOTSTRAP SERVER (CA only, plaintext port 50061) ===
+    if sgx_guardian_client::mesh::is_ca() {
         tokio::spawn(async move {
             // Bind to detected LAN IP or localhost — do NOT expose on all interfaces
             let bootstrap_addr = if detected_ip.is_empty() {
@@ -2962,8 +3003,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     // === END POLICY ENFORCEMENT ===
 
-    // Only nodeA sends pings to others
-    if node_id == "nodeA" {
+    // Only the CA sends pings to others
+    if sgx_guardian_client::mesh::is_ca() {
         for peer in peers {
             let target = format!("{}:{}", peer.ip, peer.port);
             log_event(&node_id, &format!("Sending ping to {}", target));

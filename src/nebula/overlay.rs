@@ -15,7 +15,7 @@ use std::path::Path;
 /// Represents one Circle's overlay IP pool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverlayPool {
-    /// Circle identifier (e.g., "guardian-circle-alpha")
+    /// Circle identifier (e.g., "circle-7f3c1a")
     pub circle_id: String,
     /// Subnet base (e.g., "192.168.100")
     pub subnet_base: String,
@@ -71,7 +71,8 @@ impl OverlayPool {
         self.allocations.get(node_name)
     }
 
-    /// Get the overlay IP with CIDR suffix (e.g., "192.168.100.1/24").
+    /// Get the overlay IP with CIDR suffix (e.g., "10.20.0.1/24" — shown here
+    /// with a placeholder subnet; the real value is whatever the circle uses).
     pub fn get_ip_cidr(&self, node_name: &str) -> Option<String> {
         self.allocations
             .get(node_name)
@@ -86,7 +87,8 @@ impl OverlayPool {
         self.allocations.remove(node_name).is_some()
     }
 
-    /// Get subnet string (e.g., "192.168.100.0/24").
+    /// Get subnet string (e.g., "10.20.0.0/24" — a placeholder; the real value
+    /// is the circle's own overlay subnet).
     pub fn subnet(&self) -> String {
         format!("{}.0/{}", self.subnet_base, self.cidr)
     }

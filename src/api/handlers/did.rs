@@ -378,7 +378,7 @@ pub async fn document_publish(
         Some(value) => required_nonempty_field(value, "node_name")?,
         None => state.node_id.clone(),
     };
-    let detected_ca = resolved_ca_host(&state.node_id).ok_or_else(|| {
+    let detected_ca = resolved_ca_host().ok_or_else(|| {
         ApiError::BadRequest(
             "CA host is unavailable; wait for nodeA discovery/config sync or set SGX_CA_HOST"
                 .to_string(),
@@ -640,7 +640,11 @@ fn required_nonempty_field(value: &str, field: &str) -> Result<String, ApiError>
     Ok(trimmed.to_string())
 }
 
-fn resolved_ca_host(node_id: &str) -> Option<String> {
+/// Where this Guardian should publish its DID document.
+///
+/// The final fallback used to compare the node id against the CA's name; it now
+/// asks the mesh profile, so the parameter is no longer needed.
+fn resolved_ca_host() -> Option<String> {
     std::env::var("SGX_CA_HOST")
         .ok()
         .filter(|value| !value.trim().is_empty() && value.trim() != "0.0.0.0")
@@ -652,7 +656,7 @@ fn resolved_ca_host(node_id: &str) -> Option<String> {
                 .ok()
                 .filter(|value| !value.trim().is_empty() && value.trim() != "0.0.0.0")
         })
-        .or_else(|| (node_id == "nodeA").then(|| "127.0.0.1".to_string()))
+        .or_else(|| crate::mesh::is_ca().then(|| "127.0.0.1".to_string()))
         .map(|value| value.trim().to_string())
 }
 

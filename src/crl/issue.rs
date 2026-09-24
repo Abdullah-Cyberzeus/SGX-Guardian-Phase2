@@ -14,7 +14,11 @@ use chrono::Utc;
 use std::env;
 use uuid::Uuid;
 
-pub const DEFAULT_CIRCLE_ID: &str = "guardian-circle-alpha";
+/// The circle a CRL is issued for when no profile is loaded.
+///
+/// P0.6: re-exported from `mesh::legacy` so the pre-Phase-0 circle name exists
+/// in exactly one place. Prefer `mesh::circle_id()`, which consults the profile.
+pub const DEFAULT_CIRCLE_ID: &str = crate::mesh::legacy::LEGACY_CIRCLE_ID;
 
 pub struct IssueRequest<'a> {
     pub revoked_did: &'a str,
@@ -29,7 +33,8 @@ pub struct IssueRequest<'a> {
 pub fn load_runtime_signing_context() -> Result<(DidRecord, std::sync::Arc<KeyManager>), CrlError> {
     let revoker = DidRecord::load(&did_path())?;
     let node_id =
-        crate::vc::issue::resolve_runtime_node_id().unwrap_or_else(|| "nodeA".to_string());
+        crate::vc::issue::resolve_runtime_node_id()
+            .unwrap_or_else(crate::mesh::local_guardian_id);
     let km = crate::vc::issue::load_runtime_key_manager(&node_id)
         .map_err(|e| CrlError::InvalidStructure(format!("load key manager: {}", e)))?;
     Ok((revoker, km))

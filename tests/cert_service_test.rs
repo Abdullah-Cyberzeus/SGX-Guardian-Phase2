@@ -69,6 +69,8 @@ fn test_cert_request_yaml_serde_roundtrip() {
         public_key_fingerprint: "abcdef1234".to_string(),
         requested_role: "member".to_string(),
         approve: ApprovalDecision::Member,
+        pairing_verified: true,
+        member_supplied_key: true,
     };
 
     // Serialize to YAML
@@ -101,6 +103,8 @@ fn test_cert_request_yaml_all_roles_serializable() {
             public_key_fingerprint: "fp".to_string(),
             requested_role: "member".to_string(),
             approve: role,
+            pairing_verified: false,
+            member_supplied_key: true,
         };
         let yaml = serde_yaml::to_string(&req).unwrap();
         assert!(!yaml.is_empty());
@@ -140,6 +144,7 @@ async fn test_cert_service_creates_yaml_request_file() {
         wants_relay: false,
         overlay_ip: String::new(),
         pairing_proof: String::new(),
+        nebula_public_key_pem: "test-nebula-pubkey-pem".to_string(),
     });
 
     // The service will write YAML and then poll for approval — we don't wait for full approval
@@ -189,6 +194,7 @@ async fn test_cert_service_invalid_node_id_rejected() {
         wants_relay: false,
         overlay_ip: String::new(),
         pairing_proof: String::new(),
+        nebula_public_key_pem: String::new(),
     });
 
     let result = service.request_certificate(request).await;
@@ -214,6 +220,7 @@ async fn test_cert_service_invalid_chars_node_id() {
         wants_relay: false,
         overlay_ip: String::new(),
         pairing_proof: String::new(),
+        nebula_public_key_pem: String::new(),
     });
 
     let result = service.request_certificate(request).await;

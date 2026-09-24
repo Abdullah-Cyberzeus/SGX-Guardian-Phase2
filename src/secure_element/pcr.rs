@@ -56,7 +56,7 @@ pub struct PcrSnapshot {
     pub composite_signature: Option<String>,
     pub nonce: String,
     pub measured_at: String,
-    /// SE050 hardware UID (real chip ID, not "nodeA")
+    /// SE050 hardware UID (real chip ID, not the Guardian id)
     pub device_uid: String,
     /// DKP key version that signed this snapshot
     pub key_version: u32,

@@ -875,6 +875,7 @@ async fn cert_service_request_certificate_fails_creating_requests_dir_member_rol
         wants_relay: false,
         overlay_ip: String::new(),
         pairing_proof: String::new(),
+        nebula_public_key_pem: "test-nebula-pubkey-pem".to_string(),
     });
 
     let result = service.request_certificate(request).await;
@@ -907,6 +908,7 @@ async fn cert_service_request_certificate_role_selection_and_node_lock_reuse() {
             wants_relay,
             overlay_ip: String::new(),
             pairing_proof: String::new(),
+            nebula_public_key_pem: "test-nebula-pubkey-pem".to_string(),
         });
         let result = service.request_certificate(request).await;
         assert_eq!(
@@ -926,6 +928,7 @@ async fn cert_service_request_certificate_role_selection_and_node_lock_reuse() {
             wants_relay: false,
             overlay_ip: String::new(),
             pairing_proof: String::new(),
+            nebula_public_key_pem: "test-nebula-pubkey-pem".to_string(),
         });
         let result = service.request_certificate(request).await;
         assert_eq!(result.unwrap_err().code(), tonic::Code::Internal);

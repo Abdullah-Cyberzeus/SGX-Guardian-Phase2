@@ -169,7 +169,7 @@ impl P2PDiscovery {
             let mut last_sent: HashMap<String, std::time::Instant> = HashMap::new();
 
             loop {
-                if node_id_cfg != "nodeA" && !crate::dynamic_config::overlay_is_reachable().await {
+                if !crate::mesh::is_ca() && !crate::dynamic_config::overlay_is_reachable().await {
                     // Don't skip entirely — still enqueue LAN peers for bootstrap
                     // Only skip overlay-specific peers
                     eprintln!(
@@ -219,22 +219,22 @@ impl P2PDiscovery {
                         overlay_candidates.push((peer_node, ip_rec.overlay_ip));
                     }
                 }
-                if node_id_cfg != "nodeA" && !overlay_candidates.iter().any(|(n, _)| n == "nodeA") {
-                    overlay_candidates.push(("nodeA".to_string(), "192.168.100.1".to_string()));
+                // A member always keeps the CA as a discovery candidate, since it
+                // anchors the overlay even when no beacon has been seen yet.
+                let ca_id = crate::mesh::ca_guardian_id();
+                if !crate::mesh::is_ca() && !overlay_candidates.iter().any(|(n, _)| n == &ca_id) {
+                    overlay_candidates.push((ca_id.clone(), crate::mesh::overlay_host(1)));
                 }
 
                 for (peer_node, overlay_ip) in overlay_candidates {
                     if peer_node == node_id_cfg {
                         continue;
                     }
-                    let base_port = match peer_node.as_str() {
-                        "nodeA" => 50051,
-                        "nodeB" => 50052,
-                        "nodeC" => 50053,
-                        _ => 50051,
-                    };
+                    // P0.7: was a name→port `match`, so any Guardian outside
+                    // the legacy cohort was probed on the CA's ports.
+                    let base_port = crate::startup::config::default_port_for(&peer_node);
                     let attest_port =
-                        crate::attestation_service::attestation_listener_port_for_base(base_port);
+                        crate::attestation_service::attestation_listener_port_for_node(&peer_node);
 
                     // Check if peer is reachable over overlay (either on gRPC base port or attestation port)
                     if !peer_is_reachable(&overlay_ip, attest_port).await
@@ -267,7 +267,7 @@ impl P2PDiscovery {
                 }
 
                 // 3. Scan SGX_LIGHTHOUSE_IP for nodeA if this node is not nodeA
-                if node_id_cfg != "nodeA" {
+                if !crate::mesh::is_ca() {
                     if let Ok(lh_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
                         if crate::dynamic_config::is_routable_ip(&lh_ip)
                             && (peer_is_reachable(&lh_ip, 50151).await

@@ -19,7 +19,11 @@ use std::sync::{Arc, Mutex as StdMutex};
 use uuid::Uuid;
 
 pub const DEFAULT_VC_DURATION_DAYS: i64 = 365;
-pub const DEFAULT_CIRCLE_ID: &str = "guardian-circle-alpha";
+/// The circle a credential is issued for when no profile is loaded.
+///
+/// P0.6: re-exported from `mesh::legacy` so the pre-Phase-0 circle name exists
+/// in exactly one place. Prefer `mesh::circle_id()`, which consults the profile.
+pub const DEFAULT_CIRCLE_ID: &str = crate::mesh::legacy::LEGACY_CIRCLE_ID;
 pub const DEVICE_KEY_DIR_ENV: &str = "SGX_GUARDIAN_DEVICE_KEY_DIR";
 pub const OWNER_DEFAULT_PERMISSIONS: &[&str] = &[
     "mesh:join",
@@ -211,10 +215,7 @@ pub fn issue_membership_vc_with_outcome(
     status_list.commit(km, &vm_ref)?;
 
     crate::audit::logger::log_audit(
-        std::env::args()
-            .nth(1)
-            .unwrap_or_else(|| "nodeA".to_string())
-            .as_str(),
+        crate::mesh::local_guardian_id().as_str(),
         crate::audit::event::AuditCategory::Vc,
         crate::audit::event::AuditSeverity::Info,
         crate::audit::event::AuditAction::Succeeded,
@@ -365,7 +366,7 @@ pub fn ensure_owner_vc(
             role: CredentialRole::Owner,
             permissions: default_permissions_for_role(CredentialRole::Owner),
             circle_id: DEFAULT_CIRCLE_ID,
-            node_hint: Some("nodeA".to_string()),
+            node_hint: Some(crate::mesh::local_guardian_id()),
             duration_days: None,
         },
     )?;
@@ -486,7 +487,7 @@ pub fn resolve_runtime_node_id() -> Option<String> {
 /// key never changes at runtime, so it's safe to build it once and share it.
 ///
 /// Keyed by the full resolved key path rather than node_id: tests reuse the
-/// same node_id (e.g. "nodeA") across isolated temp directories via
+/// same node_id across isolated temp directories via
 /// SGX_GUARDIAN_DEVICE_KEY_DIR, and caching by node_id alone would leak a
 /// KeyManager built for one test's directory into another's. The key path
 /// already encodes that directory, so it's the correct identity to cache on
@@ -587,7 +588,7 @@ pub fn ensure_circle_owner(
 }
 
 fn configured_ca_did() -> Result<String, VcError> {
-    subject_did_for_node("nodeA")
+    subject_did_for_node(&crate::mesh::ca_guardian_id())
 }
 
 fn find_local_self_authorizing_vc(

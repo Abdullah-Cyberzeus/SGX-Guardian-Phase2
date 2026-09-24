@@ -683,7 +683,7 @@ pub fn auto_detect_local_cidr_or_default() -> String {
         return format!("{}.{}.{}.0/24", octets[0], octets[1], octets[2]);
     }
 
-    "192.168.100.0/24".to_string()
+    crate::mesh::overlay_cidr_or_default()
 }
 
 /// `target` is considered a "subnet" if it contains a `/` AND the prefix is `< 32`.

@@ -33,11 +33,13 @@ pub const REGISTRY_MAX_HOST: u8 = 254; // Maximum .254
 /// Permanent IP allocation record for one node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeIpRecord {
-    /// Node name (e.g., "nodeA", "nodeB")
+    /// Guardian id (e.g., "us-hq-01", "edge-7")
     pub node_name: String,
-    /// Assigned overlay IP without CIDR (e.g., "192.168.100.1")
+    /// Assigned overlay IP without CIDR (e.g., "10.20.0.1" — a placeholder; the
+/// real value is inside the circle's own overlay subnet)
     pub overlay_ip: String,
-    /// Overlay IP with CIDR (e.g., "192.168.100.1/24")
+    /// Overlay IP with CIDR (e.g., "10.20.0.1/24" — a placeholder; the real
+/// value is inside the circle's own overlay subnet)
     pub overlay_ip_cidr: String,
     /// Is this the Circle owner/CA?
     pub is_owner: bool,

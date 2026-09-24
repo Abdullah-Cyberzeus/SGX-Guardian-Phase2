@@ -1,3 +1,4 @@
+pub mod bin;
 pub mod ca;
 pub mod cert_lifecycle;
 pub mod config;

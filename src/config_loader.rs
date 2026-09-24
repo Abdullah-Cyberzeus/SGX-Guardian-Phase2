@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fs;
 
@@ -105,6 +105,69 @@ pub struct NodeConfig {
     pub api: Option<ApiConfig>,
     #[serde(default)]
     pub vps: Option<CloudBrokerConfig>,
+    /// Explicit service ports (P0.7).
+    ///
+    /// Before Phase 0 every port was a `match` on the node's *name*, which is
+    /// what made the three-node limit literal: a Guardian named anything other
+    /// than nodeA/B/C collided with the CA's ports. Setting this block makes a
+    /// Guardian's ports a property of its configuration instead of its name, so
+    /// any number of Guardians can coexist — including several on one host.
+    ///
+    /// Absent, the loader falls back to the legacy name-derived map and then to
+    /// the documented defaults, so existing config files keep working unchanged.
+    #[serde(default)]
+    pub ports: Option<NodePorts>,
+}
+
+/// Per-Guardian service ports.
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+pub struct NodePorts {
+    /// mTLS gRPC (peer, ping, attestation handshake). Default 50051.
+    #[serde(default)]
+    pub grpc: Option<u16>,
+    /// Plaintext chat gRPC over the overlay. Default 50251.
+    #[serde(default)]
+    pub chat: Option<u16>,
+    /// Attestation listener. Defaults to `grpc + 100`, which is the
+    /// relationship the pre-Phase-0 code hardcoded.
+    #[serde(default)]
+    pub attest: Option<u16>,
+}
+
+impl NodePorts {
+    /// Resolves the attestation port, applying the `grpc + 100` convention when
+    /// only `grpc` is given.
+    pub fn attest_port(&self, resolved_grpc: u16) -> u16 {
+        self.attest.unwrap_or(
+            resolved_grpc.saturating_add(crate::mesh::legacy::ATTESTATION_PORT_OFFSET),
+        )
+    }
+}
+
+/// The gRPC, chat and attestation ports for `node_id`.
+///
+/// Resolution order, which is what makes ports name-independent (P0.7):
+///   1. the `ports:` block in that node's config file
+///   2. the legacy name-derived map, for config files that predate it
+///   3. the documented defaults
+///
+/// Step 2 is why a legacy nodeB keeps 50052/50252 with no config change, while
+/// a Guardian called `edge-7` gets 50051/50251 rather than inheriting a port
+/// from a name it merely resembles.
+pub fn resolve_ports(config: Option<&NodeConfig>, node_id: &str) -> (u16, u16, u16) {
+    let declared = config.and_then(|c| c.ports);
+    let legacy = crate::mesh::legacy::legacy_ports_for(node_id);
+
+    let grpc = declared
+        .and_then(|p| p.grpc)
+        .or_else(|| legacy.map(|(g, _)| g))
+        .unwrap_or(crate::mesh::legacy::DEFAULT_GRPC_PORT);
+    let chat = declared
+        .and_then(|p| p.chat)
+        .or_else(|| legacy.map(|(_, c)| c))
+        .unwrap_or(crate::mesh::legacy::DEFAULT_CHAT_PORT);
+    let attest = declared.unwrap_or_default().attest_port(grpc);
+    (grpc, chat, attest)
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -221,9 +284,10 @@ pub fn resolve_vps_config(node_id: &str) -> CloudBrokerConfig {
         }
     }
 
-    // Default overlay IP
+    // Default overlay IP (P0.6): the VPS lighthouse's well-known address
+    // within this circle's overlay.
     if config.vps_overlay_ip.is_none() {
-        config.vps_overlay_ip = Some("192.168.100.10".to_string());
+        config.vps_overlay_ip = Some(crate::mesh::overlay_host(10));
     }
 
     config

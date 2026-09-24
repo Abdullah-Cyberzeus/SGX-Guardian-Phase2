@@ -12,43 +12,68 @@ use crate::config_loader::{load_config, NodeConfig, RelayLimitsConfig};
 pub const FALLBACK_POLICY_YAML: &str =
     "---\npolicy_id: \"default\"\nversion: \"0.0.0\"\ndescription: \"Empty default\"\nrules: []\n";
 
-/// gRPC port for a node id when no configuration supplies one.
+/// gRPC port for a node id (P0.7).
+///
+/// This used to be a `match` on the name, which meant an unrecognised node id
+/// silently got nodeC's port. It now resolves through
+/// [`crate::config_loader::resolve_ports`]: the node's own `ports:` block,
+/// then the legacy name map for pre-P0.7 config files, then the default.
 pub fn default_port_for(node_id: &str) -> u16 {
-    match node_id {
-        "nodeA" => 50051,
-        "nodeB" => 50052,
-        _ => 50053,
-    }
+    port_set_for(node_id).0
 }
 
-/// The plaintext chat gRPC port. Unlike [`default_port_for`], an unknown node
-/// id falls back to nodeA's port rather than nodeC's — the chat service is
-/// reached over the authenticated Nebula overlay, and pointing an unrecognised
-/// node at the CA's port keeps a misconfigured member reachable.
+/// The plaintext chat gRPC port, resolved the same way as [`default_port_for`].
 pub fn chat_grpc_port(node_id: &str) -> u16 {
-    match node_id {
-        "nodeB" => 50252,
-        "nodeC" => 50253,
-        _ => 50251,
-    }
+    port_set_for(node_id).1
+}
+
+/// The attestation listener port, resolved the same way as [`default_port_for`].
+pub fn attest_port_for(node_id: &str) -> u16 {
+    port_set_for(node_id).2
+}
+
+/// `(grpc, chat, attest)` for `node_id`, reading that node's config file if
+/// there is one.
+///
+/// Reads from the production path set. Tests that need a sandbox should call
+/// [`port_set_for_with`] with their own [`GuardianPaths`].
+pub fn port_set_for(node_id: &str) -> (u16, u16, u16) {
+    port_set_for_with(&GuardianPaths::production(), node_id)
+}
+
+/// [`port_set_for`] against an explicit path set.
+pub fn port_set_for_with(paths: &GuardianPaths, node_id: &str) -> (u16, u16, u16) {
+    let config = [paths.node_config(node_id), paths.node_config_mirror(node_id)]
+        .into_iter()
+        .filter_map(|p| p.to_str().and_then(|p| load_config(p).ok()))
+        .next();
+    crate::config_loader::resolve_ports(config.as_ref(), node_id)
 }
 
 /// The last-resort configuration used when neither config path is readable.
 pub fn default_node_config(node_id: &str) -> NodeConfig {
     let suffix = node_id.strip_prefix("node").unwrap_or(node_id);
+    let (grpc, chat, attest) = crate::config_loader::resolve_ports(None, node_id);
     NodeConfig {
         node_id: node_id.to_string(),
         device_name: None,
         hostname: format!("guardian-node-{suffix}"),
         display_hostname: None,
         ip: "0.0.0.0".to_string(),
-        port: default_port_for(node_id),
+        port: grpc,
         public_key: format!("placeholder-key-{suffix}"),
         offline_mode: 1,
         metrics: None,
         relay: None,
         api: None,
         vps: None,
+        // P0.7: write the ports out explicitly rather than leaving the reader
+        // to re-derive them from the name later.
+        ports: Some(crate::config_loader::NodePorts {
+            grpc: Some(grpc),
+            chat: Some(chat),
+            attest: Some(attest),
+        }),
     }
 }
 
@@ -81,22 +106,31 @@ pub struct Cohort {
 
 impl Cohort {
     pub fn load(paths: &GuardianPaths) -> Self {
+        // NOTE (P0.6/P0.7): `Cohort` is still a three-slot struct, which is the
+        // last structural remnant of the fixed cohort. Ports and roles no longer
+        // come from these names, so a fourth Guardian runs correctly; it simply
+        // is not represented here. Replacing this with a dynamic peer set is
+        // Phase 1's `mesh::activation` work, where peers come from the overlay
+        // registry and DID documents rather than three config files.
+        let [a, b, c] = crate::mesh::legacy::LEGACY_COHORT;
         Self {
-            node_a: load_config_safe(paths, "nodeA"),
-            node_b: load_config_safe(paths, "nodeB"),
-            node_c: load_config_safe(paths, "nodeC"),
+            node_a: load_config_safe(paths, a),
+            node_b: load_config_safe(paths, b),
+            node_c: load_config_safe(paths, c),
         }
     }
 
     /// Relay limits for the node this process is running as. An unknown node
     /// id gets the conservative built-in limits rather than another node's.
     pub fn relay_limits_for(&self, node_id: &str) -> RelayLimitsConfig {
-        match node_id {
-            "nodeA" => self.node_a.relay_or_default(),
-            "nodeB" => self.node_b.relay_or_default(),
-            "nodeC" => self.node_c.relay_or_default(),
-            _ => RelayLimitsConfig::default(),
+        // Matches on the configs' own `node_id` rather than on hardcoded names,
+        // so a renamed cohort member still finds its own limits.
+        for candidate in [&self.node_a, &self.node_b, &self.node_c] {
+            if candidate.node_id == node_id {
+                return candidate.relay_or_default();
+            }
         }
+        RelayLimitsConfig::default()
     }
 
     /// Splits the cohort into (this node, its peers).
@@ -105,21 +139,16 @@ impl Cohort {
     /// rather than guess a role, since guessing could silently promote a node
     /// to CA.
     pub fn split(&self, node_id: &str) -> Option<(NodeConfig, Vec<NodeConfig>)> {
-        match node_id {
-            "nodeA" => Some((
-                self.node_a.clone(),
-                vec![self.node_b.clone(), self.node_c.clone()],
-            )),
-            "nodeB" => Some((
-                self.node_b.clone(),
-                vec![self.node_a.clone(), self.node_c.clone()],
-            )),
-            "nodeC" => Some((
-                self.node_c.clone(),
-                vec![self.node_a.clone(), self.node_b.clone()],
-            )),
-            _ => None,
-        }
+        let all = [&self.node_a, &self.node_b, &self.node_c];
+        let me = all.iter().position(|c| c.node_id == node_id)?;
+        Some((
+            all[me].clone(),
+            all.iter()
+                .enumerate()
+                .filter(|(i, _)| *i != me)
+                .map(|(_, c)| (*c).clone())
+                .collect(),
+        ))
     }
 }
 

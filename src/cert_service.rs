@@ -1,4 +1,4 @@
-//! Certificate Service (CA-side) — runs on nodeA ONLY.
+//! Certificate Service (CA-side) — runs on the circle CA ONLY.
 //!
 //! YAML-based manual approval + NebulaCA signing.
 
@@ -54,14 +54,27 @@ pub struct CertRequestYaml {
     pub public_key_fingerprint: String,
     pub requested_role: String,
     pub approve: ApprovalDecision,
+    /// P0.3: whether the request carried a valid pairing proof. Shown to the
+    /// operator so an unauthenticated (TOFU) request is visibly different from
+    /// one that proved possession of a CA-issued pairing challenge.
+    ///
+    /// `#[serde(default)]` so an approval YAML written by a pre-P0.3 CA and
+    /// left on disk across the upgrade still parses.
+    #[serde(default)]
+    pub pairing_verified: bool,
+    /// P0.1: whether the member supplied its own Nebula public key. `false`
+    /// means the legacy path minted a key here, which only happens while
+    /// `SGX_ALLOW_LEGACY_KEYGEN` is set.
+    #[serde(default)]
+    pub member_supplied_key: bool,
 }
 
-/// gRPC CertService implementation — registered on nodeA only.
+/// gRPC CertService implementation — registered on the circle CA only.
 pub struct MyCertService;
 
 /// Serializes concurrent certificate requests for the same node_id.
 ///
-/// nodeB's bootstrap client (cert_client.rs) retries on any transient error
+/// A member's bootstrap client (cert_client.rs) retries on any transient error
 /// with no request coalescing and no gRPC deadline. Without this lock, a
 /// retried request can race an in-flight one on the shared
 /// requests/<node>.yaml file: the retry can misidentify the first request's
@@ -81,12 +94,50 @@ fn node_lock(node_id: &str) -> Arc<AsyncMutex<()>> {
         .clone()
 }
 
+/// Environment flag that still permits pre-P0.1 clients, which ask the CA to
+/// generate their private key. Default **off**: the whole point of the hotfix
+/// is that a member's key is never created anywhere but on the member.
+///
+/// Operators upgrading a mixed fleet can set it for one release window while
+/// the last legacy members are updated, then remove it.
+pub const ALLOW_LEGACY_KEYGEN_ENV: &str = "SGX_ALLOW_LEGACY_KEYGEN";
+
+/// Whether this CA still accepts pre-P0.1 clients. Shared by the LAN
+/// (`cert_service`) and WAN (`cloud::ca_broker`) legs so one environment
+/// variable governs both; a CA that refuses legacy keygen on the LAN but
+/// accepts it over a public broker would be the worse of the two halves.
+pub fn legacy_keygen_allowed() -> bool {
+    crate::startup::env_true(ALLOW_LEGACY_KEYGEN_ENV)
+}
+
+/// The Guardian id this CA records in its audit trail.
+///
+/// P0.9: this was a hardcoded name at every call site, so a CA that had
+/// been renamed — or any CA in a second circle — wrote audit records
+/// attributing its actions to a Guardian that may not exist. Prefers the mesh
+/// profile, falls back to the process's own id.
+fn ca_actor() -> String {
+    crate::mesh::profile::guardian_id().unwrap_or_else(|_| crate::server::audited_node_id())
+}
+
+/// Removes an issued certificate and everything derived from it.
+///
+/// The `.key` removal is a no-op for certificates issued through the P0.1
+/// `-in-pub` path, because the CA never held one. It is kept for legacy
+/// certificates issued before the hotfix, where the CA does still have a key
+/// on disk that must not outlive the certificate it belongs to.
+async fn discard_issued_cert(cert_path: &str, legacy_key_path: &str, fp_path: &str) {
+    let _ = tokio::fs::remove_file(cert_path).await;
+    let _ = tokio::fs::remove_file(legacy_key_path).await;
+    let _ = tokio::fs::remove_file(fp_path).await;
+}
+
 async fn read_pa_pubkey_or_warn() -> Vec<u8> {
     match tokio::fs::read(PA_PUB_PATH).await {
         Ok(b) if !b.is_empty() => b,
         _ => {
             eprintln!(
-                "⚠️ PA signing public key missing at {} — member node will not receive a separate trust anchor. Run `sgx-pa-cli policy-sign-and-deploy` on nodeA to generate it.",
+                "⚠️ PA signing public key missing at {} — member node will not receive a separate trust anchor. Run `sgx-pa-cli policy-sign-and-deploy` on the CA to generate it.",
                 PA_PUB_PATH
             );
             Vec::new()
@@ -94,16 +145,146 @@ async fn read_pa_pubkey_or_warn() -> Vec<u8> {
     }
 }
 
+/// Verifies a member's pairing proof without consuming the challenge (P0.3/B6).
+///
+/// Before Phase 0 `pairing_proof` was carried all the way from the joiner
+/// (`main.rs`, from `SGX_GUARDIAN_PAIRING_CODE`) to this service and then
+/// simply ignored, so the plaintext bootstrap port authenticated nobody.
+///
+/// Three rules encoded here:
+///
+/// 1. **A proof that is present must be valid.** An invalid or expired one is
+///    a rejection, not a downgrade to unauthenticated — otherwise an attacker
+///    strips the field and gets the old behaviour back.
+/// 2. **An absent proof is not yet fatal.** Legacy members and the TOFU flow of
+///    §4.5 have none, and they still land in manual YAML approval. Phase 4
+///    makes a join code mandatory; making it mandatory here would break the
+///    existing cohort mid-hotfix.
+/// 3. **Verification does not consume.** See the call site.
+///
+/// Returns whether a valid proof was presented, which is surfaced to the
+/// approving operator in the request YAML.
+fn verify_pairing_proof(node_id: &str, encoded_proof: &str, actor: &str) -> Result<bool, Status> {
+    let encoded_proof = encoded_proof.trim();
+    if encoded_proof.is_empty() {
+        return Ok(false);
+    }
+
+    match crate::api::auth::pairing::verify_proof(encoded_proof) {
+        Ok(authorized) => {
+            // The proof carries the node id it was minted for. A valid proof
+            // for `nodeB` must not authorise a certificate for `nodeC`.
+            if authorized.node_id != node_id {
+                log_audit(
+                    actor,
+                    AuditCategory::Network,
+                    AuditSeverity::Critical,
+                    AuditAction::Failed,
+                    &format!(
+                        "Rejected certificate request from {}: pairing proof was issued for {}",
+                        node_id, authorized.node_id
+                    ),
+                );
+                return Err(Status::permission_denied(
+                    "pairing proof does not match the requesting node",
+                ));
+            }
+            println!("🔐 Pairing proof verified for {}", node_id);
+            log_audit(
+                actor,
+                AuditCategory::Network,
+                AuditSeverity::Info,
+                AuditAction::Succeeded,
+                &format!("Pairing proof verified for {}", node_id),
+            );
+            Ok(true)
+        }
+        Err(e) => {
+            log_audit(
+                actor,
+                AuditCategory::Network,
+                AuditSeverity::Critical,
+                AuditAction::Failed,
+                &format!(
+                    "Rejected certificate request from {}: invalid pairing proof: {}",
+                    node_id, e
+                ),
+            );
+            Err(Status::permission_denied(format!(
+                "pairing proof rejected: {}",
+                e
+            )))
+        }
+    }
+}
+
+/// Consumes the pairing challenge once the certificate has actually been
+/// issued (P0.3).
+///
+/// Deferred to this point so a transient failure earlier in the request — a
+/// dropped connection, a signing error — leaves the challenge usable for the
+/// retry that `cert_client` will make. Best-effort: a certificate has already
+/// been signed by the time this runs, so a bookkeeping failure must not turn
+/// into a failed response.
+async fn consume_pairing_challenge(node_id: &str, encoded_proof: &str, actor: &str) {
+    let encoded_proof = encoded_proof.trim();
+    if encoded_proof.is_empty() {
+        return;
+    }
+    let Some(stores) = crate::api::auth::store::global_admin_stores() else {
+        // The admin stores are installed before the bootstrap server starts,
+        // so this means the CA is shutting down or mis-wired.
+        eprintln!("⚠️ Admin stores unavailable — pairing challenge for {node_id} not consumed");
+        return;
+    };
+    match crate::api::auth::pairing::authorize_pairing_proof(
+        stores.as_ref(),
+        encoded_proof,
+        crate::api::auth::pairing::PairingUsage::Bootstrap,
+    )
+    .await
+    {
+        Ok(_) => log_audit(
+            actor,
+            AuditCategory::Network,
+            AuditSeverity::Info,
+            AuditAction::Succeeded,
+            &format!("Pairing challenge consumed for {}", node_id),
+        ),
+        Err(e) => eprintln!(
+            "⚠️ Could not consume the pairing challenge for {node_id} after issuing its \
+             certificate: {e}"
+        ),
+    }
+}
+
+/// Issues the circle-membership credential for `node_id`.
+///
+/// P0.10: the issuing key and the Owner-vs-Member decision used to be selected
+/// by comparing against a hardcoded CA name. That made **credential
+/// authority** a function of a Guardian's name: rename the CA, or stand up a
+/// second circle, and the wrong key signs — or a member is handed Owner
+/// permissions. Both now derive from the mesh profile: the issuer is whichever
+/// Guardian is running this CA, and only a request from that same Guardian is
+/// self-issuance.
 fn issue_member_vc(node_id: &str) -> Result<crate::vc::credential::VerifiableCredential, Status> {
     let issuer = crate::did::DidRecord::load(crate::did::DEFAULT_DID_PATH)
         .map_err(|e| Status::internal(format!("CA DID load: {}", e)))?;
-    let km = crate::vc::issue::load_runtime_key_manager("nodeA")
+    let ca_id = ca_actor();
+    let km = crate::vc::issue::load_runtime_key_manager(&ca_id)
         .map_err(|e| Status::internal(format!("VC key manager: {}", e)))?;
-    let subject_did = if node_id == "nodeA" {
+    let is_self_issuance = node_id == ca_id;
+    let subject_did = if is_self_issuance {
         issuer.did.clone()
     } else {
         crate::vc::issue::subject_did_for_node(node_id)
             .map_err(|e| Status::internal(format!("VC subject DID: {}", e)))?
+    };
+
+    let role = if is_self_issuance {
+        crate::vc::credential::CredentialRole::Owner
+    } else {
+        crate::vc::credential::CredentialRole::Member
     };
 
     match crate::vc::issue::issue_membership_vc_with_outcome(
@@ -111,24 +292,16 @@ fn issue_member_vc(node_id: &str) -> Result<crate::vc::credential::VerifiableCre
         &km,
         crate::vc::issue::IssueRequest {
             subject_did: &subject_did,
-            role: if node_id == "nodeA" {
-                crate::vc::credential::CredentialRole::Owner
-            } else {
-                crate::vc::credential::CredentialRole::Member
-            },
-            permissions: crate::vc::issue::default_permissions_for_role(if node_id == "nodeA" {
-                crate::vc::credential::CredentialRole::Owner
-            } else {
-                crate::vc::credential::CredentialRole::Member
-            }),
-            circle_id: crate::vc::issue::DEFAULT_CIRCLE_ID,
+            role: role.clone(),
+            permissions: crate::vc::issue::default_permissions_for_role(role),
+            circle_id: &crate::mesh::profile::circle_id_or(crate::vc::issue::DEFAULT_CIRCLE_ID),
             node_hint: Some(node_id.to_string()),
             duration_days: None,
         },
     ) {
         Ok(crate::vc::issue::IssueMembershipOutcome::ReusedExisting { vc }) => {
             log_event(
-                "nodeA",
+                &ca_id,
                 &format!(
                     "VC already exists for subject DID — reused existing credential ({})",
                     vc.id
@@ -142,9 +315,9 @@ fn issue_member_vc(node_id: &str) -> Result<crate::vc::credential::VerifiableCre
 }
 
 fn cert_contains_overlay_ip(cert_path: &str, expected_ip_cidr: &str) -> bool {
-    let output = std::process::Command::new("nebula-cert")
-        .args(["print", "-path", cert_path])
-        .output();
+    let output = crate::nebula::bin::nebula_cert_command()
+        .map_err(std::io::Error::from)
+        .and_then(|mut c| c.args(["print", "-path", cert_path]).output());
 
     match output {
         Ok(out) if out.status.success() => {
@@ -219,31 +392,31 @@ fn ensure_nodea_relay_entries(
     relay_reg: &mut RelayRegistry,
     overlay_ip: &str,
 ) {
-    let node_a_endpoint = resolve_member_lighthouse_endpoint("nodeA");
-    let (node_a_max_peers, node_a_max_bw) = relay_limits_for_node("nodeA");
+    let node_a_endpoint = resolve_member_lighthouse_endpoint(&crate::mesh::ca_guardian_id());
+    let (node_a_max_peers, node_a_max_bw) = relay_limits_for_node(&crate::mesh::ca_guardian_id());
 
-    lh_reg.upsert_node("nodeA", overlay_ip, &node_a_endpoint, true, true);
-    let _ = lh_reg.set_lighthouse_role("nodeA", true);
-    let _ = lh_reg.set_relay_role("nodeA", true);
-    lh_reg.mark_active("nodeA");
+    lh_reg.upsert_node(&crate::mesh::ca_guardian_id(), overlay_ip, &node_a_endpoint, true, true);
+    let _ = lh_reg.set_lighthouse_role(&crate::mesh::ca_guardian_id(), true);
+    let _ = lh_reg.set_relay_role(&crate::mesh::ca_guardian_id(), true);
+    lh_reg.mark_active(&crate::mesh::ca_guardian_id());
 
     relay_reg.add_relay(
-        "nodeA",
+        &crate::mesh::ca_guardian_id(),
         overlay_ip,
         &node_a_endpoint,
         node_a_max_peers,
         node_a_max_bw,
         true,
     );
-    relay_reg.mark_active("nodeA");
+    relay_reg.mark_active(&crate::mesh::ca_guardian_id());
 
     // Also ensure VPS Cloud Lighthouse is preserved if configured
-    let vps_cfg = crate::config_loader::resolve_vps_config("nodeA");
+    let vps_cfg = crate::config_loader::resolve_vps_config(&crate::mesh::ca_guardian_id());
     if let Some(vps_pub_ip) = vps_cfg.vps_public_ip {
         if !vps_pub_ip.trim().is_empty() {
             let vps_ovl_ip = vps_cfg
                 .vps_overlay_ip
-                .unwrap_or_else(|| "192.168.100.10".to_string());
+                .unwrap_or_else(|| crate::mesh::overlay_host(10));
             let vps_endpoint = format!("{}:4242", vps_pub_ip.trim());
             lh_reg.upsert_node("vps-lighthouse", &vps_ovl_ip, &vps_endpoint, true, true);
             lh_reg.mark_active("vps-lighthouse");
@@ -283,27 +456,92 @@ impl CertService for MyCertService {
             (false, true) => "relay",
             (false, false) => "member",
         };
+        let actor = ca_actor();
 
         // ── 1. Log receipt ──────────────────────────────────────────
         println!("Certificate request received from {}", node_id);
         println!("  Node requested role: {}", requested_role);
         log_event(
-            "nodeA",
+            &actor,
             &format!("Certificate request received from {}", node_id),
         );
         log_audit(
-            "nodeA",
+            &actor,
             AuditCategory::Network,
             AuditSeverity::Info,
             AuditAction::Started,
             &format!("Certificate request received from {}", node_id),
         );
 
+        // ── 1a. P0.1/B1: which signing path is this? ────────────────
+        //
+        // A member that sent its own Nebula public key gets `-in-pub` signing
+        // and no private key is ever created here. A member that did not is a
+        // pre-P0.1 client asking us to mint its identity for it, which is the
+        // vulnerability this phase removes — refused unless an operator has
+        // explicitly opened the upgrade window.
+        let nebula_public_key = {
+            let supplied = req.nebula_public_key_pem.trim();
+            if supplied.is_empty() {
+                if !legacy_keygen_allowed() {
+                    log_audit(
+                        &actor,
+                        AuditCategory::Network,
+                        AuditSeverity::Warning,
+                        AuditAction::Failed,
+                        &format!(
+                            "Rejected certificate request from {}: no Nebula public key (legacy CA-side keygen is disabled)",
+                            node_id
+                        ),
+                    );
+                    return Err(Status::failed_precondition(format!(
+                        "{} did not supply a Nebula public key. CA-side key generation is \
+                         disabled — upgrade the Guardian, or set {}=1 on the CA for one \
+                         migration window.",
+                        node_id, ALLOW_LEGACY_KEYGEN_ENV
+                    )));
+                }
+                eprintln!(
+                    "⚠️ {} requested legacy CA-side key generation ({} is enabled). \
+                     Its private key will be created here and transmitted — upgrade it.",
+                    node_id, ALLOW_LEGACY_KEYGEN_ENV
+                );
+                log_audit(
+                    &actor,
+                    AuditCategory::Network,
+                    AuditSeverity::Warning,
+                    AuditAction::Started,
+                    &format!("Legacy CA-side key generation used for {}", node_id),
+                );
+                None
+            } else {
+                Some(supplied.to_string())
+            }
+        };
+
+        // ── 1b. P0.3/B6: check the pairing proof, if one was sent ───
+        //
+        // The proof was previously accepted and never verified, so `:50061`
+        // trusted any caller that could reach it. Verification here is
+        // signature- and expiry-only on purpose: `authorize_pairing_proof`
+        // *consumes* the challenge, and `cert_client` retries on any transient
+        // error, so consuming it now would make the second attempt fail with
+        // "already used for bootstrap" and permanently strand the node. The
+        // challenge is consumed after the certificate is signed instead.
+        let pairing_verified = verify_pairing_proof(&node_id, &req.pairing_proof, &actor)?;
+
         // ── 2. Idempotency: cert already exists? ────────────────────
         let cert_path = format!("{}/nodes/{}.crt", NEBULA_BASE_DIR, node_id);
         let key_path = format!("{}/nodes/{}.key", NEBULA_BASE_DIR, node_id);
 
-        if Path::new(&cert_path).exists() && Path::new(&key_path).exists() {
+        // P0.1a: this fast-path used to require `key_path` too. Once P0.1
+        // stopped the CA writing member keys that condition could never hold
+        // again, so every retry fell through to a fresh enrollment: a rewritten
+        // approval YAML and a block of up to APPROVAL_TIMEOUT_SECS (1 h) for a
+        // node that already had a valid certificate. The certificate plus the
+        // recorded public-key fingerprint is the complete evidence we need —
+        // the private key was never part of the check, only of the response.
+        if Path::new(&cert_path).exists() {
             // Idempotency with safety:
             // if existing cert IP doesn't match requested overlay IP, regenerate.
             let requested_overlay_ip = req.overlay_ip.clone();
@@ -393,18 +631,14 @@ impl CertService for MyCertService {
                     "⚠️ Existing cert IP mismatch for {} (expected {}). Regenerating cert.",
                     node_id, requested_overlay_ip
                 );
-                let _ = tokio::fs::remove_file(&cert_path).await;
-                let _ = tokio::fs::remove_file(&key_path).await;
-                let _ = tokio::fs::remove_file(&fp_path).await;
+                discard_issued_cert(&cert_path, &key_path, &fp_path).await;
             } else {
                 eprintln!(
                     "⚠️ Existing cert for {} was issued to a different public key — \
                      treating as a new identity and regenerating cert.",
                     node_id
                 );
-                let _ = tokio::fs::remove_file(&cert_path).await;
-                let _ = tokio::fs::remove_file(&key_path).await;
-                let _ = tokio::fs::remove_file(&fp_path).await;
+                discard_issued_cert(&cert_path, &key_path, &fp_path).await;
             }
         }
 
@@ -449,7 +683,7 @@ impl CertService for MyCertService {
                         );
 
                         log_event(
-                            "nodeA",
+                            &ca_actor(),
                             &format!(
                                 "Deleting stale approved YAML for {} before new request",
                                 node_id
@@ -466,7 +700,7 @@ impl CertService for MyCertService {
                         );
 
                         log_event(
-                            "nodeA",
+                            &ca_actor(),
                             &format!("Existing pending YAML for {} — polling continues", node_id),
                         );
                     }
@@ -489,6 +723,8 @@ impl CertService for MyCertService {
                 public_key_fingerprint: fingerprint,
                 requested_role: requested_role.to_string(),
                 approve: ApprovalDecision::False,
+                pairing_verified,
+                member_supplied_key: nebula_public_key.is_some(),
             };
 
             let yaml_string = serde_yaml::to_string(&yaml_data)
@@ -502,6 +738,14 @@ impl CertService for MyCertService {
             // Terminal instructions for admin
             println!();
             println!("Approval file created: {}", yaml_path);
+            if pairing_verified {
+                println!("  🔐 pairing proof: VERIFIED");
+            } else {
+                println!("  ⚠️  pairing proof: none — verify this Guardian out of band");
+            }
+            if nebula_public_key.is_none() {
+                println!("  ⚠️  legacy request: this CA will generate the member's private key");
+            }
             println!();
             println!("Edit the file and set 'approve' to ONE of:");
             println!("  approve: false        (reject the request)");
@@ -524,7 +768,7 @@ impl CertService for MyCertService {
                     node_id, APPROVAL_TIMEOUT_SECS
                 );
                 log_audit(
-                    "nodeA",
+                    &ca_actor(),
                     AuditCategory::Network,
                     AuditSeverity::Warning,
                     AuditAction::Failed,
@@ -558,7 +802,7 @@ impl CertService for MyCertService {
                         ApprovalDecision::Member => {
                             println!("Approval detected for {} (role: member)", node_id);
                             log_event(
-                                "nodeA",
+                                &ca_actor(),
                                 &format!("Certificate approval detected for {}", node_id),
                             );
                             break (false, false);
@@ -566,7 +810,7 @@ impl CertService for MyCertService {
                         ApprovalDecision::Lighthouse => {
                             println!("Approval detected for {} (role: lighthouse)", node_id);
                             log_event(
-                                "nodeA",
+                                &ca_actor(),
                                 &format!("Certificate approval detected for {}", node_id),
                             );
                             break (true, false);
@@ -574,7 +818,7 @@ impl CertService for MyCertService {
                         ApprovalDecision::Relay => {
                             println!("Approval detected for {} (role: relay)", node_id);
                             log_event(
-                                "nodeA",
+                                &ca_actor(),
                                 &format!("Certificate approval detected for {}", node_id),
                             );
                             break (false, true);
@@ -582,7 +826,7 @@ impl CertService for MyCertService {
                         ApprovalDecision::LhRelay => {
                             println!("Approval detected for {} (role: lh_relay)", node_id);
                             log_event(
-                                "nodeA",
+                                &ca_actor(),
                                 &format!("Certificate approval detected for {}", node_id),
                             );
                             break (true, true);
@@ -603,17 +847,21 @@ impl CertService for MyCertService {
         // IMPORTANT:
         // Use the same OverlayRegistry that registry_sync uses.
         // This keeps cert IP assignment consistent with previously assigned
-        // member IPs and prevents nodeB/nodeC swap during approval races.
+        // member IPs and prevents members swapping IPs during approval races.
         let mut reg = OverlayRegistry::load_or_create(
             REGISTRY_PATH,
-            "guardian-circle-alpha",
-            "192.168.100",
-            "nodeA",
+            &crate::mesh::circle_id(),
+            &crate::mesh::overlay_prefix(),
+            &crate::mesh::ca_guardian_id(),
         );
 
         let overlay_ip = if let Some(existing) = reg.get_ip_cidr(&node_id) {
             existing.to_string()
-        } else if !req.overlay_ip.is_empty() && req.overlay_ip.starts_with("192.168.100.") {
+        } else if !req.overlay_ip.is_empty()
+            && req
+                .overlay_ip
+                .starts_with(&format!("{}.", crate::mesh::overlay_prefix()))
+        {
             reg.set_ip(&node_id, &req.overlay_ip)
                 .map_err(|e| Status::internal(format!("Registry set failed: {}", e)))?;
             req.overlay_ip.clone()
@@ -647,7 +895,7 @@ impl CertService for MyCertService {
                     node_id, e
                 );
                 log_event(
-                    "nodeA",
+                    &ca_actor(),
                     &format!("Member VC issuance failed for {}: {}", node_id, e),
                 );
                 // Non-empty placeholder so validate_circle_membership() still
@@ -658,7 +906,7 @@ impl CertService for MyCertService {
 
         let membership = CircleMembership {
             node_name: node_id.clone(),
-            circle_id: "guardian-circle-alpha".to_string(),
+            circle_id: crate::mesh::circle_id(),
             vc_hash,
             is_valid: true,
         };
@@ -669,12 +917,20 @@ impl CertService for MyCertService {
         // Synchronous signing path (harness parity): cert issuance keeps the
         // subprocess on the caller context so timing matches the pre-fix field
         // builds measured by the board matrix. Do not migrate to tokio::process.
-        let sign_result = NebulaCA::issue_node_cert(&nebula_base, &membership, &ip_clone);
+        //
+        // P0.1/B1: when the member supplied its own Nebula public key we sign
+        // it with `-in-pub`, so no private key is ever created on the CA. The
+        // legacy branch below still mints one, and is gated by P0.2.
+        let sign_result = if let Some(member_pub) = nebula_public_key.as_deref() {
+            NebulaCA::issue_node_cert_from_pub(&nebula_base, &membership, &ip_clone, member_pub)
+        } else {
+            NebulaCA::issue_node_cert(&nebula_base, &membership, &ip_clone)
+        };
 
         if let Err(e) = sign_result {
             eprintln!("Certificate signing failed for {}: {}", node_id, e);
             log_audit(
-                "nodeA",
+                &ca_actor(),
                 AuditCategory::Network,
                 AuditSeverity::Critical,
                 AuditAction::Failed,
@@ -706,22 +962,22 @@ impl CertService for MyCertService {
         let lh_path = format!("{}/lighthouse_registry.json", NEBULA_BASE_DIR);
         let mut lh_reg = LighthouseRegistry::load_or_create(
             &lh_path,
-            "guardian-circle-alpha",
-            "nodeA",
-            "192.168.100.1",
+            &crate::mesh::circle_id(),
+            &crate::mesh::ca_guardian_id(),
+            &crate::mesh::overlay_host(1),
             "0.0.0.0:4242",
         );
         let member_overlay = overlay_ip.split('/').next().unwrap_or("").to_string();
         let node_a_overlay = reg
-            .get_ip("nodeA")
+            .get_ip(&crate::mesh::ca_guardian_id())
             .map(|s| s.to_string())
-            .unwrap_or_else(|| "192.168.100.1".to_string());
+            .unwrap_or_else(|| crate::mesh::overlay_host(1));
         let member_endpoint = resolve_member_lighthouse_endpoint(&node_id);
 
         // Always keep nodeA anchored as lighthouse+relay, even when additional relay
         // nodes are approved later.
         let mut relay_reg =
-            RelayRegistry::load_or_create(RELAY_REGISTRY_PATH, "guardian-circle-alpha");
+            RelayRegistry::load_or_create(RELAY_REGISTRY_PATH, &crate::mesh::circle_id());
         ensure_nodea_relay_entries(&mut lh_reg, &mut relay_reg, &node_a_overlay);
 
         // Always keep an endpoint record for approved nodes (member/lighthouse/relay).
@@ -772,9 +1028,17 @@ impl CertService for MyCertService {
             .await
             .map_err(|e| Status::internal(format!("Failed to read signed cert: {}", e)))?;
 
-        let node_key = tokio::fs::read_to_string(&key_path)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to read node key: {}", e)))?;
+        // P0.1/B1: on the `-in-pub` path no private key exists on the CA, and
+        // the member already holds its own. Returning an empty field is the
+        // point of the hotfix, not a degraded case. Only the legacy path,
+        // which P0.2 gates, still has a key to read.
+        let node_key = if nebula_public_key.is_some() {
+            String::new()
+        } else {
+            tokio::fs::read_to_string(&key_path)
+                .await
+                .map_err(|e| Status::internal(format!("Failed to read node key: {}", e)))?
+        };
 
         let ca_cert_pem = tokio::fs::read_to_string(format!("{}/ca/ca.crt", NEBULA_BASE_DIR))
             .await
@@ -796,11 +1060,16 @@ impl CertService for MyCertService {
         let signing_pubkey_der = read_pa_pubkey_or_warn().await;
 
         println!("Certificate approved and signed for {}", node_id);
+        // P0.3: the certificate exists now, so the single-use pairing challenge
+        // has genuinely been spent. Doing this earlier would burn it on a
+        // request that later failed, and `cert_client`'s retry could never
+        // succeed.
+        consume_pairing_challenge(&node_id, &req.pairing_proof, &actor).await;
         // Remove YAML after successful signing
         let _ = tokio::fs::remove_file(&yaml_path).await;
         println!("Approval YAML removed for {}", node_id);
         log_audit(
-            "nodeA",
+            &actor,
             AuditCategory::Network,
             AuditSeverity::Info,
             AuditAction::Succeeded,

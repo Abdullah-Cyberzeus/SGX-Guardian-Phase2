@@ -11,7 +11,9 @@ use std::sync::Arc;
 
 const DEFAULT_NEBULA_DIR: &str = "/var/lib/sgx-guardian/nebula";
 const NEBULA_DIR_ENV: &str = "SGX_GUARDIAN_NEBULA_DIR";
-const DEFAULT_CIRCLE_ID: &str = "guardian-circle-alpha";
+/// P0.6: the pre-Phase-0 circle name, re-exported rather than repeated.
+/// Prefer `crate::mesh::circle_id()`.
+const DEFAULT_CIRCLE_ID: &str = crate::mesh::legacy::LEGACY_CIRCLE_ID;
 const DEFAULT_RELAY_MAX_PEERS: u32 = 5;
 const DEFAULT_RELAY_MAX_BANDWIDTH_MBPS: u32 = 10;
 const DEFAULT_RELAY_ALERT_THRESHOLD_PCT: u8 = 80;

@@ -1015,11 +1015,11 @@ fn resolve_ca_host() -> Option<String> {
                 if let Ok(reg) = crate::nebula::overlay_registry::OverlayRegistry::load(
                     crate::nebula::registry_sync::REGISTRY_PATH,
                 ) {
-                    if let Some(owner_ip) = reg.get_ip("nodeA") {
+                    if let Some(owner_ip) = reg.get_ip(&crate::mesh::ca_guardian_id()) {
                         return Some(owner_ip.to_string());
                     }
                 }
-                return Some("192.168.100.1".to_string());
+                return Some(crate::mesh::overlay_host(1));
             }
             for path in [
                 PathBuf::from("/etc/sgx-guardian/config/nodeA.yaml"),
