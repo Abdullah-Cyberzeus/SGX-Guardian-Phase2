@@ -5,6 +5,7 @@ import { useCommunicationPeers, useGuardianInfo } from "../../app/hooks/useApiDa
 import { useAuth } from "../../app/contexts/AuthContext";
 import { useContactNames } from "../../app/contexts/ContactNameContext";
 import { isMemberRole } from "../../app/utils/authorization";
+import { isTerminalLocalGroupState } from "./groupCallState";
 
 function StreamTile({ peerId, stream }: { peerId: string; stream?: MediaStream }) {
   const ref = useRef<HTMLVideoElement>(null);
@@ -39,9 +40,9 @@ export function GroupCallingScreen({ localDevice: fallbackLocalDevice }: { local
   const localDeviceName = isMemberRole(session?.user.role)
     ? session?.user.name || rosterNameFor(localDevice || "", communicationPeers || undefined) || localDevice
     : guardianInfo?.deviceId || guardianInfo?.name || rosterNameFor(localDevice || "", communicationPeers || undefined) || localDevice;
-  if (!group || incoming || !localDevice) return null;
+  if (!group || group.state === "ended" || incoming || !localDevice) return null;
   const local = group.participants[localDevice];
-  if (!local || local.state === "kicked" || local.state === "declined") return null;
+  if (!local || isTerminalLocalGroupState(local.state)) return null;
   const host = group.host_device_id === localDevice;
   const supportsVideo = group.requested_media.includes("video");
   const endOrLeave = () => (host ? endGroup() : leaveGroup()).catch(() => undefined);

@@ -7,6 +7,7 @@ import type {
 } from "./call.types";
 import { GroupWebRtcService } from "./group-webrtc.service";
 import callHistoryService from "../../app/services/callHistoryService";
+import { selectActiveGroup } from "./groupCallState";
 
 interface GroupCallValue {
   group?: GroupSession; incoming?: GroupSession; localStream?: MediaStream;
@@ -43,7 +44,11 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
   const connectedPeers = useRef(new Set<string>());
   const mediaReadySent = useRef(false);
   const lastGroup = useRef<GroupSession | undefined>(undefined);
-  const locallyEndedGroups = useRef(new Set<string>());
+  // Once this browser leaves/declines/ends a call, never let a late active-call
+  // poll resurrect that same session and restart camera/microphone acquisition.
+  const locallyClosedGroups = useRef(new Set<string>());
+  const refreshSequence = useRef(0);
+  const latestAppliedRefresh = useRef(0);
   const startingGroup = useRef(false);
   const localStreamRef = useRef<MediaStream | undefined>(undefined);
   const recoveringLocalMedia = useRef(false);
@@ -63,11 +68,15 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
   }, []);
 
   const refresh = useCallback(async () => {
+    const requestSequence = ++refreshSequence.current;
     const response = await groupCallsApi.active();
+    // Polls can overlap. A response older than one already applied must not
+    // overwrite newer call state, but a slow newest response is still valid.
+    if (requestSequence < latestAppliedRefresh.current) return;
+    latestAppliedRefresh.current = requestSequence;
     const localId = response.local_device_id || localDevice;
     setGroupLocalDevice(localId);
-    const candidate = response.groups[0];
-    const next = candidate && !locallyEndedGroups.current.has(candidate.group_id) ? candidate : undefined;
+    const next = selectActiveGroup(response.groups, localId, locallyClosedGroups.current);
     if (next) lastGroup.current = next;
     if (!next && lastGroup.current && localId) {
       callHistoryService.recordGroup(lastGroup.current, localId);
@@ -76,10 +85,10 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     setGroup(next);
     if (!next) {
       if (startingGroup.current) return;
-      rtc.current.close(); localStreamRef.current = undefined; setLocalStream(undefined); setRemoteStreams({}); return;
+      rtc.current.close(); localStreamRef.current = undefined; setLocalStream(undefined); setRemoteStreams({}); setError(undefined); return;
     }
     const local = localId ? next.participants[localId] : undefined;
-    if (!local || ["kicked", "declined"].includes(local.state)) {
+    if (!local || ["kicked", "declined", "left"].includes(local.state)) {
       rtc.current.close(); localStreamRef.current = undefined; setLocalStream(undefined); setRemoteStreams({}); return;
     }
     if (local.state === "joined" && localStreamRef.current && rtc.current.isReadyForPeers()) {
@@ -248,32 +257,55 @@ export function GroupCallProvider({ children, localDevice }: { children: ReactNo
     setGroup(await groupCallsApi.join(group.group_id));
   };
   const declineGroup = async () => {
-    if (!group) return; const ended = await groupCallsApi.decline(group.group_id); if (effectiveLocalDevice) callHistoryService.recordGroup(ended, effectiveLocalDevice, "declined"); lastGroup.current = undefined; setGroup(undefined);
+    if (!group) return;
+    const groupId = group.group_id;
+    locallyClosedGroups.current.add(groupId);
+    latestAppliedRefresh.current = ++refreshSequence.current;
+    try {
+      const ended = await groupCallsApi.decline(groupId);
+      if (effectiveLocalDevice) callHistoryService.recordGroup(ended, effectiveLocalDevice, "declined");
+      lastGroup.current = undefined;
+      setError(undefined);
+      setGroup(undefined);
+    } catch (reason) {
+      locallyClosedGroups.current.delete(groupId);
+      throw reason;
+    }
   };
   const leaveGroup = async () => {
     if (!group) return;
-    const left = await groupCallsApi.leave(group.group_id);
-    if (effectiveLocalDevice) callHistoryService.recordGroup(left, effectiveLocalDevice);
-    lastGroup.current = undefined;
-    rtc.current.close();
-    localStreamRef.current = undefined;
-    connectedPeers.current.clear();
-    mediaReadySent.current = false;
-    setLocalStream(undefined);
-    setRemoteStreams({});
-    setGroup(undefined);
+    const groupId = group.group_id;
+    locallyClosedGroups.current.add(groupId);
+    latestAppliedRefresh.current = ++refreshSequence.current;
+    try {
+      const left = await groupCallsApi.leave(groupId);
+      if (effectiveLocalDevice) callHistoryService.recordGroup(left, effectiveLocalDevice);
+      lastGroup.current = undefined;
+      rtc.current.close();
+      localStreamRef.current = undefined;
+      connectedPeers.current.clear();
+      mediaReadySent.current = false;
+      setLocalStream(undefined);
+      setRemoteStreams({});
+      setError(undefined);
+      setGroup(undefined);
+    } catch (reason) {
+      locallyClosedGroups.current.delete(groupId);
+      throw reason;
+    }
   };
   const endGroup = async () => {
     if (!group) return;
     const groupId = group.group_id;
-    locallyEndedGroups.current.add(groupId);
+    locallyClosedGroups.current.add(groupId);
+    latestAppliedRefresh.current = ++refreshSequence.current;
     try {
       const ended = await groupCallsApi.end(groupId);
       if (effectiveLocalDevice) callHistoryService.recordGroup(ended, effectiveLocalDevice);
       lastGroup.current = undefined;
-      rtc.current.close(); localStreamRef.current = undefined; setLocalStream(undefined); setRemoteStreams({}); setGroup(undefined);
+      rtc.current.close(); localStreamRef.current = undefined; setLocalStream(undefined); setRemoteStreams({}); setError(undefined); setGroup(undefined);
     } catch (reason) {
-      locallyEndedGroups.current.delete(groupId);
+      locallyClosedGroups.current.delete(groupId);
       throw reason;
     }
   };
