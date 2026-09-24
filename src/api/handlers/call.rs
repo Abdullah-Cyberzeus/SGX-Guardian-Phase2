@@ -198,6 +198,11 @@ fn ensure_local_guardian_did_active() -> Result<(), ErrorResponse> {
     Ok(())
 }
 
+fn is_local_guardian_call_target(state: &AppState, target: &str) -> bool {
+    let target = target.trim();
+    target.eq_ignore_ascii_case(&state.node_id) || target.eq_ignore_ascii_case(&state.device_did)
+}
+
 pub(crate) fn browser_call_actor_id(
     state: &AppState,
     session: &Option<Extension<AuthenticatedSession>>,
@@ -387,6 +392,8 @@ pub async fn initiate_browser_call(
         .target_peer_id
         .trim()
         .eq_ignore_ascii_case(&actor_id)
+        || (actor_id == state.node_id
+            && is_local_guardian_call_target(&state, &request.target_peer_id))
     {
         return (
             StatusCode::BAD_REQUEST,
@@ -396,12 +403,12 @@ pub async fn initiate_browser_call(
         )
             .into_response();
     }
-    if request.target_peer_id == state.node_id {
+    if is_local_guardian_call_target(&state, &request.target_peer_id) {
         if actor_id != state.node_id {
             return initiate_local_browser_call(
-                state,
+                state.clone(),
                 actor_id,
-                request.target_peer_id,
+                state.node_id.clone(),
                 request.media,
             )
             .await
@@ -2147,6 +2154,19 @@ mod tests {
             .get_active_sessions()
             .await
             .is_empty());
+    }
+
+    #[test]
+    fn local_guardian_call_target_accepts_node_id_and_guardian_did() {
+        let (_temp, state) = test_state("nodeA");
+
+        assert!(is_local_guardian_call_target(&state, "nodeA"));
+        assert!(is_local_guardian_call_target(&state, &state.device_did));
+        assert!(is_local_guardian_call_target(
+            &state,
+            &format!("  {}  ", state.device_did),
+        ));
+        assert!(!is_local_guardian_call_target(&state, "nodeB"));
     }
 
     #[tokio::test]

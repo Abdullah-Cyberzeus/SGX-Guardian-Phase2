@@ -197,7 +197,7 @@ export function FileDetailPanel({ file, canManage = true, onRemoved, onOpenFolde
   };
 
   return (
-    <div className="flex h-full w-full flex-col gap-4 overflow-y-auto p-4">
+    <div className="flex h-full min-h-0 w-full flex-col gap-4 overflow-y-auto overscroll-contain p-4">
       {onClose && (
         <div className="flex shrink-0 items-center justify-between">
           <p className="text-sm font-semibold text-foreground">File details</p>

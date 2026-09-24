@@ -341,7 +341,7 @@ export function CS03SecureTransfers() {
         ))}
       </div>
 
-      <div className="mx-auto w-full max-w-3xl flex-1 overflow-y-auto p-4 md:p-6">
+      <div className="mx-auto min-h-0 w-full max-w-3xl flex-1 overflow-y-auto p-4 md:p-6">
         {loadError && (
           <Card className="mb-4 flex-row items-center gap-3 border-destructive/40 p-4">
             <AlertCircle size={20} className="shrink-0 text-destructive" />

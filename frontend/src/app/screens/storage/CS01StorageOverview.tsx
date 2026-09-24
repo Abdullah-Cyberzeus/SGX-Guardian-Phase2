@@ -122,6 +122,9 @@ export function CS01StorageOverview() {
   const vault = useVault();
   const { session } = useAuth();
   const canManageVault = !isMemberRole(session?.user.role);
+  // Admin keeps the in-screen detail workspace. Members use the dedicated
+  // MemberStorageLayout, where details and transfers occupy the large pane.
+  const useInlineDesktopPanel = isDesktop && canManageVault;
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [query, setQuery] = useState("");
@@ -206,7 +209,7 @@ export function CS01StorageOverview() {
 
   const selectedFile = selectedFileId ? vault.getFile(selectedFileId) : undefined;
   const actionFolder = actionFolderId ? vault.getFolder(actionFolderId) ?? null : null;
-  const rightPanelOpen = isDesktop && (Boolean(pendingUpload) || Boolean(selectedFile));
+  const rightPanelOpen = useInlineDesktopPanel && (Boolean(pendingUpload) || Boolean(selectedFile));
 
   const navigateFolder = (id: string) => {
     setQuery("");
@@ -218,7 +221,7 @@ export function CS01StorageOverview() {
       navigateFolder(entry.folder.id);
       return;
     }
-    if (isDesktop) {
+    if (useInlineDesktopPanel) {
       setPendingUpload(null);
       setSelectedFileId(entry.file.id);
     } else navigate(`/storage/${entry.file.id}`);
@@ -228,7 +231,7 @@ export function CS01StorageOverview() {
     const selected = Array.from(e.target.files ?? []);
     e.target.value = "";
     if (!selected.length) return;
-    if (isDesktop) setSelectedFileId(null);
+    if (useInlineDesktopPanel) setSelectedFileId(null);
     setPendingUpload(selected);
   };
 
@@ -243,7 +246,7 @@ export function CS01StorageOverview() {
       toast.success(`${uploaded.length} ${uploaded.length === 1 ? "file" : "files"} uploaded`, {
         description: "Encrypted and stored in the Guardian Vault.",
       });
-      if (isDesktop && uploaded.length === 1) setSelectedFileId(uploaded[0].id);
+      if (useInlineDesktopPanel && uploaded.length === 1) setSelectedFileId(uploaded[0].id);
     }
     if (failed) toast.error(`${failed} upload${failed === 1 ? "" : "s"} failed`, { description: "Review the upload panel and retry." });
   };
@@ -609,7 +612,7 @@ export function CS01StorageOverview() {
                       entry={entry}
                       active={
                         entry.type === "file" &&
-                        isDesktop &&
+                        useInlineDesktopPanel &&
                         selectedFileId === entry.file.id
                       }
                       compact={rightPanelOpen}
@@ -642,7 +645,7 @@ export function CS01StorageOverview() {
 
         {/* ── Right workspace — desktop upload + file details/actions ── */}
         {rightPanelOpen && (
-          <div className="hidden min-w-0 border-l border-border bg-background lg:flex">
+          <div className="hidden h-full min-h-0 min-w-0 overflow-hidden border-l border-border bg-background lg:flex">
             {pendingUpload ? (
               <UploadSidePanel
                 fileCount={pendingUpload.length}
@@ -666,7 +669,7 @@ export function CS01StorageOverview() {
 
       <input ref={uploadRef} type="file" multiple hidden onChange={handleUpload} />
       <UploadDescriptionDialog
-        open={!!pendingUpload && !isDesktop}
+        open={!!pendingUpload && !useInlineDesktopPanel}
         onOpenChange={(open) => { if (!open) setPendingUpload(null); }}
         fileCount={pendingUpload?.length ?? 0}
         folderName={folder.id === ROOT_ID ? "All Files" : folder.name}

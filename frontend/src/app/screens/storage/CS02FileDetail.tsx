@@ -91,7 +91,7 @@ export function CS02FileDetail() {
   return (
     <div className="flex h-full flex-col" style={{ backgroundColor: "var(--background)" }}>
       <PageHeader title={file.name} onBack={() => navigate("/storage")} />
-      <div className="flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-hidden">
         <div className="mx-auto h-full w-full max-w-2xl">
           <FileDetailPanel
             file={file}

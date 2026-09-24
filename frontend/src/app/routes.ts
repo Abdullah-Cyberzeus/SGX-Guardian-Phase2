@@ -7,6 +7,7 @@ import { OnboardingLayout } from "./layouts/OnboardingLayout";
 import { MainLayout } from "./layouts/MainLayout";
 import { MemberChatsLayout } from "./layouts/MemberChatsLayout";
 import { MemberNarrowPane } from "./layouts/MemberNarrowPane";
+import { MemberStorageLayout } from "./layouts/MemberStorageLayout";
 import { SYS01NotFound } from "./screens/system/SYS01NotFound";
 import { SYS02SplashScreen } from "./screens/system/SYS02SplashScreen";
 import { LoginScreen } from "./screens/auth/LoginScreen";
@@ -250,7 +251,7 @@ export const router = createBrowserRouter([
             // Cloud Storage tab
             {
               path: "storage",
-              Component: MemberNarrowPane,
+              Component: MemberStorageLayout,
               children: [
                 { index: true, Component: CS01StorageOverview },
                 { path: "transfers", Component: CS03SecureTransfers },
