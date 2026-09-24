@@ -212,9 +212,7 @@ pub async fn pull_latest_for_joined_circles(
         .map(|record| record.did)
         .unwrap_or_default();
     let registry = crate::circle::store::load_or_seed(node_id)?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
+    let client = crate::circle::invite::guardian_peer_client(Duration::from_secs(10))
         .map_err(|err| CircleError::Invalid(format!("circle snapshot pull client: {}", err)))?;
     let mut applied = 0usize;
 
@@ -236,7 +234,9 @@ pub async fn pull_latest_for_joined_circles(
                     crate::crl::gossip::engine::active_gossip_peers(&local_did)
                         .into_iter()
                         .find(|peer| peer.did == circle.owner_did)
-                        .map(|peer| format!("http://{}:8443", peer.overlay_ip))
+                        .map(|peer| {
+                            crate::circle::invite::guardian_peer_endpoint(&peer.overlay_ip, 8443)
+                        })
                 }
             };
         let Some(endpoint) = endpoint else {

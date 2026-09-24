@@ -1062,9 +1062,7 @@ pub(crate) async fn join_remote_circle(
         )));
     }
     let owner_url = normalize_owner_url(owner_host)?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
+    let client = invite::guardian_peer_client(Duration::from_secs(10))
         .map_err(|err| ApiError::Internal(format!("join client: {}", err)))?;
     let redeemed = redeem_with_owner_fallbacks(
         &client,
@@ -1467,10 +1465,7 @@ async fn broadcast_member_snapshot(
     skip_did: Option<&str>,
     extra_targets: &[String],
 ) {
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-    {
+    let client = match invite::guardian_peer_client(Duration::from_secs(10)) {
         Ok(client) => client,
         Err(err) => {
             tracing::warn!("Circle member snapshot client creation failed: {}", err);
@@ -1609,7 +1604,7 @@ async fn circle_member_delivery_endpoints(
     }
     for peer in crate::crl::gossip::engine::active_gossip_peers(self_did) {
         if peer.did == target_did {
-            let endpoint = format!("http://{}:8443", peer.overlay_ip);
+            let endpoint = invite::guardian_peer_endpoint(&peer.overlay_ip, 8443);
             if !endpoints.iter().any(|existing| existing == &endpoint) {
                 endpoints.push(endpoint);
             }
@@ -1644,9 +1639,7 @@ async fn deliver_invite(state: &Arc<AppState>, token: &InviteToken) -> Result<()
         .sign(&digest)
         .map_err(|err| CircleError::Invalid(format!("service auth sign: {}", err)))?;
     let signature_b64 = general_purpose::STANDARD.encode(signature);
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
+    let client = invite::guardian_peer_client(Duration::from_secs(10))
         .map_err(|err| CircleError::Invalid(format!("invite delivery client: {}", err)))?;
     let mut failures = Vec::new();
     for endpoint in endpoints {
@@ -1719,7 +1712,7 @@ async fn invite_delivery_endpoints(
         }
         push_unique_endpoint(
             &mut endpoints,
-            format!("http://sgx-{}:8443", peer.node_name),
+            invite::guardian_peer_endpoint(&format!("sgx-{}", peer.node_name), 8443),
         );
         push_container_host_port(&mut endpoints, &peer.node_name);
     }
@@ -1799,13 +1792,24 @@ fn push_container_host_port(endpoints: &mut Vec<String>, node_name: &str) {
         _ => return,
     };
     match node_name {
-        "nodeA" => push_unique_endpoint(endpoints, "http://172.31.250.10:8443".to_string()),
-        "nodeB" => push_unique_endpoint(endpoints, "http://172.31.250.11:8443".to_string()),
-        "nodeC" => push_unique_endpoint(endpoints, "http://172.31.250.12:8443".to_string()),
+        "nodeA" => push_unique_endpoint(
+            endpoints,
+            invite::guardian_peer_endpoint("172.31.250.10", 8443),
+        ),
+        "nodeB" => push_unique_endpoint(
+            endpoints,
+            invite::guardian_peer_endpoint("172.31.250.11", 8443),
+        ),
+        "nodeC" => push_unique_endpoint(
+            endpoints,
+            invite::guardian_peer_endpoint("172.31.250.12", 8443),
+        ),
         _ => {}
     }
     for host in container_host_candidates() {
-        push_unique_endpoint(endpoints, format!("http://{}:{}", host, port));
+        if let Ok(port) = port.parse::<u16>() {
+            push_unique_endpoint(endpoints, invite::guardian_peer_endpoint(&host, port));
+        }
     }
 }
 
@@ -1832,7 +1836,10 @@ fn container_endpoint_fallbacks(endpoint: &str) -> Vec<String> {
         _ => return Vec::new(),
     };
     let mut endpoints = Vec::new();
-    push_unique_endpoint(&mut endpoints, format!("http://sgx-{}:8443", node_name));
+    push_unique_endpoint(
+        &mut endpoints,
+        invite::guardian_peer_endpoint(&format!("sgx-{}", node_name), 8443),
+    );
     push_container_host_port(&mut endpoints, node_name);
     endpoints
 }
@@ -2862,9 +2869,9 @@ mod tests {
     #[test]
     fn push_container_host_port_adds_overlay_and_host_endpoints_per_node() {
         for (node, overlay, default_port) in [
-            ("nodeA", "http://172.31.250.10:8443", "18443"),
-            ("nodeB", "http://172.31.250.11:8443", "28443"),
-            ("nodeC", "http://172.31.250.12:8443", "38443"),
+            ("nodeA", "https://172.31.250.10:8443", "18443"),
+            ("nodeB", "https://172.31.250.11:8443", "28443"),
+            ("nodeC", "https://172.31.250.12:8443", "38443"),
         ] {
             let mut endpoints = Vec::new();
             push_container_host_port(&mut endpoints, node);
@@ -2872,7 +2879,7 @@ mod tests {
             assert!(
                 endpoints
                     .iter()
-                    .any(|endpoint| endpoint == &format!("http://127.0.0.1:{default_port}")),
+                    .any(|endpoint| endpoint == &format!("https://127.0.0.1:{default_port}")),
                 "{node} should fall back to the loopback host: {endpoints:?}"
             );
         }
@@ -2883,7 +2890,7 @@ mod tests {
         let fallbacks = container_endpoint_fallbacks("https://192.168.100.2:8443/api/v1/x");
         assert_eq!(
             fallbacks.first().map(String::as_str),
-            Some("http://sgx-nodeB:8443")
+            Some("https://sgx-nodeB:8443")
         );
         assert!(fallbacks.len() > 1, "{fallbacks:?}");
     }
@@ -3107,15 +3114,15 @@ mod tests {
     fn container_endpoint_fallbacks_parses_192_168_100_and_generates() {
         // IP 192.168.100.1 -> nodeA
         let fallbacks = container_endpoint_fallbacks("https://192.168.100.1:8443/api/v1");
-        assert!(fallbacks.contains(&"http://sgx-nodeA:8443".to_string()));
+        assert!(fallbacks.contains(&"https://sgx-nodeA:8443".to_string()));
 
         // IP 192.168.100.2 -> nodeB
         let fallbacks = container_endpoint_fallbacks("http://192.168.100.2:8443");
-        assert!(fallbacks.contains(&"http://sgx-nodeB:8443".to_string()));
+        assert!(fallbacks.contains(&"https://sgx-nodeB:8443".to_string()));
 
         // IP 192.168.100.3 -> nodeC
         let fallbacks = container_endpoint_fallbacks("http://192.168.100.3:8443");
-        assert!(fallbacks.contains(&"http://sgx-nodeC:8443".to_string()));
+        assert!(fallbacks.contains(&"https://sgx-nodeC:8443".to_string()));
 
         // Non-matching IP returns empty
         let fallbacks = container_endpoint_fallbacks("https://10.0.0.1:8443");

@@ -16,6 +16,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::time::Duration as StdDuration;
 use uuid::Uuid;
 
 pub const INVITE_CONTEXT: &str = "https://schemas.cyberzeus.io/sgx/v1/circle-invite";
@@ -338,13 +339,87 @@ pub async fn resolve_circle_endpoint(
     )))
 }
 
+/// Scheme used for Guardian-to-Guardian REST traffic.
+///
+/// Native deployments are TLS-first. The development Compose cohort
+/// explicitly sets `SGX_ADMIN_TLS_ENABLED=0`, so it continues to use HTTP on
+/// its private container network. `SGX_GUARDIAN_PEER_API_SCHEME` is an
+/// explicit escape hatch for mixed-version migrations.
+pub fn guardian_peer_api_scheme() -> &'static str {
+    peer_api_scheme_from_values(
+        std::env::var("SGX_GUARDIAN_PEER_API_SCHEME")
+            .ok()
+            .as_deref(),
+        std::env::var("SGX_ADMIN_TLS_ENABLED").ok().as_deref(),
+    )
+}
+
+fn peer_api_scheme_from_values(
+    explicit_peer_scheme: Option<&str>,
+    admin_tls_enabled: Option<&str>,
+) -> &'static str {
+    match explicit_peer_scheme.map(|value| value.trim().to_ascii_lowercase()) {
+        Some(value) if value == "http" => return "http",
+        Some(value) if value == "https" => return "https",
+        _ => {}
+    }
+    if admin_tls_enabled.is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off"
+        )
+    }) {
+        "http"
+    } else {
+        "https"
+    }
+}
+
+pub fn guardian_peer_endpoint(host: &str, port: u16) -> String {
+    format!("{}://{}:{}", guardian_peer_api_scheme(), host, port)
+}
+
+/// Build the direct peer client used by Circle invite/redeem/snapshot flows.
+/// Guardian node certificates are currently self-issued, so WebPKI validation
+/// is relaxed only for this mesh-internal client. Peer identity and integrity
+/// remain enforced by the authenticated Nebula tunnel and the request's DID
+/// signature. Set
+/// `SGX_GUARDIAN_PEER_TLS_ALLOW_SELF_SIGNED=0` once a shared trusted TLS CA is
+/// deployed to require normal WebPKI chain validation.
+pub fn guardian_peer_client(timeout: StdDuration) -> Result<reqwest::Client, reqwest::Error> {
+    let allow_self_signed = std::env::var("SGX_GUARDIAN_PEER_TLS_ALLOW_SELF_SIGNED")
+        .ok()
+        .map(|value| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(true);
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .no_proxy()
+        .danger_accept_invalid_certs(allow_self_signed)
+        .build()
+}
+
 fn normalize_service_endpoint(endpoint: &str) -> Result<String, CircleError> {
+    normalize_service_endpoint_with_scheme(endpoint, guardian_peer_api_scheme())
+}
+
+fn normalize_service_endpoint_with_scheme(
+    endpoint: &str,
+    preferred_scheme: &str,
+) -> Result<String, CircleError> {
     let trimmed = endpoint.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         return Err(CircleError::Invalid("service endpoint is empty".into()));
     }
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+    if trimmed.starts_with("https://") {
         return Ok(trimmed.to_string());
+    }
+    if let Some(rest) = trimmed.strip_prefix("http://") {
+        return Ok(format!("{}://{}", preferred_scheme, rest));
     }
     if let Some(rest) = trimmed.strip_prefix("nebula://") {
         let host = rest.split('/').next().unwrap_or(rest);
@@ -354,7 +429,7 @@ fn normalize_service_endpoint(endpoint: &str) -> Result<String, CircleError> {
                 endpoint
             )));
         }
-        return Ok(format!("http://{}:8443", host));
+        return Ok(format!("{}://{}:8443", preferred_scheme, host));
     }
     if let Some(rest) = trimmed.strip_prefix("tcp://") {
         let host = rest.split(':').next().unwrap_or(rest);
@@ -364,7 +439,7 @@ fn normalize_service_endpoint(endpoint: &str) -> Result<String, CircleError> {
                 endpoint
             )));
         }
-        return Ok(format!("http://{}:8443", host));
+        return Ok(format!("{}://{}:8443", preferred_scheme, host));
     }
     Err(CircleError::Invalid(format!(
         "unsupported DID service endpoint {}",
@@ -643,6 +718,44 @@ mod unit_tests {
         let oversized_token = "a".repeat(MAX_QR_PAYLOAD_SIZE);
         let err = build_share_link(&oversized_token, "guardian.local:8443").unwrap_err();
         assert!(matches!(err, CircleError::QrPayloadTooLarge { .. }));
+    }
+
+    #[test]
+    fn peer_api_scheme_defaults_to_https_and_honors_explicit_dev_http() {
+        assert_eq!(peer_api_scheme_from_values(None, None), "https");
+        assert_eq!(peer_api_scheme_from_values(None, Some("true")), "https");
+        assert_eq!(peer_api_scheme_from_values(None, Some("0")), "http");
+        assert_eq!(
+            peer_api_scheme_from_values(Some("http"), Some("true")),
+            "http"
+        );
+        assert_eq!(
+            peer_api_scheme_from_values(Some("https"), Some("false")),
+            "https"
+        );
+    }
+
+    #[test]
+    fn circle_endpoints_are_upgraded_to_https_for_native_peers() {
+        assert_eq!(
+            normalize_service_endpoint_with_scheme("nebula://192.168.100.2/24", "https")
+                .expect("nebula endpoint"),
+            "https://192.168.100.2:8443"
+        );
+        assert_eq!(
+            normalize_service_endpoint_with_scheme("http://172.16.132.252:8443", "https")
+                .expect("legacy HTTP endpoint"),
+            "https://172.16.132.252:8443"
+        );
+    }
+
+    #[test]
+    fn circle_endpoints_remain_http_in_tls_terminated_compose_networks() {
+        assert_eq!(
+            normalize_service_endpoint_with_scheme("nebula://192.168.100.2/24", "http")
+                .expect("nebula endpoint"),
+            "http://192.168.100.2:8443"
+        );
     }
 
     #[test]

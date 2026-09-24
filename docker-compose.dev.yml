@@ -33,6 +33,9 @@ x-guardian-common: &guardian-common
     # LAN TLS boundary for nodea.guardian/nodeb.guardian/nodec.guardian.
     SGX_ADMIN_TLS_ENABLED: "0"
     SGX_ADMIN_REQUIRE_HTTPS: "0"
+    # Guardian-to-Guardian REST follows the private container listener here.
+    # Native board deployments default to HTTPS when this override is absent.
+    SGX_GUARDIAN_PEER_API_SCHEME: "http"
     SGX_SSO_CYLENIUM_ENABLED: "1"
     SGX_CYLENIUM_OIDC_ISSUER: "${SGX_CYLENIUM_OIDC_ISSUER:-http://localhost:4000}"
     SGX_CYLENIUM_OIDC_TOKEN_ENDPOINT: "${SGX_CYLENIUM_OIDC_TOKEN_ENDPOINT:-http://host.docker.internal:4000/token}"
