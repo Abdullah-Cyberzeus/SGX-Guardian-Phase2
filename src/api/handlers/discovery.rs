@@ -783,7 +783,7 @@ async fn scan_with_args(
     let refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
     let resp = super::dkp::run_cli(&refs).await?;
     if resp.success {
-        publish_rule_events_for_latest_run(state);
+        publish_rule_events_for_latest_run(state).await;
     }
     Ok(Json(ScanResponse {
         success: resp.success,
@@ -799,7 +799,7 @@ async fn scan_with_args(
 // device list for the run it just recorded (same approach as
 // `historical_run_devices`, used for run-history enrichment) and publish from
 // here so manual/frontend-triggered scans fire rule events too.
-fn publish_rule_events_for_latest_run(state: &AppState) {
+async fn publish_rule_events_for_latest_run(state: &AppState) {
     let history_path = run_history::history_path(Path::new(&state.discovery_state_dir));
     let Ok(mut runs) = run_history::list_recent(&history_path, Some(1)) else {
         return;
@@ -822,6 +822,104 @@ fn publish_rule_events_for_latest_run(state: &AppState) {
                 &state.node_id,
                 &device,
             ));
+        }
+
+        // Task4 D5: normalize real NMAP open-port observations from the
+        // completed production discovery run into canonical precursor events.
+        //
+        // This reuses the same parsed ConnectedDevice evidence used by the
+        // existing rule-event bridge; no synthetic discovery evidence is
+        // created here.
+        let task4 = { state.task4_threat_prediction.read().await.as_ref().cloned() };
+
+        if let Some(task4) = task4 {
+            use sgx_anomaly_engine::threat_prediction::{
+                EventSeverity, EvidenceSource, SecurityEvent, SecurityEventType,
+                SECURITY_EVENT_SCHEMA_VERSION,
+            };
+            use std::collections::BTreeMap;
+
+            let observed_at_ms = match chrono::DateTime::parse_from_rfc3339(&device.last_seen)
+                .ok()
+                .and_then(|value| u64::try_from(value.timestamp_millis()).ok())
+            {
+                Some(value) if value > 0 => value,
+                _ => {
+                    tracing::warn!(
+                        device_id = %device.device_id,
+                        last_seen = %device.last_seen,
+                        "dropping Task4 NMAP evidence with invalid observation timestamp"
+                    );
+                    continue;
+                }
+            };
+
+            for port in &device.open_ports {
+                let mut attributes = BTreeMap::new();
+
+                attributes.insert("nmap_device_id".to_string(), device.device_id.clone());
+                attributes.insert("nmap_protocol".to_string(), port.protocol.clone());
+
+                if let Some(service) = &port.service {
+                    attributes.insert("nmap_service".to_string(), service.clone());
+                }
+
+                if let Some(product_version) = &port.product_version {
+                    attributes.insert("nmap_product_version".to_string(), product_version.clone());
+                }
+
+                let mut event = SecurityEvent {
+                    schema_version: SECURITY_EVENT_SCHEMA_VERSION,
+                    event_id: "task4-nmap-pending".to_string(),
+                    observed_at_ms,
+                    source: EvidenceSource::NmapDiscovery,
+                    node_id: state.node_id.clone(),
+                    peer_id: None,
+
+                    // NMAP observes the target host; it does not establish
+                    // attacker/source attribution.
+                    source_ip: None,
+                    destination_ip: Some(device.ip.clone()),
+                    source_port: None,
+                    destination_port: Some(port.port),
+
+                    event_type: SecurityEventType::PortDiscovery,
+                    severity: EventSeverity::Medium,
+                    confidence: 1.0,
+                    attributes,
+                };
+
+                // PortDiscovery represents discovery of a concrete exposed
+                // service. Keep its identity stable across unchanged rescans so
+                // the existing Task4 collector deduplication does not treat the
+                // same IP/port/protocol as a new precursor.
+                const NMAP_OBSERVATION_BUCKET_MS: u64 = 5 * 60 * 1_000;
+                let observation_bucket = observed_at_ms / NMAP_OBSERVATION_BUCKET_MS;
+
+                event.event_id = format!(
+                    "task4-nmap-port-v2:{}:{}:{}:{}:{}",
+                    state.node_id, device.ip, port.port, port.protocol, observation_bucket
+                );
+
+                if let Err(error) = event.validate() {
+                    tracing::warn!(
+                        device_id = %device.device_id,
+                        port = port.port,
+                        %error,
+                        "dropping invalid Task4 NMAP PortDiscovery event"
+                    );
+                    continue;
+                }
+
+                if let Err(error) = task4.try_publish(event) {
+                    tracing::warn!(
+                        device_id = %device.device_id,
+                        port = port.port,
+                        %error,
+                        "Task4 NMAP PortDiscovery publish failed"
+                    );
+                }
+            }
         }
     }
 }

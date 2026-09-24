@@ -277,10 +277,22 @@ install_rust_toolchain() {
   need_cmd rustup || die "rustup is still not available after installation."
   need_cmd cargo || die "cargo is still not available after installation."
 
-  log "Ensuring Rust stable toolchain + ARM64 target..."
-  retry_forever "rustup toolchain install stable" rustup toolchain install stable --profile minimal
-  retry_forever "rustup default stable" rustup default stable
-  retry_forever "rustup target add ${TARGET_TRIPLE}" rustup target add "${TARGET_TRIPLE}"
+  log "Checking active Rust toolchain..."
+
+  local active_toolchain
+  active_toolchain="$(rustup show active-toolchain | awk '{print $1}')"
+
+  log "Using existing Rust toolchain: ${active_toolchain}"
+
+  if rustup target list --installed --toolchain "${active_toolchain}" \
+      | grep -qx "${TARGET_TRIPLE}"; then
+    log "ARM64 target ${TARGET_TRIPLE} already installed."
+  else
+    log "Installing ARM64 target ${TARGET_TRIPLE}..."
+    retry_forever \
+      "rustup target add ${TARGET_TRIPLE}" \
+      rustup target add "${TARGET_TRIPLE}" --toolchain "${active_toolchain}"
+  fi
 }
 
 print_versions() {

@@ -69,6 +69,7 @@ async fn scheduler_run_one_is_timeout_bounded() {
         whitelist_path,
         inventory_path: inventory_path.clone(),
         state: Arc::new(Mutex::new(Inventory::default())),
+        task4_event_sink: None,
     };
 
     let mut cfg = NmapConfig::default();

@@ -25,6 +25,10 @@ pub struct DiscoveryScheduler {
     pub whitelist_path: PathBuf,
     pub inventory_path: PathBuf,
     pub state: Arc<Mutex<Inventory>>,
+    /// Optional production evidence sink. Discovery remains fully independent
+    /// when Task4 is unavailable.
+    pub task4_event_sink:
+        Option<Arc<dyn Fn(crate::discovery::ConnectedDevice) + Send + Sync + 'static>>,
 }
 
 impl DiscoveryScheduler {
@@ -183,6 +187,15 @@ impl DiscoveryScheduler {
         };
         let semantics = cfg.scan_semantics_for_intensity(&target, intensity);
 
+        // Preserve this scan's real observations before `Inventory::merge`
+        // consumes the vector. The Task4 sink is invoked only after the
+        // inventory has been successfully persisted below.
+        let task4_observed_devices = if self.task4_event_sink.is_some() {
+            devices.clone()
+        } else {
+            Vec::new()
+        };
+
         let intensity_label = match intensity {
             ScanIntensity::Stealth => "stealth",
             ScanIntensity::Standard => "standard",
@@ -230,6 +243,16 @@ impl DiscoveryScheduler {
             self.append_history_record(&record);
             return Err(err);
         }
+
+        // D5 production bridge: publish only evidence produced by the real
+        // successful NMAP scan and only after inventory persistence succeeds.
+        // Task4 queue failure must not break discovery/inventory operation.
+        if let Some(sink) = &self.task4_event_sink {
+            for device in task4_observed_devices {
+                sink(device);
+            }
+        }
+
         let record = run_history::build_record(
             started_at,
             Utc::now(),

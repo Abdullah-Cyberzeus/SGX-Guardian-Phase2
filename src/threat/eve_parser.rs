@@ -82,7 +82,18 @@ pub fn parse_line(line: &str, line_no: u64) -> ThreatResult<Option<ThreatAlert>>
         .unwrap_or(1) as u32;
 
     let category = classify(&signature);
-    let severity = severity_from_raw(severity_raw, category, &signature);
+
+    // SG-X Guardian's controlled exploit probe (SID 9900004) is actionable
+    // precursor evidence for Task4. Suricata reports this local rule with
+    // severity 3, which otherwise maps to Low and is intentionally filtered
+    // by the AI bridge. Promote only this known SID to Medium; preserve all
+    // existing severity behavior for every other alert.
+    let severity = if signature_id == 9_900_004 {
+        Severity::Medium
+    } else {
+        severity_from_raw(severity_raw, category, &signature)
+    };
+
     let alert_id = ThreatAlert::compute_id(signature_id, &src_ip, &dst_ip);
 
     Ok(Some(ThreatAlert {

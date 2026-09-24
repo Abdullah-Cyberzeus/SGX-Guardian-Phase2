@@ -122,6 +122,8 @@ pub struct AppState {
     pub discovery_state_dir: String,  // /var/lib/sgx-guardian/discovery
     pub threat_config_path: String,   // /etc/sgx-guardian/threat/config.yaml
     pub threat_state_dir: String,     // /var/lib/sgx-guardian/threat
+    pub threat_prediction_config_path: String, // /etc/sgx-guardian/threat-prediction/config.json
+    pub threat_prediction_state_dir: String, // /var/lib/sgx-guardian/threat-prediction
     pub admin_dir: String,            // /var/lib/sgx-guardian/admin
     pub admin: Arc<AdminStores>,
     pub signer: Arc<KeyManager>,
@@ -147,6 +149,8 @@ pub struct AppState {
     pub device_rate_limiter: Arc<crate::api::auth::rate_limiter::DeviceRateLimiter>,
     pub notification_manager:
         Arc<tokio::sync::RwLock<Option<Arc<crate::notification::manager::NotificationManager>>>>,
+    pub task4_threat_prediction:
+        Arc<tokio::sync::RwLock<Option<Arc<crate::task4_threat_prediction::Task4RuntimeHandle>>>>,
 }
 
 impl AppState {
@@ -181,6 +185,8 @@ impl AppState {
             discovery_state_dir: "/var/lib/sgx-guardian/discovery".into(),
             threat_config_path: "/etc/sgx-guardian/threat/config.yaml".into(),
             threat_state_dir: "/var/lib/sgx-guardian/threat".into(),
+            threat_prediction_config_path: "/etc/sgx-guardian/threat-prediction/config.json".into(),
+            threat_prediction_state_dir: "/var/lib/sgx-guardian/threat-prediction".into(),
             admin_dir: "/var/lib/sgx-guardian/admin".into(),
             admin,
             signer: signer.clone(),
@@ -212,6 +218,7 @@ impl AppState {
                 crate::api::auth::rate_limiter::DeviceRateLimiter::default(),
             ),
             notification_manager: Arc::new(tokio::sync::RwLock::new(None)),
+            task4_threat_prediction: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -254,6 +261,8 @@ impl AppState {
         let discovery_config_dir = base_dir.join("discovery-config");
         let discovery_state_dir = base_dir.join("discovery-state");
         let threat_dir = base_dir.join("threat");
+        let threat_prediction_config_dir = base_dir.join("threat-prediction-config");
+        let threat_prediction_state_dir = base_dir.join("threat-prediction-state");
         let admin_dir = base_dir.join("admin");
         let signer_dir = base_dir.join("sgx-agent");
         std::fs::create_dir_all(&key_dir).expect("test key dir");
@@ -263,6 +272,10 @@ impl AppState {
         std::fs::create_dir_all(&discovery_config_dir).expect("test discovery config dir");
         std::fs::create_dir_all(&discovery_state_dir).expect("test discovery state dir");
         std::fs::create_dir_all(&threat_dir).expect("test threat dir");
+        std::fs::create_dir_all(&threat_prediction_config_dir)
+            .expect("test threat prediction config dir");
+        std::fs::create_dir_all(&threat_prediction_state_dir)
+            .expect("test threat prediction state dir");
         std::fs::create_dir_all(&admin_dir).expect("test admin dir");
         std::fs::create_dir_all(&signer_dir).expect("test signer dir");
         let signer = Arc::new(
@@ -296,6 +309,11 @@ impl AppState {
             discovery_state_dir: discovery_state_dir.to_string_lossy().to_string(),
             threat_config_path: threat_dir.join("config.yaml").to_string_lossy().to_string(),
             threat_state_dir: threat_dir.to_string_lossy().to_string(),
+            threat_prediction_config_path: threat_prediction_config_dir
+                .join("config.json")
+                .to_string_lossy()
+                .to_string(),
+            threat_prediction_state_dir: threat_prediction_state_dir.to_string_lossy().to_string(),
             admin_dir: admin_dir.to_string_lossy().to_string(),
             admin: AdminStores::new(&admin_dir),
             signer,
@@ -321,6 +339,7 @@ impl AppState {
                 crate::api::auth::rate_limiter::DeviceRateLimiter::default(),
             ),
             notification_manager: Arc::new(tokio::sync::RwLock::new(None)),
+            task4_threat_prediction: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 

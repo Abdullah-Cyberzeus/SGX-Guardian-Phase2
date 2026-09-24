@@ -283,6 +283,10 @@ impl ThreatService {
                             }
                             IngestOutcome::Updated => {
                                 dirty = true;
+                                // Updated alerts are still fresh runtime observations.
+                                // Forward them to the AI bridge so Task4 temporal/sequence
+                                // processing receives repeated real Suricata evidence.
+                                ai_bridge::forward_to_ai(&self.node_id, &alert);
                             }
                             IngestOutcome::Duplicate => {}
                         }

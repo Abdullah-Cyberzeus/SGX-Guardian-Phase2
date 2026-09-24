@@ -2,6 +2,8 @@
 //! Initializes node identity, loads configuration, starts discovery,
 //! attestation, metrics tracking, and the gRPC server runtime.
 
+mod suricata_recon;
+
 use sgx_guardian_client::attestation_service;
 use sgx_guardian_client::audit::event::{AuditAction, AuditCategory, AuditSeverity};
 use sgx_guardian_client::audit::logger::{init_audit_logger, log_audit};
@@ -263,6 +265,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             node_listener::start_listener(node_id_clone).await;
         });
     }
+    // Task4 D5: ensure the production reconnaissance precursor rule exists.
+    // Best-effort provisioning: Guardian startup must not be killed solely
+    // because Suricata is unavailable on a platform where threat detection
+    // is disabled/not installed.
+    if let Err(error) = suricata_recon::ensure_task4_recon_rule() {
+        tracing::warn!(
+            error = %error,
+            "Task4 reconnaissance Suricata rule provisioning was not completed"
+        );
+    }
+
     GATES.log_summary();
     step(1, "post-listener: entering KeyManager init");
     // Generate node-specific identity key path
@@ -2843,6 +2856,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         device_did,
         device_pubkey_point,
     );
+    let mut task4_runtime_for_discovery: Option<
+        std::sync::Arc<sgx_guardian_client::task4_threat_prediction::Task4RuntimeHandle>,
+    > = None;
+
+    {
+        let task4_config =
+            sgx_guardian_client::task4_threat_prediction::Task4ThreatPredictionRuntimeConfig::from_env(
+                node_id.clone(),
+                "/var/lib/sgx-guardian/threat",
+            );
+        match sgx_guardian_client::task4_threat_prediction::spawn_production_runtime(task4_config) {
+            Ok(handle) => {
+                let handle = std::sync::Arc::new(handle);
+                task4_runtime_for_discovery = Some(handle.clone());
+                *api_state.task4_threat_prediction.write().await = Some(handle);
+                println!("✅ Task 4 threat prediction production runtime wired");
+            }
+            Err(error) => {
+                tracing::warn!(
+                    node_id = %node_id,
+                    %error,
+                    "Task 4 threat prediction runtime failed to start; Guardian continues fail-closed"
+                );
+            }
+        }
+    }
     let chat_grpc_port = match node_id.as_str() {
         "nodeA" => 50251,
         "nodeB" => 50252,
@@ -2968,6 +3007,100 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             whitelist_path: wl_path,
             inventory_path: inv_path,
             state: std::sync::Arc::new(tokio::sync::Mutex::new(Inventory::default())),
+            task4_event_sink: task4_runtime_for_discovery.clone().map(|task4| {
+                let node_id = node_id.clone();
+
+                std::sync::Arc::new(
+                    move |device: sgx_guardian_client::discovery::ConnectedDevice| {
+                        use sgx_anomaly_engine::threat_prediction::{
+                            EventSeverity, EvidenceSource, SecurityEvent, SecurityEventType,
+                            SECURITY_EVENT_SCHEMA_VERSION,
+                        };
+                        use std::collections::BTreeMap;
+
+                        let observed_at_ms =
+                            chrono::DateTime::parse_from_rfc3339(&device.last_seen)
+                                .ok()
+                                .and_then(|value| u64::try_from(value.timestamp_millis()).ok())
+                                .unwrap_or_else(|| {
+                                    u64::try_from(chrono::Utc::now().timestamp_millis())
+                                        .unwrap_or(1)
+                                });
+
+                        for port in device.open_ports {
+                            let mut attributes = BTreeMap::new();
+
+                            attributes
+                                .insert("nmap_device_id".to_string(), device.device_id.clone());
+                            attributes.insert("nmap_protocol".to_string(), port.protocol.clone());
+
+                            if let Some(service) = &port.service {
+                                attributes.insert("nmap_service".to_string(), service.clone());
+                            }
+
+                            if let Some(product_version) = &port.product_version {
+                                attributes.insert(
+                                    "nmap_product_version".to_string(),
+                                    product_version.clone(),
+                                );
+                            }
+
+                            let mut event = SecurityEvent {
+                                schema_version: SECURITY_EVENT_SCHEMA_VERSION,
+                                event_id: "task4-nmap-pending".to_string(),
+                                observed_at_ms,
+                                source: EvidenceSource::NmapDiscovery,
+                                node_id: node_id.clone(),
+                                peer_id: None,
+
+                                // Guardian-owned NMAP scan does not establish
+                                // attacker/source attribution.
+                                source_ip: None,
+
+                                destination_ip: Some(device.ip.clone()),
+                                source_port: None,
+                                destination_port: Some(port.port),
+
+                                event_type: SecurityEventType::PortDiscovery,
+
+                                // Port exposure is precursor evidence, not
+                                // proof of compromise.
+                                severity: EventSeverity::Medium,
+                                confidence: 1.0,
+
+                                attributes,
+                            };
+
+                            event.event_id = event.deterministic_event_id();
+
+                            if let Err(error) = event.validate() {
+                                tracing::warn!(
+                                    device_id = %device.device_id,
+                                    port = port.port,
+                                    %error,
+                                    "dropping invalid Task4 NMAP port-discovery evidence"
+                                );
+                                continue;
+                            }
+
+                            if let Err(error) = task4.try_publish(event) {
+                                tracing::warn!(
+                                    device_id = %device.device_id,
+                                    port = port.port,
+                                    %error,
+                                    "Task4 NMAP evidence queue unavailable; discovery continues"
+                                );
+                            }
+                        }
+                    },
+                )
+                    as std::sync::Arc<
+                        dyn Fn(sgx_guardian_client::discovery::ConnectedDevice)
+                            + Send
+                            + Sync
+                            + 'static,
+                    >
+            }),
         };
         scheduler.start();
         println!("✅ Discovery scheduler spawned (NMP-series, Sprint 6)");
@@ -2982,6 +3115,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state_dir = PathBuf::from("/var/lib/sgx-guardian/threat");
         let _ = std::fs::create_dir_all(&state_dir);
         let _ = std::fs::create_dir_all("/etc/sgx-guardian/threat");
+
+        // D2 production integration:
+        // Provision the Guardian/Suricata configuration on first boot.
+        // Never overwrite an existing administrator-managed configuration.
+        if !cfg_path.exists() {
+            let production_threat_config = r#"enabled: true
+interface: null
+eve_path: /var/volatile/log/suricata/eve.json
+suricata_yaml: /etc/suricata/suricata.yaml
+block_mode: alert_only
+block_ttl_secs: 86400
+block_exempt:
+  - 127.0.0.0/8
+  - 192.168.100.0/24
+rule_update_hours: 24
+"#;
+
+            if let Err(error) = std::fs::write(&cfg_path, production_threat_config) {
+                tracing::error!(
+                    path = %cfg_path.display(),
+                    %error,
+                    "failed to provision Guardian threat configuration"
+                );
+            } else {
+                tracing::info!(
+                    path = %cfg_path.display(),
+                    "provisioned Guardian threat configuration"
+                );
+            }
+        }
         if let Err(error) = sgx_guardian_client::task1_ai::spawn_full_ml_runtime(
             node_id.clone(),
             metrics.clone(),

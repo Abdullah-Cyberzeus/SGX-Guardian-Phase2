@@ -205,7 +205,7 @@ fn main() -> Result<()> {
             observed_rtt_ms: 47.8,
             observed_packet_loss_pct: 0.58,
             observed_throughput_mbps: 58.2,
-            observed_bandwidth_utilization_pct: Some(38.0),
+            observed_bandwidth_utilization_pct: 38.0,
             observed_reward: None,
         },
     );

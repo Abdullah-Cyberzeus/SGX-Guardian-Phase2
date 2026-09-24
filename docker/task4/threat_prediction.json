@@ -1,0 +1,52 @@
+{
+  "config_version": "task4-threat-prediction-config-v1",
+  "enabled": true,
+  "forecast_interval_minutes": 5,
+  "event_driven_recalculation": {
+    "enabled": true,
+    "debounce_and_coalesce_duplicates": true,
+    "triggers": [
+      "significant_task1_anomaly",
+      "relevant_suricata_alert",
+      "material_network_or_topology_change",
+      "task2_policy_apply_revert_or_replacement"
+    ]
+  },
+  "forecast_horizons_minutes": {
+    "ddos": [
+      5,
+      15,
+      30
+    ],
+    "reconnaissance_escalation": [
+      10,
+      30
+    ],
+    "brute_force": [
+      10,
+      30
+    ],
+    "exploitation_attempt": [
+      10,
+      30
+    ],
+    "protocol_abuse": [
+      5,
+      15,
+      30
+    ],
+    "peer_compromise_cascade": [
+      15,
+      30
+    ]
+  },
+  "minimum_action_confidence": 0.7,
+  "thresholds": {
+    "observation_below": 0.5,
+    "monitoring_min": 0.5,
+    "advisory_min": 0.7,
+    "urgent_task2_review_min": 0.85,
+    "critical_min": 0.95
+  },
+  "forecast_retention_days": 90
+}

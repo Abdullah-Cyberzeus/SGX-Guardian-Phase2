@@ -32,10 +32,20 @@ pub fn subscribe() -> broadcast::Receiver<AlertFeature> {
     tap().subscribe()
 }
 
-/// Forward a High/Critical alert into the AI anomaly feature tap.
-/// Non-blocking: if the AI engine has no active subscriber the send is silently dropped.
+/// Forward actionable Suricata evidence into the AI feature tap.
+///
+/// Medium severity is intentionally included because downstream consumers
+/// (including Task4 precursor sequencing) accept Medium-or-higher evidence.
+/// Each downstream engine remains responsible for applying its own scoring
+/// and decision thresholds.
+///
+/// Low/Info alerts remain excluded to avoid unnecessary feature-tap noise.
+/// Non-blocking: if there are no active subscribers, the send is dropped.
 pub fn forward_to_ai(node_id: &str, alert: &ThreatAlert) {
-    if !matches!(alert.severity, Severity::High | Severity::Critical) {
+    if !matches!(
+        alert.severity,
+        Severity::Medium | Severity::High | Severity::Critical
+    ) {
         return;
     }
 

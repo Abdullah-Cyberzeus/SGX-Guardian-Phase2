@@ -24,6 +24,7 @@ pub mod roles;
 pub mod rules;
 pub mod security_context;
 pub mod telemetry;
+pub mod threat_prediction;
 pub mod virtual_shift;
 
 // Re-export the most commonly used items at the crate root.

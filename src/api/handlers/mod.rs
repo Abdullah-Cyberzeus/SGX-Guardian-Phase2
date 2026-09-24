@@ -26,6 +26,7 @@ pub mod restore;
 pub mod rules;
 pub mod task1_ai;
 pub mod threat;
+pub mod threat_prediction;
 pub mod transport;
 pub mod vault;
 pub mod vc;

@@ -53,6 +53,7 @@ pub mod server;
 pub mod storage;
 pub mod task1_ai;
 pub mod task3_network_ai;
+pub mod task4_threat_prediction;
 pub mod telemetry;
 pub mod threat;
 pub mod tls;

@@ -342,6 +342,39 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             "/api/v1/network-ai/mode",
             post(handlers::network_ai::set_mode),
         )
+        .route(
+            "/api/v1/threat-prediction/status",
+            get(handlers::threat_prediction::status),
+        )
+        .route(
+            "/api/v1/threat-prediction/config",
+            get(handlers::threat_prediction::get_config)
+                .put(handlers::threat_prediction::set_config),
+        )
+        .route(
+            "/api/v1/threat-prediction/enable",
+            post(handlers::threat_prediction::enable),
+        )
+        .route(
+            "/api/v1/threat-prediction/disable",
+            post(handlers::threat_prediction::disable),
+        )
+        .route(
+            "/api/v1/threat-prediction/forecasts",
+            get(handlers::threat_prediction::forecasts),
+        )
+        .route(
+            "/api/v1/threat-prediction/forecasts/{forecast_id}",
+            get(handlers::threat_prediction::forecast_by_id),
+        )
+        .route(
+            "/api/v1/threat-prediction/history",
+            get(handlers::threat_prediction::history),
+        )
+        .route(
+            "/api/v1/threat-prediction/source-health",
+            get(handlers::threat_prediction::source_health),
+        )
         .merge(routes::crl_router())
         .merge(routes::advisory_router())
         .merge(routes::task1_ai_router())

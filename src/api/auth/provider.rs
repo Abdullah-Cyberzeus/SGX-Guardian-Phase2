@@ -5,6 +5,9 @@ use crate::api::auth::{
 use crate::api::{error::ApiError, state::AppState};
 use async_trait::async_trait;
 use chrono::Utc;
+use sgx_anomaly_engine::threat_prediction::{
+    EventSeverity, EvidenceSource, SecurityEvent, SecurityEventType, SECURITY_EVENT_SCHEMA_VERSION,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -149,6 +152,7 @@ async fn record_failed_login(
     email: &str,
     now: i64,
 ) -> Result<ApiError, ApiError> {
+    // Preserve the existing authentication/lockout persistence path first.
     let user = state
         .admin
         .users
@@ -160,9 +164,90 @@ async fn record_failed_login(
             state.auth_lockout.lockout_secs,
         )
         .await?;
-    if user.as_ref().is_some_and(|user| is_locked(user, now)) {
+
+    let account_locked = user.as_ref().is_some_and(|user| is_locked(user, now));
+
+    // Task4 receives only failures for a real local account that were
+    // persisted by the existing authentication subsystem. Unknown-account
+    // probes are intentionally not promoted into this precursor here.
+    //
+    // This is a best-effort observability side-channel: failure to publish
+    // Task4 evidence must never alter authentication or lockout behavior.
+    if user.is_some() {
+        let task4 = { state.task4_threat_prediction.read().await.as_ref().cloned() };
+
+        if let Some(task4) = task4 {
+            let observed_at_ms = u64::try_from(now)
+                .ok()
+                .and_then(|seconds| seconds.checked_mul(1_000));
+
+            if let Some(observed_at_ms) = observed_at_ms {
+                let mut attributes = std::collections::BTreeMap::new();
+
+                attributes.insert("auth_provider".to_string(), LOCAL_PROVIDER_NAME.to_string());
+                attributes.insert("account_locked".to_string(), account_locked.to_string());
+
+                // Deliberately exclude email, password, password hash,
+                // bearer token, session token, and other account secrets.
+                let mut event = SecurityEvent {
+                    schema_version: SECURITY_EVENT_SCHEMA_VERSION,
+                    event_id: "task4-auth-failure-pending".to_string(),
+                    observed_at_ms,
+                    source: EvidenceSource::GuardianThreat,
+                    node_id: state.node_id.clone(),
+                    peer_id: None,
+
+                    // The provider operates on credentials and does not own
+                    // trustworthy socket attribution. Do not fabricate IPs.
+                    source_ip: None,
+                    destination_ip: None,
+                    source_port: None,
+                    destination_port: None,
+
+                    event_type: SecurityEventType::AuthenticationFailure,
+                    severity: if account_locked {
+                        EventSeverity::High
+                    } else {
+                        EventSeverity::Medium
+                    },
+                    confidence: 1.0,
+                    attributes,
+                };
+
+                // Unique per persisted failure. The collector's normal
+                // canonical deduplication remains authoritative.
+                event.event_id =
+                    format!("task4-auth-failure-v1:{}:{}", state.node_id, observed_at_ms);
+
+                match event.validate() {
+                    Ok(()) => {
+                        if let Err(error) = task4.try_publish(event) {
+                            tracing::warn!(
+                                %error,
+                                "Task4 AuthenticationFailure publish failed"
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            "dropping invalid Task4 AuthenticationFailure event"
+                        );
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    timestamp = now,
+                    "failed login timestamp cannot be represented as Task4 milliseconds"
+                );
+            }
+        }
+    }
+
+    if account_locked {
         return Ok(locked_error());
     }
+
     Ok(ApiError::Unauthorized("invalid email or password".into()))
 }
 
