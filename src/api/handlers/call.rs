@@ -349,6 +349,7 @@ pub async fn initiate_browser_call(
         )
             .into_response();
     }
+    let actor_id = browser_call_actor_id(&state, &session);
     if !state
         .call_session_manager
         .get_active_sessions()
@@ -365,7 +366,7 @@ pub async fn initiate_browser_call(
     }
     if !state
         .group_session_manager
-        .active_for(&state.node_id)
+        .active_for(&actor_id)
         .await
         .is_empty()
     {
@@ -377,7 +378,6 @@ pub async fn initiate_browser_call(
         )
             .into_response();
     }
-    let actor_id = browser_call_actor_id(&state, &session);
     if actor_id == state.node_id {
         if let Err(error) = ensure_local_guardian_did_active() {
             return (StatusCode::FORBIDDEN, Json(error)).into_response();

@@ -558,6 +558,38 @@ impl GroupSessionManager {
             if incoming.revision == existing.revision {
                 return Ok(existing.clone());
             }
+
+            // Leaving/declining is participant-local and intentionally does
+            // not advance the host-owned revision. A higher-revision snapshot
+            // that was already in flight may therefore still describe this
+            // participant as joined. Never let that stale host view resurrect
+            // a locally terminal membership. An explicit local `join()` moves
+            // the stored state back to Joined before a legitimate rejoin
+            // snapshot arrives, so rejoining remains supported.
+            if incoming.state != GroupCallState::Ended {
+                let local_terminal = existing
+                    .participants
+                    .get(local_device_id)
+                    .filter(|participant| {
+                        matches!(
+                            participant.state,
+                            GroupMemberState::Left | GroupMemberState::Declined
+                        )
+                    })
+                    .map(|participant| (participant.state.clone(), participant.last_seen_at));
+                if let (Some((state, last_seen_at)), Some(local)) = (
+                    local_terminal,
+                    incoming.participants.get_mut(local_device_id),
+                ) {
+                    // A host kick is also terminal and may replace the local
+                    // state; non-terminal snapshots may not.
+                    if local.state != GroupMemberState::Kicked {
+                        local.state = state;
+                        local.media_ready = false;
+                        local.last_seen_at = last_seen_at;
+                    }
+                }
+            }
         }
         if incoming.state == GroupCallState::Ended {
             sessions.remove(&incoming.group_id);
@@ -1261,6 +1293,74 @@ mod tests {
             .apply_snapshot(stale, "nodeA", "192.168.100.1")
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn delayed_host_snapshot_cannot_resurrect_a_locally_left_member() {
+        let dir = tempdir().unwrap();
+        let host = GroupSessionManager::new(dir.path().join("host-race.log"));
+        let receiver = GroupSessionManager::new(dir.path().join("receiver-race.log"));
+        let created = host
+            .create(
+                "Race room".into(),
+                participant("nodeA", GroupRole::Host),
+                vec![participant("nodeB", GroupRole::Member)],
+                vec![MediaType::Audio],
+            )
+            .await
+            .unwrap();
+        receiver
+            .register_invite(created.clone(), "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+
+        host.join(&created.group_id, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+        let joined_snapshot = host
+            .advance_snapshot_revision(&created.group_id)
+            .await
+            .unwrap();
+        receiver
+            .apply_snapshot(joined_snapshot, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+
+        receiver
+            .leave(&created.group_id, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+
+        // This simulates a higher host revision (for example, a heartbeat)
+        // that was sent before the host processed nodeB's Leave message but
+        // arrived at nodeB afterward.
+        let delayed_joined_snapshot = host
+            .advance_snapshot_revision(&created.group_id)
+            .await
+            .unwrap();
+        let applied = receiver
+            .apply_snapshot(delayed_joined_snapshot, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+        assert_eq!(applied.participants["nodeB"].state, GroupMemberState::Left);
+        assert!(
+            receiver.active_for("nodeB").await.is_empty(),
+            "a delayed host snapshot must not make a departed member busy again"
+        );
+
+        host.leave(&created.group_id, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+        host.end(&created.group_id, "nodeA").await.unwrap();
+        let ended_snapshot = host
+            .advance_snapshot_revision(&created.group_id)
+            .await
+            .unwrap();
+        receiver
+            .apply_snapshot(ended_snapshot, "nodeB", "192.168.100.2")
+            .await
+            .unwrap();
+        assert!(receiver.get(&created.group_id).await.is_err());
     }
 
     #[tokio::test]

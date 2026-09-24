@@ -6,7 +6,9 @@ use crate::call::error::{CallError, CallResult};
 use crate::call::identity::{PeerIdentityResolver, RejectUnknownPeerResolver};
 use crate::call::protocol::{ReplayProtector, SignalKind, SignalingEnvelope};
 use crate::call::signaling::{CallAnswer, CallOffer};
-use crate::call::{GroupMemberState, GroupSessionManager, GroupWireMessage};
+use crate::call::{
+    GroupCallState, GroupMemberState, GroupParticipant, GroupSessionManager, GroupWireMessage,
+};
 use crate::key_manager::KeyManager;
 use crate::nebula::interface::NebulaInterface;
 use serde_json::json;
@@ -26,6 +28,20 @@ fn signaling_port() -> u16 {
         .and_then(|value| value.parse::<u16>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(50065)
+}
+
+fn should_deliver_group_snapshot(
+    session_state: &GroupCallState,
+    participant: &GroupParticipant,
+    local_device_id: &str,
+) -> bool {
+    participant.device_id != local_device_id
+        && !participant.is_local_browser
+        && (*session_state == GroupCallState::Ended
+            || !matches!(
+                participant.state,
+                GroupMemberState::Declined | GroupMemberState::Left
+            ))
 }
 
 /// Nebula transport client for call signaling.
@@ -706,13 +722,7 @@ impl NebulaSignaling {
         };
         let mut first_error = None;
         for participant in session.participants.values() {
-            if participant.device_id == local_device_id
-                || participant.is_local_browser
-                || matches!(
-                    participant.state,
-                    GroupMemberState::Declined | GroupMemberState::Left
-                )
-            {
+            if !should_deliver_group_snapshot(&session.state, participant, local_device_id) {
                 continue;
             }
             if let Err(error) = self
@@ -953,10 +963,7 @@ mod tests {
     use super::*;
     use crate::call::identity::TrustedPeerIdentity;
     use crate::call::signaling::MediaType;
-    use crate::call::{
-        CallSignalHub, CallState, GroupCallState, GroupParticipant, GroupRole, GroupSession,
-        SessionManager,
-    };
+    use crate::call::{CallSignalHub, CallState, GroupRole, GroupSession, SessionManager};
     use async_trait::async_trait;
     use chrono::Utc;
     use std::collections::HashMap;
@@ -1000,6 +1007,26 @@ mod tests {
             last_seen_at: None,
             is_local_browser: false,
         }
+    }
+
+    #[test]
+    fn terminal_snapshot_is_delivered_to_departed_remote_members() {
+        let left = participant(
+            "nodeB",
+            "192.168.100.2",
+            GroupRole::Member,
+            GroupMemberState::Left,
+        );
+        assert!(!should_deliver_group_snapshot(
+            &GroupCallState::Active,
+            &left,
+            "nodeA"
+        ));
+        assert!(should_deliver_group_snapshot(
+            &GroupCallState::Ended,
+            &left,
+            "nodeA"
+        ));
     }
 
     fn group_session(group_id: &str) -> GroupSession {
