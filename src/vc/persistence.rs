@@ -144,7 +144,13 @@ pub fn load_own_mesh() -> Result<Option<VerifiableCredential>, VcError> {
         let Ok(vc) = serde_json::from_slice::<VerifiableCredential>(&bytes) else {
             continue;
         };
-        if vc.credential_subject.circle_id != crate::vc::issue::DEFAULT_CIRCLE_ID {
+        // `mesh::circle_id()` resolves this Guardian's *actual* circle —
+        // `MeshProfile`'s if one is installed, else the legacy constant — not
+        // the legacy constant unconditionally. A Phase 2 circle always gets a
+        // freshly generated id (`mesh::ca::generate_circle_id`), so hardcoding
+        // `vc::issue::DEFAULT_CIRCLE_ID` here meant this function could never
+        // find that circle's own membership VC even once one existed on disk.
+        if vc.credential_subject.circle_id != crate::mesh::circle_id() {
             continue;
         }
         let should_replace = preferred

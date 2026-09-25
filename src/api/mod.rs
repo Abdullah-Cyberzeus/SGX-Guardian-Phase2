@@ -24,6 +24,7 @@ pub mod error;
 pub mod frontend;
 pub mod handlers;
 pub mod idempotency;
+pub mod mesh_gate;
 pub mod routes;
 pub mod state;
 pub mod tls;
@@ -64,6 +65,15 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             get(handlers::node::status).patch(handlers::node::update_display_info),
         )
         .route("/api/v1/node/boot-status", get(handlers::node::boot_status))
+        // P1.6: the lifecycle API — always reachable (see mesh_gate's allow-list)
+        // so the setup UI can drive Create/Join and watch enrollment progress
+        // before this Guardian is ONLINE.
+        .route("/api/v1/mesh/lifecycle", get(handlers::mesh::lifecycle_status))
+        .route("/api/v1/mesh/lifecycle/ws", get(handlers::mesh::lifecycle_socket))
+        .route("/api/v1/mesh/reset", post(handlers::mesh::reset))
+        // P2.4
+        .route("/api/v1/mesh/circles", post(handlers::mesh::create_circle))
+        .route("/api/v1/mesh/circle", get(handlers::mesh::get_circle))
         .route("/api/v1/node/restart", post(handlers::node::restart))
         .route("/api/v1/peers", get(handlers::peers::list))
         .route("/api/v1/pwa/contacts", get(handlers::pwa::contacts))
@@ -563,6 +573,15 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         .route("/connecttest.txt", get(frontend::captive_portal))
         .route("/ncsi.txt", get(frontend::captive_portal))
         .route("/canonical.html", get(frontend::captive_portal))
+        // mesh_gate runs *inside* require_auth (added first here, so it is the
+        // inner layer — auth is checked before enrollment state). It only
+        // wraps the routes defined above, never `/api/v1/wifi/*` (nested
+        // below, after `with_state`) or the embedded frontend fallback, both
+        // of which must always be reachable regardless of lifecycle state.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            mesh_gate::gate,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::middleware::require_auth,

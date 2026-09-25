@@ -10,11 +10,57 @@
 //! and `joincode` alongside these; see
 //! `docs/Guardian_Mesh_Enrollment_Complete_Plan.md` §4.1.
 
+pub mod activation;
+pub mod ca;
 pub mod enroll;
 pub mod legacy;
+pub mod lifecycle;
 pub mod profile;
 
 pub use profile::{is_ca, MeshProfile, MeshRole};
+
+/// Where a fresh unit's generated id is persisted (P1.9), so it survives
+/// restarts without needing a DID to already exist.
+const FRESH_ID_MARKER: &str = "/var/lib/sgx-guardian/.guardian_id";
+
+/// Resolves the id for a Guardian launched with no CLI argument.
+///
+/// The plan's own language ("derive `gx-<first 8 of DID hash>`") assumes a
+/// DID already exists, but DID creation itself is keyed by `node_id` from the
+/// very first lines of `main()` — KeyManager file paths, PCR baseline paths,
+/// and the DID method's own storage are all `device_<node_id>.*`. Deriving
+/// the id *from* the DID would mean generating keys and a DID under one id,
+/// then relocating every one of those files to a new id, which is real
+/// migration surgery main() does not do today.
+///
+/// This is the stopgap the plan explicitly anticipates ("let the operator
+/// rename it in SU01 before enrollment" — i.e. this id was always meant to be
+/// disposable): generate a random id once, persist it so it is stable across
+/// restarts, and never derive it from — or default it to — a fixed name. That
+/// keeps the one safety property `main.rs`'s CLI parsing already enforces
+/// intact: an unconfigured Guardian must never silently become the CA by
+/// sharing a name with one.
+pub fn fresh_guardian_id() -> String {
+    if let Ok(existing) = std::fs::read_to_string(FRESH_ID_MARKER) {
+        let existing = existing.trim();
+        if !existing.is_empty() {
+            return existing.to_string();
+        }
+    }
+
+    let bytes: [u8; 4] = rand::random();
+    let id = format!("gx-{}", hex::encode(bytes));
+
+    if let Some(dir) = std::path::Path::new(FRESH_ID_MARKER).parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Err(e) = std::fs::write(FRESH_ID_MARKER, &id) {
+        eprintln!(
+            "⚠️ Could not persist generated Guardian id to {FRESH_ID_MARKER}: {e} —              a new id will be generated on every restart until this is writable"
+        );
+    }
+    id
+}
 
 /// This Guardian's own id.
 ///

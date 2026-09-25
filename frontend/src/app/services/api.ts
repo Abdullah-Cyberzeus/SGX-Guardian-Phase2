@@ -73,6 +73,24 @@ async function extractErrorMessage(response: Response): Promise<string> {
   }
 }
 
+/// P1.7: detects the mesh_gate 409 `{code:"GUARDIAN_NOT_ENROLLED", lifecycle:"..."}`
+/// body so `ProtectedRoute` can redirect to `/setup` instead of showing a raw
+/// error. `response.clone()` because the caller still reads the body itself
+/// (via `extractErrorMessage`) for the thrown `ApiError`'s message — a
+/// `Response` body can only be consumed once otherwise.
+async function detectMeshNotEnrolled(response: Response): Promise<string | null> {
+  if (response.status !== 409) return null;
+  try {
+    const body = await response.clone().json();
+    if (body && typeof body === 'object' && body.code === 'GUARDIAN_NOT_ENROLLED') {
+      return typeof body.lifecycle === 'string' ? body.lifecycle : 'UNENROLLED';
+    }
+  } catch {
+    // Not JSON, or some other 409 shape — not this case.
+  }
+  return null;
+}
+
 class ApiClient {
   private baseUrl: string;
   private isServerAvailable: boolean | null = null;
@@ -175,6 +193,10 @@ class ApiClient {
       if (response.status === 401 && !endpoint.startsWith('/auth/') && !suppressUnauthorizedEvent) {
         window.dispatchEvent(new CustomEvent('sgx:unauthorized'));
       }
+      const meshLifecycle = await detectMeshNotEnrolled(response);
+      if (meshLifecycle) {
+        window.dispatchEvent(new CustomEvent('sgx:mesh-not-enrolled', { detail: { lifecycle: meshLifecycle } }));
+      }
       const msg = await extractErrorMessage(response);
       monitoring.trackApiCall(method, endpoint, response.status, duration, msg);
       emitApiEvent('sgx:api-failure', { endpoint, method, status: response.status, kind: classifyFailure(response.status, msg), message: msg });
@@ -215,6 +237,10 @@ class ApiClient {
     if (!response.ok) {
       if (response.status === 401 && !endpoint.startsWith('/auth/') && !suppressUnauthorizedEvent) {
         window.dispatchEvent(new CustomEvent('sgx:unauthorized'));
+      }
+      const meshLifecycle = await detectMeshNotEnrolled(response);
+      if (meshLifecycle) {
+        window.dispatchEvent(new CustomEvent('sgx:mesh-not-enrolled', { detail: { lifecycle: meshLifecycle } }));
       }
       const message = await extractErrorMessage(response);
       emitApiEvent('sgx:api-failure', { endpoint, method: fetchOptions.method || 'GET', status: response.status, kind: classifyFailure(response.status, message), message });

@@ -2,22 +2,38 @@ import { useEffect } from "react";
 import { useNavigate } from "react-router";
 import { CervaisLogo } from "../../components/CervaisLogo";
 import { useAuth } from "../../contexts/AuthContext";
+import { isOnline, useMeshLifecycle } from "../../contexts/MeshLifecycleContext";
 import { homePathForRole } from "../../utils/authorization";
 
 export function SYS02SplashScreen() {
   const navigate = useNavigate();
   const { session, loading } = useAuth();
+  // P1.7: an authenticated session alone no longer means "go to the
+  // dashboard" — this Guardian may not have finished (or started) mesh
+  // enrollment yet. `meshLoading` only matters once a session exists: with no
+  // session, MeshLifecycleProvider skips fetching entirely and resolves it to
+  // `false` immediately, so the onboarding/login branches below are not
+  // delayed by it.
+  const { lifecycle, loading: meshLoading } = useMeshLifecycle();
 
   useEffect(() => {
     if (loading) return;
+    if (session && meshLoading) return;
 
     let cancelled = false;
 
     const checkAuth = () => {
       if (cancelled) return;
 
-      if (session) {
-        // Authenticated user → go straight to dashboard
+      if (session && !isOnline(lifecycle?.state)) {
+        // Admin exists, but this Guardian is not ONLINE yet — the setup flow
+        // (Create/Join a circle, or resume a pending/failed attempt) owns the
+        // screen until it is.
+        setTimeout(() => {
+          if (!cancelled) navigate("/setup", { replace: true });
+        }, 1800);
+      } else if (session) {
+        // Authenticated and ONLINE → go straight to dashboard
         setTimeout(() => {
           if (!cancelled) navigate(homePathForRole(session.user.role), { replace: true });
         }, 1800);
@@ -37,7 +53,7 @@ export function SYS02SplashScreen() {
 
     checkAuth();
     return () => { cancelled = true; };
-  }, [navigate, session, loading]);
+  }, [navigate, session, loading, lifecycle, meshLoading]);
 
   return (
     <div

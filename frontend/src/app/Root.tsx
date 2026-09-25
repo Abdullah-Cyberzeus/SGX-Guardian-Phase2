@@ -2,6 +2,7 @@ import { Outlet, useLocation } from "react-router";
 import type { ReactNode } from "react";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { AuthProvider } from "./contexts/AuthContext";
+import { MeshLifecycleProvider } from "./contexts/MeshLifecycleContext";
 import { VaultProvider } from "./contexts/VaultContext";
 import { DaemonRestartProvider } from "./contexts/DaemonRestartContext";
 import { NotificationProvider, useNotifications } from "./contexts/NotificationContext";
@@ -124,9 +125,11 @@ export function Root() {
     <ThemeProvider>
       <div style={{ minHeight: "100dvh", backgroundColor: "var(--background)" }}>
         <AuthProvider>
-          <GuardianConnectivityProvider>
-            <AuthenticatedRuntime />
-          </GuardianConnectivityProvider>
+          <MeshLifecycleProvider>
+            <GuardianConnectivityProvider>
+              <AuthenticatedRuntime />
+            </GuardianConnectivityProvider>
+          </MeshLifecycleProvider>
         </AuthProvider>
       </div>
     </ThemeProvider>

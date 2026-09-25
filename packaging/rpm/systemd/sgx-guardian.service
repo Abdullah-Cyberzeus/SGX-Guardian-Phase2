@@ -13,7 +13,12 @@ Group=sgxguardian
 
 # ---- Binary ----
 EnvironmentFile=-/etc/sgx-guardian/node_profile
-ExecStart=/usr/bin/sgx-guardian ${SGX_NODE_ID:-nodeA}
+# P1.9: no fallback to a fixed name (was "${SGX_NODE_ID:-nodeA}", which
+# silently made an unconfigured install the CA if node_profile was ever
+# missing or misapplied). Unset SGX_NODE_ID now runs with no argument,
+# which the binary itself turns into a freshly generated, persisted id
+# rather than a fixed one — see mesh::fresh_guardian_id.
+ExecStart=/usr/bin/sgx-guardian ${SGX_NODE_ID}
 
 # ---- Restart Policy ----
 Restart=on-failure

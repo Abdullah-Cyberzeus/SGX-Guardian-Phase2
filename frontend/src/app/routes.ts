@@ -9,6 +9,8 @@ import { MemberChatsLayout } from "./layouts/MemberChatsLayout";
 import { MemberNarrowPane } from "./layouts/MemberNarrowPane";
 import { SYS01NotFound } from "./screens/system/SYS01NotFound";
 import { SYS02SplashScreen } from "./screens/system/SYS02SplashScreen";
+import { SU01SetupChoice } from "./screens/setup/SU01SetupChoice";
+import { SU02CreateCircle } from "./screens/setup/SU02CreateCircle";
 import { LoginScreen } from "./screens/auth/LoginScreen";
 import { CyleniumCallback } from "./screens/auth/CyleniumCallback";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -118,6 +120,19 @@ export const router = createBrowserRouter([
 
       // Login (returning users, session expired)
       { path: "login", Component: LoginScreen },
+
+      // P1.8: reached once an admin session exists but this Guardian is not
+      // yet ONLINE (see SYS02SplashScreen / ProtectedRoute). Behind
+      // ProtectedRoute for the session check only — it deliberately does not
+      // also require RoleAccessRoute/MainLayout, since it is a standalone
+      // flow, not a tab in the main app shell.
+      {
+        Component: ProtectedRoute,
+        children: [
+          { path: "setup", Component: SU01SetupChoice },
+          { path: "setup/create", Component: SU02CreateCircle },
+        ],
+      },
       { path: "join", Component: MemberJoinOnboarding },
       { path: "auth/cylenium/callback", Component: CyleniumCallback },
       { path: "auth/callback", Component: CyleniumCallback },

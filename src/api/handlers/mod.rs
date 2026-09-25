@@ -14,6 +14,7 @@ pub mod geofence;
 pub mod group_call;
 pub mod guardian_keys;
 pub mod logs;
+pub mod mesh;
 pub mod node;
 pub mod notify;
 pub mod pcr;

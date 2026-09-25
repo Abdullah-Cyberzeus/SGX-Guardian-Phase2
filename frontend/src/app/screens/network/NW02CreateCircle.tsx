@@ -157,7 +157,7 @@ export function NW02CreateCircle() {
               flexShrink: 0,
             }}
           >
-            {visualLoading ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : "Create Circle"}
+            {visualLoading ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : "Create Comms Circle"}
           </button>
         </div>
 
@@ -326,7 +326,7 @@ export function NW02CreateCircle() {
   // ── Quick Create (default) ────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full">
-      <PageHeader title="Create New Circle" />
+      <PageHeader title="Create New Comms Circle" />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-2xl p-4 md:p-6 flex flex-col gap-4">
 
@@ -474,7 +474,7 @@ export function NW02CreateCircle() {
           }}
         >
           {loading && <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} />}
-          {loading ? "Creating Circle..." : "Create Circle"}
+          {loading ? "Creating Comms Circle..." : "Create Comms Circle"}
         </button>
 
         {/* Perks */}

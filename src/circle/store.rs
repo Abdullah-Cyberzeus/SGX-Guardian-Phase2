@@ -53,6 +53,21 @@ pub fn create_circle(
     description: String,
     owner_did: String,
 ) -> Result<Circle, CircleError> {
+    create_circle_of_kind(node_id, circle_id, name, description, owner_did, CircleKind::Comms)
+}
+
+/// [`create_circle`] with an explicit [`CircleKind`] — P2.1's `mesh::ca`
+/// module is the one caller that needs `CircleKind::Mesh`; every existing
+/// caller keeps going through `create_circle`, unchanged, which is this
+/// function with `Comms` hardcoded exactly as it always was.
+pub fn create_circle_of_kind(
+    node_id: &str,
+    circle_id: String,
+    name: String,
+    description: String,
+    owner_did: String,
+    kind: CircleKind,
+) -> Result<Circle, CircleError> {
     let _guard = CIRCLE_WRITE_LOCK
         .lock()
         .unwrap_or_else(|err| err.into_inner());
@@ -74,7 +89,7 @@ pub fn create_circle(
         name,
         description,
         owner_did,
-        kind: CircleKind::Comms,
+        kind,
         status: CircleStatus::Active,
         created_at: now.clone(),
         updated_at: now,

@@ -10,7 +10,7 @@ use crate::nebula::registry_sync::{RegistryRequest, REGISTRY_SYNC_PORT};
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 use tokio::sync::Mutex;
 
@@ -76,33 +76,65 @@ impl Default for ResolverConfig {
     }
 }
 
+/// The `cfg` behind a shared lock, not an owned value (P1.4).
+///
+/// Before Phase 1 this was a plain `ResolverConfig`, set once at construction
+/// and never touched again — fine while `main()` ran enrollment to completion
+/// before building `AppState`. Splitting boot into a local stage and a mesh
+/// activation stage means `AppState`'s resolver is constructed *before* the
+/// CA host is known, and `mesh::activation` must be able to fill it in once
+/// enrollment discovers or is assigned one. `Arc<RwLock<_>>` makes every clone
+/// of a `Resolver` see [`Resolver::set_ca_host`] immediately, which a plain
+/// `#[derive(Clone)]` over an owned `cfg` could not.
 #[derive(Clone)]
 pub struct Resolver {
-    cfg: ResolverConfig,
+    cfg: Arc<RwLock<ResolverConfig>>,
     cache: Arc<Mutex<ResolverCache>>,
 }
 
 impl Resolver {
     pub fn new(cfg: ResolverConfig) -> Self {
         Self {
-            cfg,
+            cfg: Arc::new(RwLock::new(cfg)),
             cache: Arc::new(Mutex::new(ResolverCache::new())),
         }
     }
 
+    /// A clone that shares this resolver's cache but has its own,
+    /// independently-mutable config — used where a caller wants a temporarily
+    /// different `reject_deactivated` without affecting every other holder of
+    /// the original `Resolver` (unlike [`Resolver::set_ca_host`], which is
+    /// deliberately shared).
     pub fn with_reject_deactivated(&self, reject_deactivated: bool) -> Self {
-        let mut cfg = self.cfg.clone();
+        let mut cfg = self.cfg.read().expect("resolver config lock poisoned").clone();
         cfg.reject_deactivated = reject_deactivated;
         Self {
-            cfg,
+            cfg: Arc::new(RwLock::new(cfg)),
             cache: self.cache.clone(),
         }
+    }
+
+    /// Sets the CA host every clone of this `Resolver` resolves against, from
+    /// this point on. Called once by `mesh::activation` after enrollment
+    /// determines (or is assigned) the circle's CA address — before that call,
+    /// a `Resolver` built during `boot_local()` simply has no CA network
+    /// fallback and resolves from cache/local documents only, which is the
+    /// correct behaviour for an unenrolled Guardian.
+    pub fn set_ca_host(&self, ca_host: impl Into<String>) {
+        self.cfg.write().expect("resolver config lock poisoned").ca_host = ca_host.into();
+    }
+
+    /// The CA host currently in effect, for callers (like the lifecycle API)
+    /// that want to report it without triggering a resolution.
+    pub fn ca_host(&self) -> String {
+        self.cfg.read().expect("resolver config lock poisoned").ca_host.clone()
     }
 
     pub async fn resolve(&self, did_str: &str) -> Result<ResolutionResult, DidError> {
         let did = Did::parse(did_str)?;
 
-        if let Some(entry) = self.cache.lock().await.get_fresh(&did, self.cfg.ttl) {
+        let ttl = self.cfg.read().expect("resolver config lock poisoned").ttl;
+        if let Some(entry) = self.cache.lock().await.get_fresh(&did, ttl) {
             return self.finish(entry.doc, ResolutionSource::MemCache, entry.fetched_at);
         }
 
@@ -123,7 +155,8 @@ impl Resolver {
             return Ok(result);
         }
 
-        if !self.cfg.ca_host.is_empty() {
+        let ca_host_for_network = self.cfg.read().expect("resolver config lock poisoned").ca_host.clone();
+        if !ca_host_for_network.is_empty() {
             if let Some(doc) = self.fetch_from_ca_network(&did).await? {
                 let fetched_at = SystemTime::now();
                 let result = self.finish(doc.clone(), ResolutionSource::CaNetwork, fetched_at)?;
@@ -181,7 +214,9 @@ impl Resolver {
             .sgx_status
             .clone()
             .unwrap_or_else(|| "active".to_string());
-        if self.cfg.reject_deactivated && status == "deactivated" {
+        let reject_deactivated =
+            self.cfg.read().expect("resolver config lock poisoned").reject_deactivated;
+        if reject_deactivated && status == "deactivated" {
             return Err(DidError::Deactivated(doc.sgx_updated.clone()));
         }
 
@@ -204,11 +239,8 @@ impl Resolver {
         let age = SystemTime::now()
             .duration_since(fetched_at)
             .unwrap_or(Duration::from_secs(0));
-        let ttl_remaining = self
-            .cfg
-            .ttl
-            .checked_sub(age)
-            .unwrap_or(Duration::from_secs(0));
+        let ttl = self.cfg.read().expect("resolver config lock poisoned").ttl;
+        let ttl_remaining = ttl.checked_sub(age).unwrap_or(Duration::from_secs(0));
 
         Ok(ResolutionResult {
             did: doc.id.clone(),
@@ -238,14 +270,18 @@ impl Resolver {
             status_list_body: None,
         };
 
+        let (network_timeout, ca_host) = {
+            let cfg = self.cfg.read().expect("resolver config lock poisoned");
+            (cfg.network_timeout, cfg.ca_host.clone())
+        };
         let response = tokio::time::timeout(
-            self.cfg.network_timeout,
-            doc_distribution::send_request(&self.cfg.ca_host, &request),
+            network_timeout,
+            doc_distribution::send_request(&ca_host, &request),
         )
         .await
-        .map_err(|_| ca_registry_unavailable_error(&self.cfg.ca_host))?;
+        .map_err(|_| ca_registry_unavailable_error(&ca_host))?;
         let response = response.map_err(|err| match err {
-            DidError::Io(_) => ca_registry_unavailable_error(&self.cfg.ca_host),
+            DidError::Io(_) => ca_registry_unavailable_error(&ca_host),
             other => other,
         })?;
 

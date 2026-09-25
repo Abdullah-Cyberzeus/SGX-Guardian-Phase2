@@ -24,7 +24,7 @@ export function OB08CreateFirstCircle() {
               marginBottom: "8px",
             }}
           >
-            Create Your First Circle
+            Create Your First Comms Circle
           </h2>
           <p
             style={{
@@ -34,7 +34,7 @@ export function OB08CreateFirstCircle() {
               lineHeight: 1.65,
             }}
           >
-            A Circle is your trusted team group. Add teammates to share alerts, chat securely, and coordinate responses.
+            A Comms Circle is your trusted team group for chat and alerts — separate from a Mesh Circle, which is the security network your Guardians themselves belong to. Add teammates to share alerts, chat securely, and coordinate responses.
           </p>
         </div>
 
@@ -160,7 +160,7 @@ export function OB08CreateFirstCircle() {
             cursor: "pointer",
           }}
         >
-          Create Circle
+          Create Comms Circle
         </button>
         <button
           onClick={() => navigate("/onboarding/complete")}

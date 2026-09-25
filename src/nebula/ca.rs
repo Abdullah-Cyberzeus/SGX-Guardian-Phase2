@@ -47,9 +47,14 @@ impl CaIdentity {
     }
 
     /// A named circle's identity, for Phase 2's Create Mesh Circle flow.
+    ///
+    /// `"<circle_name> CA"` (space-separated, matching the plan's own
+    /// wording) rather than a slug — `nebula-cert -name` accepts any string,
+    /// and this is what shows up in `nebula-cert print` for an operator
+    /// comparing fingerprints, so it reads better as a name than a slug does.
     pub fn for_circle(circle_name: &str) -> Self {
         Self {
-            ca_name: format!("{circle_name}-ca"),
+            ca_name: format!("{circle_name} CA"),
             ..Self::legacy_default()
         }
     }
@@ -431,6 +436,20 @@ impl NebulaCA {
         let pub_path = format!("{}/{}.pub.tmp", nodes_dir, membership.node_name);
         fs::write(&pub_path, nebula_public_key_pem.as_bytes())?;
 
+        // Captured *before* signing, not just checked after (see the check
+        // below): a Guardian self-signing its own cert — `mesh::ca::create_circle`
+        // signing the CA's own membership, P2.1 — legitimately already holds
+        // `nodes/<node_name>.key` (its own local keygen output, from *before*
+        // this call), since signer and signee are the same entity. Checking
+        // only post-sign existence made that legitimate, pre-existing key look
+        // exactly like nebula-cert having secretly created one — confirmed by
+        // direct reproduction against the real binary: `sign -in-pub` with no
+        // `-out-key` never touches `<name>.key`, present or not, before or
+        // after. So the only real signal is *did a key appear that was not
+        // there before*.
+        let key_path = format!("{}/{}.key", nodes_dir, membership.node_name);
+        let key_pre_existed = Path::new(&key_path).exists();
+
         let signed = nebula_cert_command()?
             .arg("sign")
             .arg("-name")
@@ -462,11 +481,12 @@ impl NebulaCA {
             )));
         }
 
-        // The whole point of this function: assert no private key was produced.
-        // A future `nebula-cert` that changed `-in-pub` semantics would trip
-        // this rather than silently reintroducing B1.
-        let key_path = format!("{}/{}.key", nodes_dir, membership.node_name);
-        if Path::new(&key_path).exists() {
+        // The whole point of this function: assert no private key was
+        // *produced by this call*. A future `nebula-cert` that changed
+        // `-in-pub` semantics would trip this rather than silently
+        // reintroducing B1 — `key_pre_existed` is what keeps a legitimate
+        // self-signing caller's own key from tripping it too.
+        if !key_pre_existed && Path::new(&key_path).exists() {
             let _ = fs::remove_file(&key_path);
             return Err(Error::other(format!(
                 "nebula-cert wrote a private key for {} despite -in-pub; \
@@ -602,7 +622,7 @@ mod tests {
     #[test]
     fn a_named_circle_gets_a_distinguishable_ca_name() {
         let identity = CaIdentity::for_circle("SGX-Alpha");
-        assert_eq!(identity.ca_name, "SGX-Alpha-ca");
+        assert_eq!(identity.ca_name, "SGX-Alpha CA");
         // Validity and groups are unchanged from the legacy defaults.
         assert_eq!(
             identity.node_cert_duration,

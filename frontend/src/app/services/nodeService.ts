@@ -1,6 +1,7 @@
 import api from './api';
 
 export interface NodeStatus {
+  nodeId: string;
   hostname: string;
   port: number;
   publicKey: string;
@@ -62,6 +63,7 @@ export const nodeService = {
   getStatus: async (): Promise<NodeStatus> => {
     const res = await api.get<BackendNodeStatus>('/node/status');
     return {
+      nodeId: res.nodeId,
       hostname: res.displayHostname || res.hostname,
       port: res.port,
       publicKey: res.publicKey,
