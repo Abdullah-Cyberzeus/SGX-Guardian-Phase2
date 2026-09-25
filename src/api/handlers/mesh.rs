@@ -427,6 +427,221 @@ pub async fn probe_ca(
         })
 }
 
+// ── P4.9: joiner-triggered enrollment ───────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct JoinRequest {
+    /// `host:port` of the CA's descriptor/enrollment listener — exactly
+    /// `DiscoveredCa.lan_endpoint` (P3.3), so the frontend passes through
+    /// whatever the LAN scan already found and the operator selected.
+    pub lan_endpoint: String,
+    pub circle_id: String,
+    #[serde(default)]
+    pub join_code: Option<String>,
+}
+
+/// POST /api/v1/mesh/join — starts joining a circle discovered on the LAN.
+/// Fire-and-forget by design, same shape as `create_circle`: the actual
+/// submit/poll/install sequence runs in the background
+/// (`mesh::enroll::start_join`) and the frontend watches
+/// `GET /api/v1/mesh/lifecycle` for progress, exactly as `SU02CreateCircle`
+/// already does through its own restart.
+pub async fn join_circle(
+    session: Option<Extension<AuthenticatedSession>>,
+    Json(payload): Json<JoinRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    if !is_admin(&session) {
+        return Err(ApiError::Forbidden(
+            "only an admin session may join a mesh circle".into(),
+        ));
+    }
+    if profile::current().is_some() {
+        return Err(ApiError::Conflict(
+            "this Guardian already has a circle profile — reset it before joining another".into(),
+        ));
+    }
+    let guardian_id = crate::mesh::local_guardian_id();
+    let paths = crate::startup::GuardianPaths::production();
+    tokio::spawn(async move {
+        match crate::mesh::enroll::start_join(
+            &paths,
+            &guardian_id,
+            &payload.lan_endpoint,
+            &payload.circle_id,
+            payload.join_code,
+        )
+        .await
+        {
+            Ok(()) => schedule_restart_after_response(),
+            Err(e) => {
+                eprintln!("❌ Join failed: {e}");
+                let _ = lifecycle::transition_to(LifecycleState::Error, Some(e));
+            }
+        }
+    });
+    Ok((StatusCode::ACCEPTED, Json(serde_json::json!({ "starting": true }))))
+}
+
+// ── P4.7: enrollment approval API (the P4.3 request store's own requests —
+// separate from the legacy YAML-backed `/api/v1/cert/requests`, which keeps
+// working unchanged for the hardcoded nodeA/B/C cohort) ────────────────
+
+/// GET /api/v1/mesh/enroll-requests — every request this CA has ever seen,
+/// newest last, each carrying its own `PolicyReport` for the UI to render
+/// per-check ✔/✖ (P4.7).
+pub async fn list_enroll_requests(
+    session: Option<Extension<AuthenticatedSession>>,
+) -> Result<Json<Vec<crate::mesh::ca::requests::EnrollmentRequest>>, ApiError> {
+    if !is_admin(&session) {
+        return Err(ApiError::Forbidden(
+            "only an admin session may list enrollment requests".into(),
+        ));
+    }
+    let paths = crate::startup::GuardianPaths::production();
+    crate::mesh::ca::requests::list(&paths)
+        .map(Json)
+        .map_err(|e| ApiError::Internal(e.to_string()))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RejectRequestPayload {
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// POST /api/v1/mesh/enroll-requests/{request_id}/approve — approves and
+/// immediately issues the bundle (so the joiner's very next poll receives
+/// it), matching `mesh::ca::server`'s own auto-approve path.
+pub async fn approve_enroll_request(
+    session: Option<Extension<AuthenticatedSession>>,
+    axum::extract::Path(request_id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !is_admin(&session) {
+        return Err(ApiError::Forbidden(
+            "only an admin session may approve an enrollment request".into(),
+        ));
+    }
+    let paths = crate::startup::GuardianPaths::production();
+    let approved = crate::mesh::ca::requests::approve(&paths, &request_id)
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let profile = profile::current()
+        .ok_or_else(|| ApiError::Conflict("this Guardian has no circle profile".into()))?;
+    let bundle = crate::mesh::ca::issuer::issue(&paths, &profile, &approved)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    crate::mesh::ca::requests::save_bundle(&paths, &request_id, &bundle)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "approved": true })))
+}
+
+/// POST /api/v1/mesh/enroll-requests/{request_id}/reject
+pub async fn reject_enroll_request(
+    session: Option<Extension<AuthenticatedSession>>,
+    axum::extract::Path(request_id): axum::extract::Path<String>,
+    Json(payload): Json<RejectRequestPayload>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !is_admin(&session) {
+        return Err(ApiError::Forbidden(
+            "only an admin session may reject an enrollment request".into(),
+        ));
+    }
+    let paths = crate::startup::GuardianPaths::production();
+    crate::mesh::ca::requests::reject(
+        &paths,
+        &request_id,
+        payload.reason.unwrap_or_else(|| "rejected by admin".to_string()),
+    )
+    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "rejected": true })))
+}
+
+// ── P4.8: join codes ─────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct CreateJoinCodePayload {
+    #[serde(default = "default_join_code_ttl_minutes")]
+    pub ttl_minutes: i64,
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub auto_approve_role: Option<String>,
+}
+
+fn default_join_code_ttl_minutes() -> i64 {
+    60
+}
+
+#[derive(Debug, Serialize)]
+pub struct JoinCodeResponse {
+    pub id: String,
+    pub code: String,
+    pub expires_at: String,
+}
+
+/// POST /api/v1/mesh/join-codes {ttl_minutes?, note?, auto_approve_role?} —
+/// the plaintext code is returned exactly once, here; the stored record
+/// never carries it (see `mesh::joincode`'s module doc).
+pub async fn create_join_code(
+    session: Option<Extension<AuthenticatedSession>>,
+    Json(payload): Json<CreateJoinCodePayload>,
+) -> Result<(StatusCode, Json<JoinCodeResponse>), ApiError> {
+    if !is_admin(&session) {
+        return Err(ApiError::Forbidden(
+            "only an admin session may invite a Guardian".into(),
+        ));
+    }
+    let profile = profile::current()
+        .ok_or_else(|| ApiError::Conflict("this Guardian has no circle profile".into()))?;
+    let paths = crate::startup::GuardianPaths::production();
+    let (stored, code) = crate::mesh::joincode::create(
+        &paths,
+        &profile.circle_id,
+        payload.ttl_minutes,
+        payload.note,
+        payload.auto_approve_role,
+    )
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok((
+        StatusCode::CREATED,
+        Json(JoinCodeResponse {
+            id: stored.id,
+            code,
+            expires_at: stored.expires_at,
+        }),
+    ))
+}
+
+/// GET /api/v1/mesh/join-codes — listing never includes the plaintext code
+/// (it was never stored — see `mesh::joincode`).
+pub async fn list_join_codes(
+    session: Option<Extension<AuthenticatedSession>>,
+) -> Result<Json<Vec<crate::mesh::joincode::StoredJoinCode>>, ApiError> {
+    if !is_admin(&session) {
+        return Err(ApiError::Forbidden(
+            "only an admin session may list join codes".into(),
+        ));
+    }
+    let paths = crate::startup::GuardianPaths::production();
+    crate::mesh::joincode::list(&paths)
+        .map(Json)
+        .map_err(|e| ApiError::Internal(e.to_string()))
+}
+
+/// DELETE /api/v1/mesh/join-codes/{id}
+pub async fn revoke_join_code(
+    session: Option<Extension<AuthenticatedSession>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !is_admin(&session) {
+        return Err(ApiError::Forbidden(
+            "only an admin session may revoke a join code".into(),
+        ));
+    }
+    let paths = crate::startup::GuardianPaths::production();
+    crate::mesh::joincode::revoke(&paths, &id)
+        .map(|()| Json(serde_json::json!({ "revoked": true })))
+        .map_err(|_| ApiError::NotFound(format!("no join code {id}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

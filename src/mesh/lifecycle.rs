@@ -84,6 +84,17 @@ impl LifecycleState {
                 | (Unenrolled, CreatingCircle)
                 | (Unenrolled, DiscoveringCa)
                 | (Unenrolled, ConnectingToRemoteCa)
+                // P4.9: SU03's LAN scan (P3.3/P3.4) runs as its own
+                // independent, in-memory job — not a lifecycle state —
+                // right up until the operator actually picks a verified
+                // circle and clicks Join. `mesh::enroll::start_join` is
+                // what the app calls at that moment, going straight from
+                // `Unenrolled` to `Enrolling` without ever having passed
+                // through `DiscoveringCa`/`WaitingForCaSelection` (those
+                // exist for a CA-discovery flow driven *through* the
+                // lifecycle machine, which Phase 3 deliberately did not
+                // build this way — see `mesh/discovery/mod.rs`).
+                | (Unenrolled, Enrolling)
                 | (CreatingCircle, CircleMember)
                 | (DiscoveringCa, WaitingForCaSelection)
                 | (WaitingForCaSelection, Enrolling)

@@ -87,6 +87,30 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
             "/api/v1/mesh/discovery/probe",
             post(handlers::mesh::probe_ca),
         )
+        // P4.9
+        .route("/api/v1/mesh/join", post(handlers::mesh::join_circle))
+        // P4.7
+        .route(
+            "/api/v1/mesh/enroll-requests",
+            get(handlers::mesh::list_enroll_requests),
+        )
+        .route(
+            "/api/v1/mesh/enroll-requests/{request_id}/approve",
+            post(handlers::mesh::approve_enroll_request),
+        )
+        .route(
+            "/api/v1/mesh/enroll-requests/{request_id}/reject",
+            post(handlers::mesh::reject_enroll_request),
+        )
+        // P4.8
+        .route(
+            "/api/v1/mesh/join-codes",
+            post(handlers::mesh::create_join_code).get(handlers::mesh::list_join_codes),
+        )
+        .route(
+            "/api/v1/mesh/join-codes/{id}",
+            delete(handlers::mesh::revoke_join_code),
+        )
         .route("/api/v1/node/restart", post(handlers::node::restart))
         .route("/api/v1/peers", get(handlers::peers::list))
         .route("/api/v1/pwa/contacts", get(handlers::pwa::contacts))

@@ -14,6 +14,7 @@ pub mod activation;
 pub mod ca;
 pub mod discovery;
 pub mod enroll;
+pub mod joincode;
 pub mod legacy;
 pub mod lifecycle;
 pub mod profile;

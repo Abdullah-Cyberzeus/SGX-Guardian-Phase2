@@ -707,7 +707,7 @@ pub fn broker_trust_material_available() -> bool {
         return false;
     };
     vc.subject_did() == local_did.did
-        && vc.credential_subject.circle_id == crate::vc::issue::DEFAULT_CIRCLE_ID
+        && vc.credential_subject.circle_id == crate::mesh::circle_id()
         && vc.has_active_membership_status()
         && !vc.is_expired(chrono::Utc::now())
         && crate::vc::persistence::status_list_path().exists()

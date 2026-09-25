@@ -12,6 +12,11 @@ import { SYS02SplashScreen } from "./screens/system/SYS02SplashScreen";
 import { SU01SetupChoice } from "./screens/setup/SU01SetupChoice";
 import { SU02CreateCircle } from "./screens/setup/SU02CreateCircle";
 import { SU03JoinLan } from "./screens/setup/SU03JoinLan";
+import { SU05JoinConfirm } from "./screens/setup/SU05JoinConfirm";
+import { SU06EnrollmentProgress } from "./screens/setup/SU06EnrollmentProgress";
+import { SU07JoinError } from "./screens/setup/SU07JoinError";
+import { SU08JoinComplete } from "./screens/setup/SU08JoinComplete";
+import { SU09InviteGuardian } from "./screens/setup/SU09InviteGuardian";
 import { LoginScreen } from "./screens/auth/LoginScreen";
 import { CyleniumCallback } from "./screens/auth/CyleniumCallback";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -132,7 +137,12 @@ export const router = createBrowserRouter([
         children: [
           { path: "setup", Component: SU01SetupChoice },
           { path: "setup/create", Component: SU02CreateCircle },
+          { path: "setup/invite", Component: SU09InviteGuardian },
           { path: "setup/join", Component: SU03JoinLan },
+          { path: "setup/join/confirm", Component: SU05JoinConfirm },
+          { path: "setup/join/progress", Component: SU06EnrollmentProgress },
+          { path: "setup/join/error", Component: SU07JoinError },
+          { path: "setup/join/complete", Component: SU08JoinComplete },
         ],
       },
       { path: "join", Component: MemberJoinOnboarding },

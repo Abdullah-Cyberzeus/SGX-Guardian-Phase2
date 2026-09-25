@@ -32,8 +32,12 @@
 //! already-proven `resolve_boot_state → CircleMember → activate_mesh` path
 //! brings Nebula up.
 
+pub mod bundle;
 pub mod descriptor;
+pub mod issuer;
 pub mod policy;
+pub mod requests;
+pub mod server;
 
 use crate::mesh::profile::{EnrollChannel, MeshProfile, MeshRole, PROFILE_SCHEMA_VERSION};
 use crate::nebula::ca::{CaIdentity, NebulaCA};

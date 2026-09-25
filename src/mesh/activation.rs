@@ -326,8 +326,21 @@ pub async fn activate_mesh(
             let mesh_credentials_exist = Path::new(&member_cert_path).exists()
                 && Path::new(&member_key_path).exists()
                 && ca_exists;
-            let cot_trust_exists =
-                crate::cert_client::broker_trust_material_available();
+            // `broker_trust_material_available()` checks for CoT trust
+            // material (a peer DID-doc aggregate + status list) that only
+            // ever gets written by the legacy cloud-broker enrollment path
+            // (`cert_client.rs`). A Guardian that joined via Phase 4's LAN
+            // flow (`mesh::enroll::install`) never produces that material —
+            // it has no broker in its story at all — so requiring it here
+            // would send an already-fully-enrolled Phase 2+ member back
+            // through legacy LAN/broker discovery on every single boot,
+            // forever, since nothing it finds there would ever satisfy this
+            // check. `MeshProfile` already existing is the Phase 2+-aware
+            // signal that supersedes this legacy one: a Guardian with a
+            // profile has already proven its membership through the newer,
+            // signed-bundle mechanism (P4.5/P4.6), independent of CoT.
+            let cot_trust_exists = crate::mesh::profile::current().is_some()
+                || crate::cert_client::broker_trust_material_available();
             let cert_exists = mesh_credentials_exist && cot_trust_exists;
 
             if mesh_credentials_exist && !cot_trust_exists {
@@ -1982,7 +1995,20 @@ pub async fn activate_mesh(
         println!("✅ Threat service spawned (SUR-series, Sprint 8)");
     }
     // === CERT BOOTSTRAP SERVER (CA only, plaintext port 50061) ===
-    if crate::mesh::is_ca() {
+    // P4.2: this plaintext server is what the legacy nodeA/B/C cohort's own
+    // self-bootstrap flow (`cert_client.rs::request_certificate_from_ca`)
+    // still connects to — turning it off unconditionally would break that
+    // cohort's existing enrollment outright. `SGX_LEGACY_ENROLL` therefore
+    // defaults to *enabled* ("kept behind SGX_LEGACY_ENROLL=1 for one
+    // release," read as: available this release, not opt-in yet) and only
+    // an explicit falsy value turns it off, for an operator who has already
+    // moved every Guardian on this cohort to Phase 2+'s circles and wants
+    // the plaintext listener gone.
+    let legacy_enroll_enabled = !matches!(
+        std::env::var("SGX_LEGACY_ENROLL").ok().as_deref(),
+        Some("0") | Some("false") | Some("FALSE") | Some("no") | Some("off")
+    );
+    if crate::mesh::is_ca() && legacy_enroll_enabled {
         tokio::spawn(async move {
             // Bind to detected LAN IP or localhost — do NOT expose on all interfaces
             let bootstrap_addr = if detected_ip.is_empty() {

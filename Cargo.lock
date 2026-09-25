@@ -2370,6 +2370,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "hex",
+ "hmac",
  "hyper-util",
  "ipnet",
  "libc",

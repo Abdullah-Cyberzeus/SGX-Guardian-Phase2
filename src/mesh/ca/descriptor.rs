@@ -24,9 +24,6 @@ use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::RwLock;
 
 /// 12h refresh (P3.1) plus slack for a joiner mid-scan right before a
 /// refresh tick, plus tolerance for modest clock drift between Guardians —
@@ -201,10 +198,11 @@ impl CaDescriptor {
 }
 
 /// Builds a freshly signed [`CaDescriptorBundle`] for `profile`, advertised
-/// at `advertise_addr` (the address a joiner should use — see
-/// [`serve_forever`]'s own doc for why this can differ from the bind
-/// address).
-fn build_and_sign_bundle(
+/// at `advertise_addr` (the address a joiner should use). Called by
+/// `mesh::ca::server::serve_forever` (P4.2), which owns the actual HTTP
+/// listener and its 12h refresh loop — this function is the pure,
+/// side-effect-free half, kept here next to the type it builds.
+pub fn build_and_sign_bundle(
     profile: &MeshProfile,
     advertise_addr: &str,
     version: u32,
@@ -222,68 +220,6 @@ fn build_and_sign_bundle(
         descriptor,
         ca_did_document,
     })
-}
-
-/// The plain-HTTP `GetCaDescriptor` listener (P3.1) — serves the single
-/// route `GET /ca-descriptor`, returning the current signed
-/// [`CaDescriptorBundle`] as JSON. Binds `0.0.0.0:<descriptor_port>`
-/// (every interface, since the LAN-reachable address isn't necessarily the
-/// bind address in a container/NAT setup) but *advertises* — signs into the
-/// descriptor's own `lan_endpoint`, and hands out in [`CaBeacon`]s — the
-/// specific `advertise_addr` a joiner should actually connect to.
-///
-/// Deliberately not TLS and not gRPC: P4.2 is the phase that replaces this
-/// with the real, authenticated LAN enrollment server on the same port
-/// (`src/mesh/ca/server.rs`, TLS, self-signed by the CA's device key). Until
-/// then, the only thing this endpoint hands out is what a `CaDescriptor`
-/// already contains — a signed, publicly-verifiable circle summary, not a
-/// secret — so serving it in the clear does not weaken anything a P3
-/// joiner would otherwise trust.
-///
-/// [`CaBeacon`]: crate::mesh::discovery::CaBeacon
-pub async fn serve_forever(
-    profile: Arc<MeshProfile>,
-    advertise_addr: String,
-) -> Result<(), DescriptorError> {
-    let bind_addr = format!("0.0.0.0:{}", crate::mesh::discovery::descriptor_port());
-    let bundle = build_and_sign_bundle(&profile, &advertise_addr, 1)?;
-    let state: Arc<RwLock<CaDescriptorBundle>> = Arc::new(RwLock::new(bundle));
-
-    let refresh_state = state.clone();
-    let refresh_profile = profile.clone();
-    let refresh_addr = advertise_addr.clone();
-    tokio::spawn(async move {
-        // P3.1: "refreshed every 12h." This phase does not yet detect an
-        // endpoint change to refresh on early (that needs the network-change
-        // hooks Phase 5+ integrations use) — 12h is the floor, not the whole
-        // story yet.
-        let mut version: u32 = 1;
-        loop {
-            tokio::time::sleep(Duration::from_secs(12 * 3600)).await;
-            version += 1;
-            match build_and_sign_bundle(&refresh_profile, &refresh_addr, version) {
-                Ok(fresh) => *refresh_state.write().await = fresh,
-                Err(e) => eprintln!("⚠️ CaDescriptor refresh failed (keeping the previous one): {e}"),
-            }
-        }
-    });
-
-    let router = axum::Router::new()
-        .route("/ca-descriptor", axum::routing::get(handle_get_descriptor))
-        .with_state(state);
-    let listener = tokio::net::TcpListener::bind(&bind_addr)
-        .await
-        .map_err(|e| DescriptorError::Io(format!("bind {bind_addr}: {e}")))?;
-    axum::serve(listener, router)
-        .await
-        .map_err(|e| DescriptorError::Io(format!("serve: {e}")))?;
-    Ok(())
-}
-
-async fn handle_get_descriptor(
-    axum::extract::State(state): axum::extract::State<Arc<RwLock<CaDescriptorBundle>>>,
-) -> axum::Json<CaDescriptorBundle> {
-    axum::Json(state.read().await.clone())
 }
 
 #[cfg(test)]

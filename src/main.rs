@@ -152,6 +152,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (nothing commits there except the final atomic rename), but the
     // staging leftovers themselves are still worth sweeping on every boot.
     sgx_guardian_client::mesh::ca::cleanup_stale_staging(&paths);
+    // P4.6: "B restarts while PENDING and resumes" — a no-op unless a join
+    // was actually left mid-flight before the last restart.
+    {
+        let paths_for_resume = paths.clone();
+        let node_id_for_resume = node_id.clone();
+        tokio::spawn(async move {
+            sgx_guardian_client::mesh::enroll::resume_pending_join_if_any(
+                &paths_for_resume,
+                &node_id_for_resume,
+            )
+            .await;
+        });
+    }
 
     let report = bootstrap::bootstrap_filesystem(&paths, sgx_guardian_client::mesh::is_ca());
     for dir in &report.directory_failures {

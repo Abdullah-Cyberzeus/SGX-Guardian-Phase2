@@ -241,6 +241,42 @@ fn load_or_seed_unlocked(node_id: &str) -> Result<CircleRegistry, CircleError> {
         return load_registry(path);
     }
 
+    // Prefer `MeshProfile` — the actual circle name and enrollment facts —
+    // over the VC-based fallback below it. This is not just a nicer
+    // default: it is what actually fixes a real, reproducible bug. A
+    // Guardian's very first registry read after enrolling (CA *or*
+    // member — P2's `create_circle` and P4's `mesh::enroll::install` both
+    // hit this) used to race the VC-based seed below, which only ever
+    // knew a generic "Mesh Circle" placeholder name, never the operator's
+    // real one — and once seeded, that placeholder was permanent, since
+    // this function only ever runs when the file does *not* exist yet.
+    // `MeshProfile` is written by both `create_circle` and `install`
+    // before either ever touches the circle store, so by the time this
+    // runs, if a profile exists, it already has the truth.
+    if let Some(profile) = crate::mesh::profile::current() {
+        let mesh = Circle {
+            circle_id: profile.circle_id.clone(),
+            name: profile.circle_name.clone(),
+            description: String::new(),
+            owner_did: profile.ca_owner_did.clone(),
+            kind: CircleKind::Mesh,
+            status: CircleStatus::Active,
+            created_at: profile.enrolled_at.clone(),
+            updated_at: profile.enrolled_at.clone(),
+        };
+        let mut registry = CircleRegistry {
+            circles: vec![mesh],
+            sequence: 1,
+            proof: crate::did::document::Proof::default(),
+        };
+        save_registry(node_id, &mut registry)?;
+        return Ok(registry);
+    }
+
+    // Legacy fallback: a Guardian with a local membership VC but no
+    // `MeshProfile` (should not happen for anything enrolled through
+    // Phase 0+, but keeps this function total rather than erroring out
+    // for whatever pre-Phase-0 state might still reach it).
     let membership = crate::vc::persistence::load_own_mesh()?.ok_or_else(|| {
         CircleError::Invalid("local membership VC not found for circle registry seed".into())
     })?;

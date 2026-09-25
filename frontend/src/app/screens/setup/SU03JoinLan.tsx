@@ -40,6 +40,7 @@ export function SU03JoinLan() {
   const [phase, setPhase] = useState<ScanPhase>("idle");
   const [results, setResults] = useState<DiscoveredCa[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [joinCode, setJoinCode] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const [probeHost, setProbeHost] = useState("");
@@ -289,14 +290,29 @@ export function SU03JoinLan() {
         </CardContent>
       </Card>
 
+      {selectedEntry && (
+        <div style={{ width: "100%", maxWidth: 440, marginBottom: "12px" }}>
+          <label style={{ fontSize: "var(--text-xs)", color: "var(--muted-foreground)" }}>
+            Join code (optional)
+          </label>
+          <Input
+            value={joinCode}
+            onChange={(e) => setJoinCode(e.target.value)}
+            placeholder="Leave blank to request manual approval"
+            style={{ marginTop: "4px" }}
+          />
+        </div>
+      )}
+
       <div className="flex flex-col gap-3" style={{ width: "100%", maxWidth: 440 }}>
         <Button
           size="lg"
           disabled={!selectedEntry}
           onClick={() =>
-            window.alert(
-              "Joining a circle lands with a later update — this Guardian can verify a circle exists but cannot yet request to join it.",
-            )
+            selectedEntry &&
+            navigate("/setup/join/confirm", {
+              state: { target: selectedEntry, joinCode: joinCode.trim() || undefined },
+            })
           }
         >
           {selectedEntry ? `Join ${selectedEntry.circleName}` : "Select a verified circle"}

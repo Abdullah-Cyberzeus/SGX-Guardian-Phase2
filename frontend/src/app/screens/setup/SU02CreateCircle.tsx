@@ -276,14 +276,7 @@ export function SU02CreateCircle() {
                   {result.circleName} · {result.overlayIp}
                 </p>
               </div>
-              <Button
-                size="lg"
-                onClick={() =>
-                  window.alert(
-                    "Inviting a Guardian lands with a later update — join codes are Phase 4 work.",
-                  )
-                }
-              >
+              <Button size="lg" onClick={() => navigate("/setup/invite")}>
                 Invite a Guardian
               </Button>
               <Button variant="outline" onClick={() => navigate("/home", { replace: true })}>

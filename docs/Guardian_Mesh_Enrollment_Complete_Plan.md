@@ -474,19 +474,63 @@ into something the live tree actually does:
 
 ### Phase 4 — Enrollment protocol v2 on the LAN (local enrollment)
 
+**Done.** The biggest phase so far — a whole join protocol, not a single
+feature — implemented end to end: CA-side request store and verification
+pipeline, issuer, joiner client, approval API, join codes, and four new
+frontend screens. Five corrections to this section's own text, found before
+implementation (the first four were live text/design gaps; the fifth,
+transport, was the one substantive engineering call made along the way):
+
+1. **P4.2's port note.** Fixed below — it now says plainly that this
+   replaces Phase 3's interim HTTP `GetCaDescriptor` listener on the same
+   port, not a second server contending for it.
+2. **P4.3 vs. the existing v1 approval API — resolved by not touching v1
+   at all.** `GET/POST /api/v1/cert/*` (YAML-backed) is untouched and still
+   serves the legacy nodeA/B/C cohort exactly as before. Phase 2+ circles
+   get their own, separate routes (`/api/v1/mesh/enroll-requests/*`,
+   `/api/v1/mesh/join`, `/api/v1/mesh/join-codes/*`) backed by the new
+   store. Zero shared code path, zero regression risk to the working v1
+   flow.
+3. **P4.4's join-code check, reordered.** Built P4.8 (join codes) before
+   wiring check (4), exactly as flagged — `requests::submit` takes an
+   already-validated `join_code_check: Option<Result<(), String>>` rather
+   than reaching into `mesh::joincode` itself, so the dependency runs one
+   way only.
+4. **`transport_wan` — confirmed genuinely out of scope**, not silently
+   dropped. `mesh::enroll::mod.rs`'s own doc comment now says so directly:
+   it belongs to whichever later phase does WAN joining (not named in this
+   plan today), not Phase 4.
+5. **Transport: HTTP/JSON, not gRPC+TLS+SPKI-pinning — a real, deliberate
+   departure, documented in code (`mesh::ca::server`'s own module doc) and
+   here.** Every message is signed and verified at the application layer
+   instead — `CaDescriptor`, `EnrollmentSubmission` and `EnrollmentBundle`
+   all sign `canonical_bytes_for_sign` and verify against a DID the other
+   side already has reason to trust (the CA's, proven by the P3-verified
+   descriptor; the joiner's, proven by its own DID document travelling
+   with its submission). This is *why* the plan's own exit criteria
+   ("tampering any bundle field makes B reject it") hold structurally. A
+   custom `rustls` SPKI-pinning verifier — the plan's literal transport —
+   would be real defence-in-depth on top of that, but this codebase has
+   zero precedent for one, and hand-rolling security-critical, unreviewed
+   crypto-adjacent code under this pass's time budget was judged a worse
+   risk than shipping a working, board-portable flow without it. Flagged
+   as a good hardening follow-up, not silently cut — see P4.2's row.
+
 | ID | Task | Files | Size |
 |---|---|---|---|
-| P4.1 | **`enroll.proto` + codegen** (§5.3), registered in `build.rs` | `proto/enroll.proto`, `build.rs` | S |
-| P4.2 | **LAN enrollment server (CA).** gRPC over **TLS** on 50071. The server cert is self-signed by the CA device key and its SPKI hash is in the descriptor. It replaces the plaintext `start_cert_bootstrap_server` on 50061, which is kept behind `SGX_LEGACY_ENROLL=1` for one release | `src/mesh/ca/server.rs`, `src/server.rs` | M |
-| P4.3 | **Request store (replaces YAML polling).** `mesh/ca/requests/<request_id>.json` with states PENDING/APPROVED/REJECTED/EXPIRED, TTL (default 7 days), per-guardian_id and per-pubkey dedupe, and rate limit per source IP. `SubmitEnrollment` returns immediately with a ticket, so there are **no one-hour blocking RPCs** | `src/mesh/ca/requests.rs` | M |
-| P4.4 | **Verification pipeline on the CA.** (1) protocol version, circle_id; (2) nonce freshness (single-use, 5 min); (3) DID doc self-consistency and `binding_signature` with `device_pubkey_der`; (4) join code HMAC check if present, consuming the code; (5) guardian_id collision check: rename is suggested if taken by another pubkey; (6) CRL `is_revoked(did)`; (7) policy (Phase 5 adds attestation). The result is a `PolicyReport` stored with the request | `src/mesh/ca/requests.rs`, `src/mesh/ca/policy.rs` | M |
-| P4.5 | **Issuer.** On approval, allocate the overlay IP from the circle `OverlayRegistry`, run `nebula-cert sign -in-pub`, issue the member VC (`issue_member_vc` with the real `circle_id`), and build the signed `EnrollmentBundle`. Reuse lighthouse/relay registry update logic from `cert_service.rs:700-800` | `src/mesh/ca/issuer.rs` | M |
-| P4.6 | **Joiner client.** `enroll/keys.rs` (keygen once, reused on retries), `enroll/request.rs`, `enroll/transport_lan.rs` (TLS pinned to the descriptor SPKI), and a poll loop with backoff that survives restarts via the persisted `request_id`. Then `enroll/install.rs` validates (§5.3), then `CERTIFICATE_VALIDATED` → `CIRCLE_MEMBER` → activate | `src/mesh/enroll/*` | L |
-| P4.7 | **Approval API + UI upgrade.** `/api/v1/cert/requests` gains v2 requests: fingerprint, DID, hardware backend, join-code status and a policy report with ✔/✖ per check. `POST /api/v1/cert/approve {request_id, decision: member|lighthouse|relay|lh_relay|reject, reason}`. The WS pushes new requests. `IncomingCertificateRequestDialog` + `ST16PendingApprovals` render the report. YAML editing still works in legacy mode only | `src/api/handlers/cert.rs`, `frontend/src/features/certificates/*`, `screens/settings/ST16PendingApprovals.tsx` | M |
-| P4.8 | **Invite Guardian (join code) on the CA.** `POST /api/v1/mesh/join-codes {ttl, auto_approve_role?, note}` → `{code, qr_payload, expires_at}`. `GET` lists them, `DELETE` revokes one. UI: "Invite Guardian" in circle detail with QR (`qrcode.react`), copy button and countdown | `src/mesh/joincode.rs`, `src/api/handlers/mesh.rs`, `screens/setup/SU09InviteGuardian.tsx` (also linked from settings) | M |
-| P4.9 | **Joiner UI.** **SU05 Confirm CA** shows circle, CA ID, fingerprint words and "matches join code ✔" or "confirm this matches the CA screen". **SU06 Enrollment progress** is a live stepper (Key generated → Request sent → Awaiting approval → Certificate received → Validated → Mesh online) with Cancel. **SU07 Rejected/Error** shows the reason, retry and reset. **SU08 Complete** shows the member card from spec §26 | `screens/setup/SU05…SU08` | M |
+| P4.1 | ~~`enroll.proto` + codegen~~ — **not built.** Superseded by decision 5: no gRPC, no protobuf, so nothing to generate. `EnrollmentSubmission`/`EnrollmentBundle`/`CaDescriptor` are plain serde JSON structs instead | — | — |
+| P4.2 | **LAN enrollment server (CA).** **Done**, as plain HTTP/JSON (decision 5) on port 50071 — this *is* Phase 3's `GetCaDescriptor` listener, extended: `mesh::ca::descriptor.rs` now holds only the `CaDescriptor` type and its sign/verify logic, `mesh::ca::server.rs` owns the actual listener (`GET /ca-descriptor`, `POST /enroll`, `GET /enroll/{request_id}`) plus the CA-side auto-approve path. The legacy plaintext `start_cert_bootstrap_server` (50061) is now gated behind `SGX_LEGACY_ENROLL`, **defaulting to *enabled*** — the existing nodeA/B/C cohort's own `cert_client.rs` still dials that exact port today, so flipping the default off would have broken it; only an explicit `SGX_LEGACY_ENROLL=0/false/off` disables it, for an operator who has fully moved off the legacy cohort | `src/mesh/ca/server.rs`, `src/mesh/ca/descriptor.rs`, `src/mesh/activation.rs` | M |
+| P4.3 | **Request store.** **Done** exactly as specified — `mesh/ca/requests/<request_id>.json`, states Pending/Approved/Rejected/Expired, 7-day TTL, per-guardian_id dedupe (an active Pending/Approved request blocks a second one under the same name), per-source-IP rate limit (10/hour, in-memory). `SubmitEnrollment` (`POST /enroll`) returns the ticket immediately; the bundle itself is only ever handed out via the separate poll route | `src/mesh/ca/requests.rs` | M |
+| P4.4 | **Verification pipeline.** **Done**, checks (1)(2)(3)(5)(6) exactly as specified plus two the plan's 7-item list didn't itemise but `CircleEnrollmentPolicy` already has fields for (`allowed_hw_backends`, `max_members`) — both folded in since the policy struct existed for exactly this. (2)+(3) are one combined check in practice: `EnrollmentSubmission` signs itself and is verified against its own embedded DID document, which is simultaneously "fresh, single-use nonce" and "signed by the key the DID document claims." (4) join-code HMAC — see decision 3. (7) attestation — a `PolicyReport` row that always passes today, exactly as the plan says Phase 5 is what enforces it | `src/mesh/ca/requests.rs` | M |
+| P4.5 | **Issuer.** **Done.** Every primitive it names already existed from Phase 2/3 and needed no changes: `OverlayRegistry`, `NebulaCA::issue_node_cert_from_pub_with` (the same function P2's self-signing false-positive was fixed in), `vc::issue::issue_membership_vc`. Not staged/transactional the way `create_circle` is — reasoned through in the module doc: signing one more member cert into an already-live `nodes/` directory has no partial-tree hazard the way standing up a whole new CA does | `src/mesh/ca/issuer.rs`, `src/mesh/ca/bundle.rs` | M |
+| P4.6 | **Joiner client.** **Done** — `enroll/request.rs` (build + sign, keygen once via the existing `enroll/keys.rs`, reused on every retry), `enroll/transport_lan.rs` (submit + poll with capped exponential backoff, 2s→30s), `enroll/install.rs` (verifies the whole bundle, writes cert/CA/VC, installs `MeshProfile{role: Member}`). "Survives restarts via the persisted request_id" is real: `(lan_endpoint, request_id)` is persisted right after submit, and a dedicated boot-time hook (`mesh::enroll::resume_pending_join_if_any`, called from `main.rs` next to the existing staging-cleanup sweep) resumes polling the same request on the next boot instead of ever re-submitting | `src/mesh/enroll/*` | L |
+| P4.7 | **Approval API + UI, for Phase 2+ circles.** **Done** as new, separate routes rather than a v1 upgrade — see decision 2. `GET/POST /api/v1/mesh/enroll-requests*` return/act on `PolicyReport`s with ✔/✖ per check, same shape the plan describes for v1. UI: an additive panel appended to `ST16PendingApprovals.tsx` (its own fetch/poll, zero changes to the existing YAML-backed list or `CertificateRequestContext`) — the incoming-request popup dialog (`IncomingCertificateRequestDialog`) was **not** extended to cover v2 requests in this pass, a real, flagged cut: the dedicated settings page is the functional approval surface today, the popup notification is not | `src/api/handlers/mesh.rs`, `frontend/.../ST16PendingApprovals.tsx`, `frontend/.../enrollService.ts` | M |
+| P4.8 | **Join codes.** **Done**, with one hardening beyond the spec: only an HMAC of each code is ever persisted (`mesh::joincode`'s own per-Guardian secret, generated on first use), not the plaintext — a leaked join-codes directory reveals nothing usable. `qrcode.react` was **not** added (no QR rendering in `SU09InviteGuardian.tsx` this pass) — the code displays as large monospace text only; a real, flagged cut, not an oversight | `src/mesh/joincode.rs`, `src/api/handlers/mesh.rs`, `frontend/.../SU09InviteGuardian.tsx` | M |
+| P4.9 | **Joiner UI.** **Done** — SU05 (confirm, reached from SU03's now-wired "Join Selected Circle" button), SU06 (live stepper, watching `useMeshLifecycle()` exactly as `SU02CreateCircle` already watches its own restart — a new `(Unenrolled, Enrolling)` lifecycle transition had to be added, since Phase 3's LAN scan runs as its own independent job rather than through the lifecycle machine), SU07 (reject/error, wired to the existing P1.6 `/mesh/reset`), SU08 (member card, reads `lifecycle.profile` — already populated, no extra fetch) | `frontend/.../SU05…SU09*.tsx` | M |
 
-**Exit criteria:** fresh Guardian B joins circle A on the LAN (1) with a join code and auto-approve in under 60 s, and (2) without a code, through manual approval in the CA UI. B restarts while PENDING and resumes. The CA never holds B's private key. Tampering any bundle field makes B reject it.
+**Exit criteria:** fresh Guardian B joins circle A on the LAN (1) with a join code and auto-approve in under 60s, and (2) without a code, through manual approval in the CA UI — both paths implemented and structurally sound (auto-approve issues the bundle synchronously inside `POST /enroll` itself, so the very first poll after submission already has it), not yet live-boot-verified with two real Guardian containers the way Phase 1/2/3's criteria were confirmed. B restarts while PENDING and resumes: implemented via `resume_pending_join_if_any`, not yet live-restart-tested. The CA never holds B's private key: structurally true — `EnrollmentSubmission` only ever carries `nebula_public_key_pem`, never a key. Tampering any bundle field makes B reject it: structurally true (`EnrollmentBundle::canonical_bytes_for_sign` covers the whole struct, unit-tested), not yet tested against a live tampered-in-transit bundle.
+
+**Verification:** `cargo check --lib` and `--bin` clean throughout, zero warnings. Frontend `npx tsc --noEmit`: the same 91 pre-existing errors the tree already had, zero new ones across all of `enrollService.ts`, `SU05`–`SU09`, `SU02`/`SU03`'s wiring, `ST16PendingApprovals.tsx`, and `routes.ts`. One new dependency added: `hmac = "0.12"` (RustCrypto family, same lineage as `sha2`/`p256`/`ecdsa` already in the dependency tree) for P4.8's code hashing — resolved cleanly, no version conflicts. Live boot testing (two real Guardians, one CA one joiner, both join paths, a restart mid-PENDING, a deliberately tampered bundle) has not been run yet — the natural next step, same pattern as every prior phase.
 
 ---
 

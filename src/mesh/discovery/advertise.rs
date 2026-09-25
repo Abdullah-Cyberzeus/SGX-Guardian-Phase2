@@ -2,7 +2,7 @@
 //! presence/proof split this relies on — nothing broadcast here is trusted
 //! on its own.
 
-use crate::mesh::ca::descriptor;
+use crate::mesh::ca::server;
 use crate::mesh::discovery::{beacon_port, descriptor_port, CaBeacon};
 use crate::mesh::profile::{MeshProfile, MeshRole};
 use libmdns::Responder;
@@ -60,8 +60,8 @@ pub async fn run(profile: Arc<MeshProfile>, lan_ip: String) {
     let descriptor_profile = profile.clone();
     let descriptor_bind = descriptor_addr.clone();
     tokio::spawn(async move {
-        if let Err(e) = descriptor::serve_forever(descriptor_profile, descriptor_bind).await {
-            eprintln!("⚠️ CA descriptor listener stopped: {e}");
+        if let Err(e) = server::serve_forever(descriptor_profile, descriptor_bind).await {
+            eprintln!("⚠️ CA enrollment/descriptor listener stopped: {e}");
         }
     });
 
