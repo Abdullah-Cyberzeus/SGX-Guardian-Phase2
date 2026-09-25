@@ -71,7 +71,17 @@ pub fn create_circle_of_kind(
     let _guard = CIRCLE_WRITE_LOCK
         .lock()
         .unwrap_or_else(|err| err.into_inner());
-    let mut registry = load_or_seed_unlocked(node_id)?;
+    // Deliberately `load_registry_or_empty`, not `load_or_seed_unlocked`: the
+    // latter's fallback seeds a first-time registry from this Guardian's own
+    // local membership VC — exactly right for a *read* path (`get_circle`,
+    // `mesh_circle_id`) encountering an established circle for the first
+    // time, but wrong here. `mesh::ca::create_circle` issues that VC (for
+    // this very circle_id) moments before calling this function, so by the
+    // time this runs, `load_or_seed_unlocked` would "seed" a registry that
+    // already contains the circle this call is about to insert — and the
+    // conflict check just below would then collide with itself on every
+    // single circle creation, not just repeats.
+    let mut registry = load_registry_or_empty(node_id)?;
     if registry
         .circles
         .iter()
@@ -251,6 +261,23 @@ fn load_or_seed_unlocked(node_id: &str) -> Result<CircleRegistry, CircleError> {
     };
     save_registry(node_id, &mut registry)?;
     Ok(registry)
+}
+
+/// Like [`load_or_seed_unlocked`], but for a caller that is about to insert
+/// a circle itself and must not have that insert collide with the VC-based
+/// seed (see [`create_circle_of_kind`]'s call site). Starts a brand-new,
+/// empty registry when none exists on disk yet, instead of seeding one from
+/// a local membership VC.
+fn load_registry_or_empty(_node_id: &str) -> Result<CircleRegistry, CircleError> {
+    let path = persistence::registry_path();
+    if path.exists() {
+        return load_registry(path);
+    }
+    Ok(CircleRegistry {
+        circles: Vec::new(),
+        sequence: 0,
+        proof: crate::did::document::Proof::default(),
+    })
 }
 
 fn load_registry(path: std::path::PathBuf) -> Result<CircleRegistry, CircleError> {
