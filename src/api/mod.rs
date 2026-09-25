@@ -74,6 +74,19 @@ pub fn build_router(state: Arc<AppState>, wifi_router: Router) -> Router {
         // P2.4
         .route("/api/v1/mesh/circles", post(handlers::mesh::create_circle))
         .route("/api/v1/mesh/circle", get(handlers::mesh::get_circle))
+        // P3.4
+        .route(
+            "/api/v1/mesh/discovery/lan",
+            post(handlers::mesh::start_lan_discovery),
+        )
+        .route(
+            "/api/v1/mesh/discovery/lan/{scan_id}",
+            get(handlers::mesh::get_lan_discovery),
+        )
+        .route(
+            "/api/v1/mesh/discovery/probe",
+            post(handlers::mesh::probe_ca),
+        )
         .route("/api/v1/node/restart", post(handlers::node::restart))
         .route("/api/v1/peers", get(handlers::peers::list))
         .route("/api/v1/pwa/contacts", get(handlers::pwa::contacts))

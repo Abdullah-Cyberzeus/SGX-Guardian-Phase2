@@ -11,6 +11,7 @@ import { SYS01NotFound } from "./screens/system/SYS01NotFound";
 import { SYS02SplashScreen } from "./screens/system/SYS02SplashScreen";
 import { SU01SetupChoice } from "./screens/setup/SU01SetupChoice";
 import { SU02CreateCircle } from "./screens/setup/SU02CreateCircle";
+import { SU03JoinLan } from "./screens/setup/SU03JoinLan";
 import { LoginScreen } from "./screens/auth/LoginScreen";
 import { CyleniumCallback } from "./screens/auth/CyleniumCallback";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -131,6 +132,7 @@ export const router = createBrowserRouter([
         children: [
           { path: "setup", Component: SU01SetupChoice },
           { path: "setup/create", Component: SU02CreateCircle },
+          { path: "setup/join", Component: SU03JoinLan },
         ],
       },
       { path: "join", Component: MemberJoinOnboarding },

@@ -253,6 +253,100 @@ pub fn migrate_and_initialize(
     super::profile::initialize()
 }
 
+/// Checks whether a plausible legacy CA address is actually answering the
+/// (plaintext, pre-Phase-3) cert-bootstrap port — used only by
+/// [`discover_lan_node_a`] below.
+async fn is_lan_ca_reachable(ip: &str) -> bool {
+    let addr = format!("{}:50061", ip);
+    tokio::time::timeout(
+        std::time::Duration::from_millis(1500),
+        tokio::net::TcpStream::connect(&addr),
+    )
+    .await
+    .map(|r| r.is_ok())
+    .unwrap_or(false)
+}
+
+/// Discovers `nodeA` on the local network by the pre-Phase-3 means: an
+/// explicit `SGX_LIGHTHOUSE_IP` override, or a locally cached `nodeA.yaml`
+/// (itself populated by the legacy mDNS/UDP broadcast discovery in
+/// `p2p_discovery.rs`/`node_listener.rs`). Attempts up to `attempts` rounds,
+/// each lasting `timeout_per_attempt` (e.g. 3 attempts × 30s = 90s).
+///
+/// **P3.5: moved here from `mesh::activation` verbatim**, not rewritten —
+/// this is the pre-Phase-3 self-bootstrap path, kept working only for a
+/// Guardian that is actually part of the hardcoded legacy `nodeA`/`nodeB`/
+/// `nodeC` cohort (its one caller, in `mesh::activation::activate_mesh`, is
+/// gated on exactly that). A Guardian enrolling into a circle created via
+/// Phase 2 discovers CAs through `mesh::discovery` instead — real,
+/// multi-circle, signed-descriptor discovery, not a search for one
+/// hardcoded name.
+pub(crate) async fn discover_lan_node_a(
+    attempts: usize,
+    timeout_per_attempt: std::time::Duration,
+) -> Option<String> {
+    for attempt in 1..=attempts {
+        println!(
+            "🔍 [{}/{}] Scanning local LAN for Node A CA/Lighthouse (timeout: {}s)...",
+            attempt,
+            attempts,
+            timeout_per_attempt.as_secs()
+        );
+
+        let start = std::time::Instant::now();
+        while start.elapsed() < timeout_per_attempt {
+            // 1. Explicit env var override
+            if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
+                let trimmed = env_ip.trim();
+                if !trimmed.is_empty()
+                    && trimmed != "0.0.0.0"
+                    && trimmed != "127.0.0.1"
+                    && is_lan_ca_reachable(trimmed).await
+                {
+                    println!("✅ Found Node A at {} via SGX_LIGHTHOUSE_IP", trimmed);
+                    return Some(trimmed.to_string());
+                }
+            }
+
+            // 2. Local config files (populated by mDNS/UDP broadcast discovery)
+            for path in &[
+                "/etc/sgx-guardian/config/nodeA.yaml",
+                "/etc/sgx-guardian/nodeA.yaml",
+                "config/nodeA.yaml",
+            ] {
+                // `.ok()` converts to `Option` immediately, as a separate
+                // statement: `load_config`'s `Err` is `Box<dyn Error>`
+                // (plain, not `Send`), and holding that temporary across the
+                // `.await` two lines down — as `if let Ok(cfg) = load_config(path) { ...await... }`
+                // would — makes the whole enclosing future (this one is
+                // spawned, not just awaited) not `Send`.
+                let loaded = crate::config_loader::load_config(path).ok();
+                if let Some(cfg) = loaded {
+                    let ip = cfg.ip.trim();
+                    if !ip.is_empty()
+                        && ip != "0.0.0.0"
+                        && ip != "127.0.0.1"
+                        && is_lan_ca_reachable(ip).await
+                    {
+                        println!("✅ Found Node A at {} via {}", ip, path);
+                        return Some(ip.to_string());
+                    }
+                }
+            }
+
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+
+        if attempt < attempts {
+            println!(
+                "⏳ [Attempt {}/{}] Node A not detected on local LAN. Retrying...",
+                attempt, attempts
+            );
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

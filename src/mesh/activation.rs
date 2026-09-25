@@ -401,7 +401,9 @@ pub async fn activate_mesh(
                 );
             } else {
                 // ── Bootstrap Required: LAN First with Automatic VPS Fallback ────
-                let lan_ca_ip = discover_lan_node_a(3, std::time::Duration::from_secs(30)).await;
+                let lan_ca_ip =
+                    crate::mesh::legacy::discover_lan_node_a(3, std::time::Duration::from_secs(30))
+                        .await;
 
                 if let Some(ca_lan_ip) = lan_ca_ip {
                     // ── Case A: Local Node A Found on LAN ────────────────────────
@@ -1808,6 +1810,11 @@ pub async fn activate_mesh(
 
     // === NODE BROADCAST + CONFIG SYNC ===
     let detected_ip_for_broadcast = startup_config::broadcast_ip(&detected_ip, &this_node.ip);
+    // Cloned this early because `detected_ip` itself is moved into a
+    // `tokio::spawn` a little further down (the legacy cert-bootstrap
+    // server) — P3.2's LAN advertiser, wired in near the end of this
+    // function, needs its own copy that survives that move.
+    let detected_ip_for_discovery = detected_ip.clone();
 
     // Initial broadcast
     step(31, "broadcast-loop gate");
@@ -2057,6 +2064,21 @@ pub async fn activate_mesh(
         eprintln!("⚠️ Could not record ONLINE lifecycle state: {e}");
     }
 
+    // P3.2: make this circle discoverable on the LAN, but only if this
+    // Guardian is its CA — a `Member` has nothing to advertise.
+    // `discovery::advertise::run` itself also checks the role and returns
+    // immediately for a `Member`, so this check is belt-and-suspenders, not
+    // load-bearing; kept anyway so a `Member` boot never even spawns the
+    // task.
+    if let Some(profile) = crate::mesh::profile::current() {
+        if matches!(profile.role, crate::mesh::profile::MeshRole::Ca) {
+            let advertise_ip = detected_ip_for_discovery;
+            tokio::spawn(async move {
+                crate::mesh::discovery::advertise::run(profile, advertise_ip).await;
+            });
+        }
+    }
+
     Ok(())
 }
 
@@ -2259,81 +2281,8 @@ async fn refresh_and_publish_did_doc_inner(
     Ok(())
 }
 
-async fn is_lan_ca_reachable(ip: &str) -> bool {
-    let addr = format!("{}:50061", ip);
-    tokio::time::timeout(
-        std::time::Duration::from_millis(1500),
-        tokio::net::TcpStream::connect(&addr),
-    )
-    .await
-    .map(|r| r.is_ok())
-    .unwrap_or(false)
-}
-
-/// Discovers Node A on the local network (mDNS/UDP/config/LAN gRPC).
-/// Attempts up to `attempts` rounds, each lasting `timeout_per_attempt` (e.g. 3 attempts x 30s = 90s).
-async fn discover_lan_node_a(
-    attempts: usize,
-    timeout_per_attempt: std::time::Duration,
-) -> Option<String> {
-    for attempt in 1..=attempts {
-        println!(
-            "🔍 [{}/{}] Scanning local LAN for Node A CA/Lighthouse (timeout: {}s)...",
-            attempt,
-            attempts,
-            timeout_per_attempt.as_secs()
-        );
-
-        let start = std::time::Instant::now();
-        while start.elapsed() < timeout_per_attempt {
-            // 1. Explicit env var override
-            if let Ok(env_ip) = std::env::var("SGX_LIGHTHOUSE_IP") {
-                let trimmed = env_ip.trim();
-                if !trimmed.is_empty()
-                    && trimmed != "0.0.0.0"
-                    && trimmed != "127.0.0.1"
-                    && is_lan_ca_reachable(trimmed).await
-                {
-                    println!("✅ Found Node A at {} via SGX_LIGHTHOUSE_IP", trimmed);
-                    return Some(trimmed.to_string());
-                }
-            }
-
-            // 2. Local config files (populated by mDNS/UDP broadcast discovery)
-            for path in &[
-                "/etc/sgx-guardian/config/nodeA.yaml",
-                "/etc/sgx-guardian/nodeA.yaml",
-                "config/nodeA.yaml",
-            ] {
-                // `.ok()` converts to `Option` immediately, as a separate
-                // statement: `load_config`'s `Err` is `Box<dyn Error>`
-                // (plain, not `Send`), and holding that temporary across the
-                // `.await` two lines down — as `if let Ok(cfg) = load_config(path) { ...await... }`
-                // would — makes the whole enclosing future (this one is
-                // spawned, not just awaited — P1.2 step 6) not `Send`.
-                let loaded = crate::config_loader::load_config(path).ok();
-                if let Some(cfg) = loaded {
-                    let ip = cfg.ip.trim();
-                    if !ip.is_empty()
-                        && ip != "0.0.0.0"
-                        && ip != "127.0.0.1"
-                        && is_lan_ca_reachable(ip).await
-                    {
-                        println!("✅ Found Node A at {} via {}", ip, path);
-                        return Some(ip.to_string());
-                    }
-                }
-            }
-
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        }
-
-        if attempt < attempts {
-            println!(
-                "⏳ [Attempt {}/{}] Node A not detected on local LAN. Retrying...",
-                attempt, attempts
-            );
-        }
-    }
-    None
-}
+// `is_lan_ca_reachable`/`discover_lan_node_a` moved to `mesh::legacy` (P3.5) —
+// this is the pre-Phase-3 self-bootstrap path, kept only for the hardcoded
+// legacy nodeA/B/C cohort. See `mesh::legacy::discover_lan_node_a`'s doc
+// comment. A Phase-2-created circle's members discover CAs through
+// `mesh::discovery` instead.

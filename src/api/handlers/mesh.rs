@@ -316,6 +316,117 @@ pub async fn get_circle(State(_state): State<Arc<AppState>>) -> Result<Json<Circ
     }))
 }
 
+// ── P3.4: LAN CA discovery API ──────────────────────────────────────────
+//
+// A scan is a background job, not a single request/response — P3.3's own
+// 5s collection window plus a parallel fetch-and-verify round trip per
+// candidate makes it too slow to hold a connection open for. `POST .../lan`
+// starts one and returns immediately with an id; `GET .../lan/{scan_id}`
+// polls it. In-memory only, deliberately: a scan's results are only ever
+// useful to the operator who is mid-setup in that same session, and nothing
+// here needs to survive a restart.
+
+use crate::mesh::discovery::{self, DiscoveredCa};
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
+use std::sync::Mutex as StdMutex;
+
+enum LanScanState {
+    Running,
+    Done(Vec<DiscoveredCa>),
+}
+
+static LAN_SCANS: Lazy<StdMutex<HashMap<String, LanScanState>>> =
+    Lazy::new(|| StdMutex::new(HashMap::new()));
+
+#[derive(Debug, Serialize)]
+pub struct StartScanResponse {
+    pub scan_id: String,
+}
+
+/// POST /api/v1/mesh/discovery/lan — starts a scan, returns `{scan_id}`.
+pub async fn start_lan_discovery(
+    session: Option<Extension<AuthenticatedSession>>,
+) -> Result<(StatusCode, Json<StartScanResponse>), ApiError> {
+    if !is_admin(&session) {
+        return Err(ApiError::Forbidden(
+            "only an admin session may scan for mesh circles".into(),
+        ));
+    }
+    let scan_id = uuid::Uuid::new_v4().to_string();
+    {
+        let mut scans = LAN_SCANS.lock().unwrap_or_else(|e| e.into_inner());
+        scans.insert(scan_id.clone(), LanScanState::Running);
+    }
+    let scan_id_for_task = scan_id.clone();
+    tokio::spawn(async move {
+        let results = discovery::browse::scan().await;
+        let mut scans = LAN_SCANS.lock().unwrap_or_else(|e| e.into_inner());
+        scans.insert(scan_id_for_task, LanScanState::Done(results));
+    });
+    Ok((StatusCode::ACCEPTED, Json(StartScanResponse { scan_id })))
+}
+
+#[derive(Debug, Serialize)]
+pub struct LanScanStatusResponse {
+    pub status: &'static str,
+    pub results: Vec<DiscoveredCa>,
+}
+
+/// GET /api/v1/mesh/discovery/lan/{scan_id} — poll a scan started above.
+/// 404 once the id no longer maps to any tracked scan (never started, or —
+/// out of scope for now — evicted; nothing prunes `LAN_SCANS` yet, since a
+/// setup session realistically starts a handful of scans, not thousands).
+pub async fn get_lan_discovery(
+    session: Option<Extension<AuthenticatedSession>>,
+    axum::extract::Path(scan_id): axum::extract::Path<String>,
+) -> Result<Json<LanScanStatusResponse>, ApiError> {
+    if !is_admin(&session) {
+        return Err(ApiError::Forbidden(
+            "only an admin session may read a mesh circle scan".into(),
+        ));
+    }
+    let scans = LAN_SCANS.lock().unwrap_or_else(|e| e.into_inner());
+    match scans.get(&scan_id) {
+        None => Err(ApiError::NotFound(format!("no scan {scan_id}"))),
+        Some(LanScanState::Running) => Ok(Json(LanScanStatusResponse {
+            status: "running",
+            results: Vec::new(),
+        })),
+        Some(LanScanState::Done(results)) => Ok(Json(LanScanStatusResponse {
+            status: "done",
+            results: results.clone(),
+        })),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProbeRequest {
+    pub host: String,
+    pub port: u16,
+}
+
+/// POST /api/v1/mesh/discovery/probe {host, port} — fetch and verify one
+/// operator-supplied endpoint directly, bypassing beacon discovery (for a
+/// LAN that blocks UDP broadcast/multicast but still routes plain TCP).
+pub async fn probe_ca(
+    session: Option<Extension<AuthenticatedSession>>,
+    Json(payload): Json<ProbeRequest>,
+) -> Result<Json<DiscoveredCa>, ApiError> {
+    if !is_admin(&session) {
+        return Err(ApiError::Forbidden(
+            "only an admin session may probe for a mesh circle".into(),
+        ));
+    }
+    let endpoint = format!("{}:{}", payload.host, payload.port);
+    discovery::browse::probe(&endpoint)
+        .await
+        .map(Json)
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("no CA descriptor answered at {endpoint}"))
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

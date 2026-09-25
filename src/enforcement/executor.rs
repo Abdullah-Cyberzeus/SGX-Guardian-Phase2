@@ -135,13 +135,25 @@ pub fn build_nft_ruleset(rules: &TranslatedRules) -> Result<String> {
     out.push_str("    iifname \"nebula0\" tcp dport 50065 accept\n");
     // Allow registry sync (Overlay IP assignment)
     out.push_str("    tcp dport 50062 counter accept\n");
-    // Allow node discovery broadcast (UDP)
+    // Allow node discovery broadcast (UDP) — legacy nodeA/B/C cohort only
     out.push_str("    udp dport 9000 counter accept\n");
     out.push_str("    udp sport 9000 counter accept\n");
     // Allow config sync (TCP)
     out.push_str("    tcp dport 50070 accept\n");
     // Allow cert bootstrap
     out.push_str("    tcp dport 50061 counter accept\n");
+
+    // P3.7: LAN CA discovery. UDP 9100 is the `CaBeacon` broadcast
+    // (`mesh::discovery::DEFAULT_BEACON_PORT`) — a dedicated port, not a
+    // reuse of 9000 above, since `node_listener.rs` already exclusively
+    // binds that one for the legacy `NodeAnnouncement` receiver (see
+    // `mesh/discovery/mod.rs`'s module doc for why). TCP 50071 is the
+    // `GetCaDescriptor` listener (`mesh::discovery::DEFAULT_DESCRIPTOR_PORT`,
+    // P3.1) — opened now as forward-provisioning; P4.2 takes the same port
+    // over for the real TLS enrollment server.
+    out.push_str("    udp dport 9100 counter accept\n");
+    out.push_str("    udp sport 9100 counter accept\n");
+    out.push_str("    tcp dport 50071 counter accept\n");
 
     // Allow CRL gossip exchange for decentralized revocation propagation
     out.push_str("    tcp dport 50063 counter accept\n");

@@ -422,17 +422,53 @@ Verification: `cargo check --lib --tests` and `--bin` clean throughout (large `c
 
 ### Phase 3 — LAN CA discovery (multiple CAs per LAN)
 
+**Done.** Implemented top to bottom — this was the first phase with nothing
+pre-existing to verify/rewire against, so every file below is net-new except
+the `mesh::legacy`/`mesh::activation` edits in P3.5. Four decisions were
+resolved during implementation, each because the plan's literal text ran
+into something the live tree actually does:
+
+1. **Presence vs. proof, made explicit.** Neither mDNS nor `CaBeacon` carry
+   any signature — they are pure "look here" pointers. All trust comes from
+   `CaDescriptor`, fetched over TCP from wherever the pointer said, then
+   verified against the CA's own DID document (bundled in the same
+   response, so verification needs no separate resolver hop — LAN discovery
+   has to work with no WAN reachable at all). A spoofed beacon can get an
+   entry to *appear*; it cannot make that entry verify without the real
+   CA's key. This is what the exit criterion actually tests.
+2. **Replay protection added to `CaDescriptor` beyond what P3.1 asked for.**
+   A signature alone proves the CA once produced those bytes, not that a
+   captured, long-stale copy (pre-rotation, pre-revocation) is still
+   trustworthy. `verify_with_document` also rejects anything outside a 26h
+   freshness window (12h refresh + slack), the same reasoning
+   `did::doc_sign::verify_with_replay_protection`'s version-floor check
+   already uses elsewhere in this codebase.
+3. **`CaBeacon` does not reuse UDP 9000.** `node_listener.rs` already binds
+   `0.0.0.0:9000` exclusively for the legacy `NodeAnnouncement` receiver —
+   a second exclusive bind there would fail, not share. `CaBeacon` uses its
+   own port instead (`SGX_CA_BEACON_PORT`, default **9100**), with its own
+   firewall rule.
+4. **mDNS *browsing* is out of scope for this pass.** `libmdns` (the only
+   mDNS crate already in the workspace) is a responder only, no client-side
+   browse API. `advertise.rs` still publishes `_sgx-ca._tcp` with it (real
+   interop value, zero new risk); `browse.rs` discovers over the `CaBeacon`
+   UDP channel only. Adding a browsing-capable crate (e.g. `mdns-sd`) is a
+   real dependency decision, left for whoever picks this back up rather
+   than folded in silently.
+
 | ID | Task | Files | Size |
 |---|---|---|---|
-| P3.1 | **CaDescriptor** build and sign (DID key, `doc_sign`), refreshed every 12 h and on endpoint change. `GetCaDescriptor` served on the enrollment port | `src/mesh/ca/descriptor.rs` | M |
-| P3.2 | **Advertiser** (CA role only, after activation): mDNS `_sgx-ca._tcp` + UDP `CaBeacon` | `src/mesh/discovery/advertise.rs`, `src/node_broadcast.rs` | M |
-| P3.3 | **Browser** (joiner): 5 s collection window, fetch and verify descriptors in parallel with a timeout, dedupe by `(circle_id, ca_fp)`, return `DiscoveredCa{circle_name, circle_id, ca_guardian_id, fingerprint, fingerprint_words, lan_endpoint, verified, policy_summary}` | `src/mesh/discovery/browse.rs` | M |
-| P3.4 | **API.** `POST /api/v1/mesh/discovery/lan` (starts a scan, returns `scan_id`), `GET /api/v1/mesh/discovery/lan/{scan_id}` (results). Also a manual entry `POST /api/v1/mesh/discovery/probe {host:port}` for LANs that block multicast | `src/api/handlers/mesh.rs` | S |
-| P3.5 | **Retire `discover_lan_node_a`** (`main.rs:3432`) and `startup/ca_discovery.rs` config-file polling. Keep them only inside `mesh/legacy.rs` for migrated legacy members | `src/main.rs`, `src/startup/ca_discovery.rs` | S |
-| P3.6 | **Frontend SU03 Join — Local search** (spec §32 "Join Circle"). Live list of verified CAs (radio select), unverified candidates greyed out, an "Enter join code / scan QR" field (jsqr camera scan), buttons **Join Selected Circle** and **Search via WAN**. If nothing is found after the scan, show the empty state from spec §12 | `screens/setup/SU03JoinLan.tsx` | M |
-| P3.7 | **Firewall.** Allow UDP 5353 (already allowed), the enrollment TCP port (50071) and beacon UDP 9000 in the provisioning ruleset | `src/enforcement/*` | S |
+| P3.1 | **CaDescriptor** build and sign (DID key, `doc_sign`), refreshed every 12 h. `GetCaDescriptor` served on the enrollment port. **Done** — plus the freshness-window replay check (decision 2 above). Verification is self-contained: the HTTP response is `{descriptor, ca_did_document}`, not just the descriptor, so no separate DID resolution is needed | `src/mesh/ca/descriptor.rs` | M |
+| P3.2 | **Advertiser** (CA role only, after activation): mDNS `_sgx-ca._tcp` + UDP `CaBeacon`. **Done** — spawned from `mesh::activation::activate_mesh` right after reaching `ONLINE`, gated on `MeshRole::Ca` (a no-op for a `Member`, and for now every enrolled Guardian *is* a CA — Phase 4 is what introduces members). See decisions 3–4 above for the two departures from the literal text | `src/mesh/discovery/advertise.rs` | M |
+| P3.3 | **Browser** (joiner): 5 s collection window (`browse::COLLECTION_WINDOW`), fetch-and-verify in parallel (`tokio::spawn` per candidate) with a 3 s per-fetch timeout, dedupe by `(circle_id, ca_fingerprint)`, returns `DiscoveredCa{circle_name, circle_id, ca_guardian_id, fingerprint, fingerprint_words, lan_endpoint, verified, policy_summary}` exactly as specified. `fingerprint_words` ports the frontend's own `fingerprintPhrase()` (`SU02CreateCircle.tsx`) into Rust so a CA's own fingerprint phrase reads identically whether it's showing its own or being discovered. **Done** | `src/mesh/discovery/browse.rs` | M |
+| P3.4 | **API.** `POST /api/v1/mesh/discovery/lan` → `202 {scan_id}`, `GET /api/v1/mesh/discovery/lan/{scan_id}` → `{status, results}`, `POST /api/v1/mesh/discovery/probe {host, port}` for the manual-entry fallback. **Done**, admin-gated same as `POST /mesh/circles`. In-memory scan tracking only (`LAN_SCANS`, process-lifetime) — a scan is only ever useful to the operator mid-setup in that session, nothing here needs to survive a restart | `src/api/handlers/mesh.rs`, `src/api/mod.rs` | S |
+| P3.5 | **Retire `discover_lan_node_a`.** **Done** — moved (not just gated) to `mesh::legacy`, `pub(crate)`, with a doc comment explaining it now exists only for the hardcoded nodeA/B/C cohort's self-bootstrap; `mesh::activation`'s one call site updated to `mesh::legacy::discover_lan_node_a`. The plan's own file reference (`main.rs:3432`) was already stale — P1.2 had moved this function to `mesh/activation.rs` before this phase started; it's now in `mesh/legacy.rs` instead. `startup/ca_discovery.rs` was untouched — out of this pass's scope, still legacy config-file polling | `src/mesh/legacy.rs`, `src/mesh/activation.rs` | S |
+| P3.6 | **Frontend SU03 Join — Local search.** **Done**, with one deliberate cut: the join-code/QR-scan field is not built, because redeeming one has no backend yet (that's P4.6/P4.7) — an input with nowhere to submit would be a dead UI element, not a head start. What *is* real: a live-polling scan (`GET .../lan/{scan_id}` every 700ms), a verified/unverified list (unverified entries rendered greyed-out and `disabled`, matching P3.6's own spec), and the manual `host:port` probe field wired to the real `POST .../probe` endpoint. "Join Selected Circle" is a placeholder alert, the same honest-about-scope pattern SU02's "Invite a Guardian" already uses for P4.8. "Search via WAN" was not built — Phase 3 is LAN-only by its own title | `frontend/src/app/screens/setup/SU03JoinLan.tsx`, `frontend/src/app/services/meshDiscoveryService.ts`, `SU01SetupChoice.tsx` (button wiring), `routes.ts` | M |
+| P3.7 | **Firewall.** **Done**, with the port adjusted for decision 3: UDP 5353 was already allowed (confirmed, not just assumed), UDP **9100** (not 9000, see above) for `CaBeacon`, TCP 50071 for `GetCaDescriptor` — opened now as forward-provisioning; P4.2 takes the same port over for the real TLS enrollment server | `src/enforcement/executor.rs` | S |
 
-**Exit criteria:** a LAN with 3 CAs (3 circles) shows 3 verified entries. A spoofed advertiser without a valid signature shows as unverified and cannot be selected.
+**Exit criteria:** a LAN with 3 CAs (3 circles) shows 3 verified entries — structurally true by construction (`browse::scan()` dedupes by `(circle_id, ca_fingerprint)`, so 3 distinct circles necessarily produce 3 distinct entries), not yet re-confirmed live with 3 simultaneous CA containers the way Phase 1/2's staged live-boot testing confirmed each of *their* exit criteria — that's the natural next verification step. A spoofed advertiser without a valid signature shows as unverified and cannot be selected: enforced in code (`verify_with_document` fails closed on a bad/missing signature or a mismatched DID; `SU03JoinLan.tsx` disables selection whenever `!entry.verified`), covered by `descriptor.rs`'s unit tests for the signature-verification path, not yet by a live forged-beacon test.
+
+**Verification:** `cargo check --lib` clean throughout. Frontend: `npx tsc --noEmit` shows the same 91 pre-existing errors the tree already had before this phase, none in any file this phase touched. Live boot testing (a real multi-CA LAN scan, and a forged-signature negative test) has not been run yet, per the no-heavy-`cargo test`/staged-testing pattern the operator runs this session under — next step once this is boot-tested.
 
 ---
 

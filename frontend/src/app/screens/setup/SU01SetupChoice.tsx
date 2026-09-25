@@ -212,11 +212,7 @@ export function SU01SetupChoice() {
           <Button
             variant="outline"
             size="lg"
-            onClick={() =>
-              window.alert(
-                "Joining an existing circle lands with a later update — this Guardian cannot yet discover or enroll into one from this screen.",
-              )
-            }
+            onClick={() => navigate("/setup/join")}
           >
             Join Existing Circle
           </Button>
